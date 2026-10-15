@@ -1,0 +1,1 @@
+"""Boom feeds module."""
