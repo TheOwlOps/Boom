@@ -24,26 +24,18 @@ class SessionSearchTool:
             timeline = self.state_db.read_timeline(session_id, limit=limit)
             return {"mode": "timeline", "session_id": session_id, "count": len(timeline),
                     "events": timeline}
-        # Mode 1: SCROLL around anchor message
+        # Mode 1: SCROLL around anchor message — two bounded index seeks
+        # (StateDB.get_messages_around), not a 200-row fetch + Python scan.
         if session_id and around_message_id:
-            all_msgs = self.state_db.get_session_messages(session_id, limit=200)
-            target_idx = -1
-            for idx, m in enumerate(all_msgs):
-                if m["id"] == around_message_id:
-                    target_idx = idx
-                    break
-
-            if target_idx == -1:
-                return {"mode": "scroll", "error": f"Message ID {around_message_id} not found", "messages": []}
-
             half = limit // 2
-            start = max(0, target_idx - half)
-            end = min(len(all_msgs), target_idx + half + 1)
+            window = self.state_db.get_messages_around(session_id, around_message_id, half)
+            if window is None:
+                return {"mode": "scroll", "error": f"Message ID {around_message_id} not found", "messages": []}
             return {
                 "mode": "scroll",
                 "session_id": session_id,
                 "anchor_id": around_message_id,
-                "messages": all_msgs[start:end]
+                "messages": window
             }
 
         # Mode 2: READ session transcript

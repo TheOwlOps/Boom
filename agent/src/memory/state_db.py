@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS timeline (
     timestamp REAL NOT NULL
 );
 
+-- Hot-path indexes: get_session_messages() and read_timeline() filter by
+-- session_id and order by id on every call. Without these SQLite falls back to
+-- a full table scan whose cost grows with total history (measured 155ms at
+-- 800k rows for the current session); with them it is a bounded index seek.
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_timeline_session ON timeline(session_id, id);
+
 -- Full-Text Search (FTS5) for cross-session episodic search.
 -- No SQL trigger mirrors `messages` into this table: the tokenizer must see CJK
 -- split into single characters, which SQL cannot do, so StateDB.append_message
@@ -186,16 +193,45 @@ class StateDB:
             f"SELECT * FROM ({inner}) ORDER BY id ASC" if newest else inner,
             (session_id, limit)
         )
-        messages = []
-        for row in cur.fetchall():
-            m = dict(row)
-            if m["tool_calls"]:
-                try:
-                    m["tool_calls"] = json.loads(m["tool_calls"])
-                except Exception:
-                    pass
-            messages.append(m)
-        return messages
+        return [self._row_to_message(row) for row in cur.fetchall()]
+
+    def get_messages_around(self, session_id: str, anchor_id: int,
+                            half: int) -> Optional[List[Dict[str, Any]]]:
+        """Window around one message: up to `half` messages before the anchor
+        (anchor included) plus up to `half` after, oldest-first.
+
+        Two bounded index seeks instead of fetching a 200-row page and scanning
+        it in Python — and unlike that approach it works for anchors past the
+        first 200 messages of a long session. Returns None when the anchor id
+        is not in this session.
+        """
+        cols = "id, role, content, tool_calls, timestamp"
+        before = self.conn.execute(
+            f"SELECT {cols} FROM messages WHERE session_id = ? AND id <= ? "
+            f"ORDER BY id DESC LIMIT ?",
+            (session_id, anchor_id, half + 1),
+        ).fetchall()
+        # DESC order: the first row is the greatest id <= anchor, so it equals
+        # the anchor exactly when the anchor exists in this session.
+        if not before or before[0]["id"] != anchor_id:
+            return None
+        after = self.conn.execute(
+            f"SELECT {cols} FROM messages WHERE session_id = ? AND id > ? "
+            f"ORDER BY id ASC LIMIT ?",
+            (session_id, anchor_id, half),
+        ).fetchall()
+        return ([self._row_to_message(r) for r in reversed(before)]
+                + [self._row_to_message(r) for r in after])
+
+    @staticmethod
+    def _row_to_message(row) -> Dict[str, Any]:
+        m = dict(row)
+        if m["tool_calls"]:
+            try:
+                m["tool_calls"] = json.loads(m["tool_calls"])
+            except Exception:
+                pass
+        return m
 
     def record_session_usage(self, session_id: str, input_tokens: int, output_tokens: int):
         """Fold a turn's billing into the session row, which otherwise stays at 0."""

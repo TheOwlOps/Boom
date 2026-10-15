@@ -182,7 +182,7 @@ def test_web_tools():
 
         # 9. Registry shape: what environment._init_tools would merge in.
         tools = build_tools()
-        assert set(tools) == {"web_search", "web_extract"}, tools
+        assert set(tools) == {"web_search", "web_extract", "web_extract_many"}, tools
         for name, meta in tools.items():
             assert meta["name"] == name and callable(meta["func"]), meta
             schema = meta["schema"]

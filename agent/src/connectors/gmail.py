@@ -17,6 +17,7 @@ actually confirmed it.
 
 import base64
 import binascii
+import concurrent.futures
 import contextlib
 from email.message import EmailMessage
 from html.parser import HTMLParser
@@ -227,8 +228,55 @@ class GmailConnector(Connector):
 
     # -- tools -------------------------------------------------------
 
+    def _fetch_hit_metadata(self, msg: Dict[str, Any]) -> Dict[str, Any]:
+        """One search hit's metadata fetch, shaped into a result row.
+
+        Never raises: transport surprises become a per-row ``{"error": ...}``,
+        keeping the tool's never-raise contract under threads.
+        """
+        try:
+            meta = self._request(
+                "GET",
+                f"/users/me/messages/{msg.get('id')}",
+                params={
+                    "format": "metadata",
+                    "metadataHeaders": ["From", "Subject", "Date"],
+                },
+            )
+        except Exception as e:  # _request never raises by contract; belt and braces
+            return {
+                "id": msg.get("id"),
+                "threadId": msg.get("threadId"),
+                "error": f"metadata fetch failed: {type(e).__name__}: {e}",
+            }
+        if "error" in meta:
+            # The list call worked; keep the id and say what failed honestly.
+            return {
+                "id": msg.get("id"),
+                "threadId": msg.get("threadId"),
+                "error": meta["error"],
+            }
+        headers = _headers(meta.get("payload", {}) or {})
+        return {
+            "id": meta.get("id"),
+            "threadId": meta.get("threadId"),
+            "snippet": meta.get("snippet", ""),
+            "from": headers.get("from", ""),
+            "subject": headers.get("subject", ""),
+            "date": headers.get("date", ""),
+        }
+
     def gmail_search(self, query: str, max_results: int = 10) -> Dict[str, Any]:
-        """Search mail. Returns id/threadId/snippet/from/subject/date per hit."""
+        """Search mail. Returns id/threadId/snippet/from/subject/date per hit.
+
+        Metadata fetches are independent HTTP calls, so they run concurrently
+        in a thread pool (stdlib ``concurrent.futures``); ``executor.map``
+        preserves input order, so the rows match the sequential version
+        row-for-row. ``httpx.Client`` is thread-safe for concurrent requests,
+        and when no client is injected each ``_request`` builds its own client
+        per call exactly as the sequential version did — no client is shared
+        unsafely.
+        """
         if not (query or "").strip():
             return {"error": "gmail_search needs a query string."}
         try:
@@ -244,33 +292,12 @@ class GmailConnector(Connector):
         if "error" in data:
             return data
 
+        hits = data.get("messages", []) or []
         out: List[Dict[str, Any]] = []
-        for msg in data.get("messages", []) or []:
-            meta = self._request(
-                "GET",
-                f"/users/me/messages/{msg.get('id')}",
-                params={
-                    "format": "metadata",
-                    "metadataHeaders": ["From", "Subject", "Date"],
-                },
-            )
-            if "error" in meta:
-                # The list call worked; keep the id and say what failed honestly.
-                out.append({
-                    "id": msg.get("id"),
-                    "threadId": msg.get("threadId"),
-                    "error": meta["error"],
-                })
-                continue
-            headers = _headers(meta.get("payload", {}) or {})
-            out.append({
-                "id": meta.get("id"),
-                "threadId": meta.get("threadId"),
-                "snippet": meta.get("snippet", ""),
-                "from": headers.get("from", ""),
-                "subject": headers.get("subject", ""),
-                "date": headers.get("date", ""),
-            })
+        if hits:
+            workers = min(8, len(hits))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                out = list(pool.map(self._fetch_hit_metadata, hits))
         return {
             "messages": out,
             "resultSizeEstimate": data.get("resultSizeEstimate", len(out)),
