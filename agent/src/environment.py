@@ -347,6 +347,33 @@ class AgentEnvironment:
             except Exception as e:
                 print(f"[tools] {module_name} unavailable: {e}")
 
+        # 5f. New capability modules (artifacts, goals, people, digest, research).
+        #     Same lazy-guarded pattern as 5e: an optional subsystem that cannot
+        #     load must not take the whole environment down.
+        for module_name, use_root_dir in (
+            ("artifacts.tools", False),
+            ("goals.tools", False),
+            ("digest.tools", False),
+            ("tools.research_tool", False),
+            ("people.tools", True),
+        ):
+            try:
+                factory = getattr(import_module(module_name), "build_tools", None)
+                if factory is not None:
+                    self._tools.update(
+                        factory(self.root_dir if use_root_dir else self))
+            except Exception as e:
+                print(f"[tools] {module_name} unavailable: {e}")
+
+        # 5g. Service connectors (Gmail, Calendar, Drive, generic HTTP API).
+        #     Merged through the connector registry; a missing credential only
+        #     marks that connector disconnected, it never breaks the env.
+        try:
+            from connectors.registry import load_default_registry
+            self._tools.update(load_default_registry().build_tools())
+        except Exception as e:
+            print(f"[tools] connectors unavailable: {e}")
+
         # 6. Process management
         self._tools["process_list"] = {
             "name": "process_list",
