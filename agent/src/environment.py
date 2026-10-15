@@ -374,6 +374,19 @@ class AgentEnvironment:
             ("authz.tools", False),
             ("audit.tools", True),
             ("gateway.broadcast", False),
+            # 5f. Refactored tool packages (2026-10-16): web / code / security / db.
+            #     Registry-ready build_tools factories (repo convention). Names that
+            #     collide with legacy direct registrations below (web_search,
+            #     web_fetch, web_extract, code_review, dep_cycles, secret_scan)
+            #     are re-registered by those legacy sections, so legacy behavior
+            #     is preserved; only genuinely new tools stay registered
+            #     (web_extract_many was already registered by tools.web_tools --
+            #     here it is upgraded to this package's merged implementation,
+            #     same schema: urls + max_workers).
+            ("tools.web", False),
+            ("tools.code", False),
+            ("tools.security", False),
+            ("tools.db", False),
         ):
             try:
                 factory = getattr(import_module(module_name), "build_tools", None)
@@ -755,6 +768,110 @@ class AgentEnvironment:
                 ["target"],
             ),
         }
+
+        # 14. Refactored tool packages: filesystem / terminal / git (2026-10-16).
+        #     These 3 packages export plain functions (no build_tools), so they are
+        #     wired here by hand. Guarded like section 5e: a broken package is
+        #     skipped, the env still comes up. fs_/shell_/git_ prefixes keep the
+        #     new names from colliding with legacy tools (read_file, shell_run,
+        #     git_status, ...). Duplicates with identical capability
+        #     (terminal run/bg/status/kill, process start/poll/list/kill) are
+        #     deliberately NOT re-registered.
+        def _pkg_guard(fn):
+            try:
+                return fn()
+            except Exception as exc:  # tool never raises into the agent loop
+                return {"error": f"{type(exc).__name__}: {exc}"}
+
+        try:
+            from tools.filesystem import (
+                read as _fs_read, write as _fs_write, edit as _fs_edit,
+                append as _fs_append, delete as _fs_delete,
+                list_dir as _fs_list, info as _fs_info,
+            )
+            from tools.terminal.shell import forget as _shell_forget
+            from tools.git.gitops import git_diff as _git_diff, git_log as _git_log
+
+            def _reg14(name, func, description, properties, required):
+                self._tools[name] = {
+                    "name": name,
+                    "func": func,
+                    "description": description,
+                    "schema": _schema(properties, required),
+                }
+
+            _reg14("fs_read",
+                   lambda path, offset=1, limit=2000: _pkg_guard(
+                       lambda: _fs_read(path, int(offset), int(limit))),
+                   "Read a file with safe path resolution (blocks traversal). Returns numbered lines; binary files are reported, not dumped.",
+                   {"path": {"type": "string", "description": "File path."},
+                    "offset": {"type": "integer", "description": "1-based first line. Default 1."},
+                    "limit": {"type": "integer", "description": "Max lines. Default 2000."}},
+                   ["path"])
+            _reg14("fs_write",
+                   lambda path, content: _pkg_guard(
+                       lambda: _fs_write(path, content)),
+                   "Write complete content to a file, replacing anything already there (safe path resolution).",
+                   {"path": {"type": "string", "description": "File path."},
+                    "content": {"type": "string", "description": "Full file content."}},
+                   ["path", "content"])
+            _reg14("fs_edit",
+                   lambda path, old, new: _pkg_guard(
+                       lambda: _fs_edit(path, old, new)),
+                   "Edit a file by exact-match replacement (safe path resolution).",
+                   {"path": {"type": "string", "description": "File path."},
+                    "old": {"type": "string", "description": "Exact text to replace."},
+                    "new": {"type": "string", "description": "Replacement text."}},
+                   ["path", "old", "new"])
+            _reg14("fs_append",
+                   lambda path, text, newline=True: _pkg_guard(
+                       lambda: _fs_append(path, text, bool(newline))),
+                   "Append text to the end of a file (safe path resolution).",
+                   {"path": {"type": "string", "description": "File path."},
+                    "text": {"type": "string", "description": "Text to append."},
+                    "newline": {"type": "boolean", "description": "Add trailing newline. Default true."}},
+                   ["path", "text"])
+            _reg14("fs_delete",
+                   lambda path: _pkg_guard(lambda: _fs_delete(path)),
+                   "Permanently delete a file (safe path resolution, blocks traversal). No undo.",
+                   {"path": {"type": "string", "description": "File path to delete."}},
+                   ["path"])
+            _reg14("fs_list",
+                   lambda path=".", recursive=False, limit=200: _pkg_guard(
+                       lambda: _fs_list(path or ".", bool(recursive), int(limit))),
+                   "List directory contents with safe path resolution.",
+                   {"path": {"type": "string", "description": "Directory path. Default '.'."},
+                    "recursive": {"type": "boolean", "description": "Recurse into subdirectories. Default false."},
+                    "limit": {"type": "integer", "description": "Max entries. Default 200."}},
+                   [])
+            _reg14("fs_info",
+                   lambda path: _pkg_guard(lambda: _fs_info(path)),
+                   "Get file metadata: size, mtime, line count (safe path resolution).",
+                   {"path": {"type": "string", "description": "File path."}},
+                   ["path"])
+            _reg14("shell_forget",
+                   lambda job_id: _pkg_guard(lambda: _shell_forget(job_id)),
+                   "Drop a finished background shell job from the registry to free memory.",
+                   {"job_id": {"type": "string", "description": "Job id from shell_bg."}},
+                   ["job_id"])
+            _reg14("git_diff",
+                   lambda repo=".", staged=False, stat_only=True, max_chars=20000: _pkg_guard(
+                       lambda: _git_diff(repo or ".", bool(staged), bool(stat_only), int(max_chars))),
+                   "Show git diff: per-file stats plus optional raw diff text (capped). staged=true diffs the index.",
+                   {"repo": {"type": "string", "description": "Repo path. Default '.'."},
+                    "staged": {"type": "boolean", "description": "Diff staged changes. Default false."},
+                    "stat_only": {"type": "boolean", "description": "Only per-file stats, no raw diff. Default true."},
+                    "max_chars": {"type": "integer", "description": "Cap raw diff length. Default 20000."}},
+                   [])
+            _reg14("git_log",
+                   lambda repo=".", limit=10: _pkg_guard(
+                       lambda: _git_log(repo or ".", int(limit))),
+                   "Show recent commit history: hash, author, date, subject.",
+                   {"repo": {"type": "string", "description": "Repo path. Default '.'."},
+                    "limit": {"type": "integer", "description": "Max commits. Default 10."}},
+                   [])
+        except Exception as e:
+            print(f"[tools] refactored packages (filesystem/terminal/git) unavailable: {e}")
 
     def get_tools(self) -> Dict[str, Dict[str, Any]]:
         return self._tools
