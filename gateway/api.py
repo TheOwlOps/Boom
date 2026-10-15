@@ -237,8 +237,8 @@ class _Handler(BaseHTTPRequestHandler):
             tools_count = 0
             skills_count = 0
             try:
-                from agent.src.environment import build_environment
-                env = build_environment()
+                from agent.src.environment import AgentEnvironment
+                env = AgentEnvironment()
                 tools_count = len(getattr(env, "tools", {}) or {})
             except Exception:
                 pass
@@ -279,8 +279,8 @@ class _Handler(BaseHTTPRequestHandler):
             # Danh sách tools thật từ environment
             tools = []
             try:
-                from agent.src.environment import build_environment
-                env = build_environment()
+                from agent.src.environment import AgentEnvironment
+                env = AgentEnvironment()
                 for name, t in (getattr(env, "tools", {}) or {}).items():
                     tools.append({
                         "name": name,
@@ -351,8 +351,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(args, dict):
             return self._error(400, "args must be an object")
         try:
-            from agent.src.environment import build_environment
-            env = build_environment()
+            from agent.src.environment import AgentEnvironment
+            env = AgentEnvironment()
             tools = getattr(env, "tools", {}) or {}
             if tool_name not in tools:
                 return self._error(404, f"tool not found: {tool_name}")
