@@ -16,11 +16,37 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 
 class ChannelAdapter:
     """One platform. Subclass and override only what the platform's API offers."""
 
     name = "base"
+
+    # ------------------------------------------------------------ http client
+    # One shared AsyncClient per adapter instance (lazy): connections are
+    # reused across calls instead of a fresh handshake every time. Adapters
+    # must NOT close it after each call; close once via aclose() on shutdown.
+
+    def _http(self, timeout: float = 35.0) -> httpx.AsyncClient:
+        """The adapter's shared HTTP client, created lazily on first use."""
+        client = getattr(self, "_client", None)
+        if client is None:
+            client = httpx.AsyncClient(
+                timeout=timeout,
+                limits=httpx.Limits(max_connections=20,
+                                    max_keepalive_connections=10),
+            )
+            self._client = client
+        return client
+
+    async def aclose(self) -> None:
+        """Close the shared client. Call once on shutdown; safe to call twice."""
+        client = getattr(self, "_client", None)
+        if client is not None:
+            self._client = None
+            await client.aclose()
 
     # ------------------------------------------------------------------ reply path
 
@@ -48,6 +74,16 @@ class ChannelAdapter:
     async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
         """Delete a message the bot sent."""
         return {"error": f"{self.name}: deleting messages not supported by this platform"}
+
+    async def recall_message(self, target: str, message_id: str) -> Dict[str, Any]:
+        """Recall/unsend a message ("thu hồi" in Zalo terms).
+
+        On Telegram/Discord/Slack this deletes the bot-sent message — deleting
+        removes it for everyone, which is what recall means. Zalo OA and LINE
+        expose no bot-accessible recall/unsend endpoint (verified against
+        their public API docs), so those adapters override this with an
+        honest {"error": ...} instead of a fabricated call."""
+        return await self.delete_message(target, message_id)
 
     async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
         """Send a sticker to a chat. `sticker` is platform-native: a file_id or
@@ -164,6 +200,13 @@ class ChannelRegistry:
         if adapter is None:
             return {"error": f"unknown channel {channel!r}"}
         return await adapter.delete_message(target, message_id)
+
+    async def recall_message(self, channel: str, target: str,
+                             message_id: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.recall_message(target, message_id)
 
     async def send_sticker(self, channel: str, target: str,
                            sticker: str) -> Dict[str, Any]:

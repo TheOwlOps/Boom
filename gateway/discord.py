@@ -20,7 +20,6 @@ import ssl
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-import httpx
 
 from tools.ws_client import WebSocket
 
@@ -73,12 +72,12 @@ class DiscordChannel(ChannelAdapter):
 
     async def react(self, target: str, message_id: str, emoji: str) -> Dict[str, Any]:
         """PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me -> 204."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.put(
-                f"{self.api_base}/channels/{target}/messages/{message_id}"
-                f"/reactions/{quote(emoji, safe='')}/@me",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.put(
+            f"{self.api_base}/channels/{target}/messages/{message_id}"
+            f"/reactions/{quote(emoji, safe='')}/@me",
+            headers=self.headers,
+        )
         if resp.status_code in (200, 201, 204):
             return {"ok": True}
         return {"error": f"discord add reaction refused: HTTP {resp.status_code}"}
@@ -86,22 +85,22 @@ class DiscordChannel(ChannelAdapter):
     async def edit_message(self, target: str, message_id: str,
                            text: str) -> Dict[str, Any]:
         """PATCH the message content (only the bot's own messages)."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.patch(
-                f"{self.api_base}/channels/{target}/messages/{message_id}",
-                headers=self.headers,
-                json={"content": text[:MAX_MESSAGE]},
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.patch(
+            f"{self.api_base}/channels/{target}/messages/{message_id}",
+            headers=self.headers,
+            json={"content": text[:MAX_MESSAGE]},
+        )
         if resp.status_code in (200, 201):
             return {"ok": True}
         return {"error": f"discord edit refused: HTTP {resp.status_code}"}
 
     async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.delete(
-                f"{self.api_base}/channels/{target}/messages/{message_id}",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.delete(
+            f"{self.api_base}/channels/{target}/messages/{message_id}",
+            headers=self.headers,
+        )
         if resp.status_code in (200, 201, 204):
             return {"ok": True}
         return {"error": f"discord delete refused: HTTP {resp.status_code}"}
@@ -110,12 +109,12 @@ class DiscordChannel(ChannelAdapter):
         """POST /channels/{id}/messages with sticker_ids. A bot may only send
         stickers from guilds it belongs to — a sticker it cannot use is
         refused by Discord and reported here honestly, never faked."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                f"{self.api_base}/channels/{target}/messages",
-                headers=self.headers,
-                json={"sticker_ids": [str(sticker)]},
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.post(
+            f"{self.api_base}/channels/{target}/messages",
+            headers=self.headers,
+            json={"sticker_ids": [str(sticker)]},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -137,11 +136,11 @@ class DiscordChannel(ChannelAdapter):
         """DELETE /guilds/{guild_id}/members/{user_id} -> 204. Needs the Kick
         Members permission. `target` is the guild id. The user can rejoin with
         a fresh invite. Admin-only: call only on the user's explicit request."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.delete(
-                f"{self.api_base}/guilds/{target}/members/{user_id}",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.delete(
+            f"{self.api_base}/guilds/{target}/members/{user_id}",
+            headers=self.headers,
+        )
         if resp.status_code in (200, 201, 204):
             return {"ok": True}
         return self._refused("kick", resp.status_code)
@@ -150,11 +149,11 @@ class DiscordChannel(ChannelAdapter):
         """PUT /guilds/{guild_id}/bans/{user_id} -> 204. Needs the Ban Members
         permission. `target` is the guild id. Admin-only: call only on the
         user's explicit request."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.put(
-                f"{self.api_base}/guilds/{target}/bans/{user_id}",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.put(
+            f"{self.api_base}/guilds/{target}/bans/{user_id}",
+            headers=self.headers,
+        )
         if resp.status_code in (200, 201, 204):
             return {"ok": True}
         return self._refused("ban", resp.status_code)
@@ -165,11 +164,11 @@ class DiscordChannel(ChannelAdapter):
         Only guilds the bot is in — otherwise Discord answers 403/404, which
         is reported honestly.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.get(
-                f"{self.api_base}/guilds/{target}?with_counts=true",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.get(
+            f"{self.api_base}/guilds/{target}?with_counts=true",
+            headers=self.headers,
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -192,11 +191,11 @@ class DiscordChannel(ChannelAdapter):
         never fabricated. `role` carries the raw role id list; resolving ids
         to names needs a further roles call and is left to the caller.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.get(
-                f"{self.api_base}/guilds/{target}/members/{user_id}",
-                headers=self.headers,
-            )
+        client = self._http(timeout=self.timeout)
+        resp = await client.get(
+            f"{self.api_base}/guilds/{target}/members/{user_id}",
+            headers=self.headers,
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -218,21 +217,21 @@ class DiscordChannel(ChannelAdapter):
     # ------------------------------------------------------------------ REST/WS
 
     async def gateway_url(self) -> str:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.get(f"{self.api_base}/gateway/bot", headers=self.headers)
-            resp.raise_for_status()
-            data = resp.json()
+        client = self._http(timeout=self.timeout)
+        resp = await client.get(f"{self.api_base}/gateway/bot", headers=self.headers)
+        resp.raise_for_status()
+        data = resp.json()
         return f"{data['url']}/?v=10&encoding=json"
 
     async def send_message(self, channel_id: str, text: str) -> dict:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                f"{self.api_base}/channels/{channel_id}/messages",
-                headers=self.headers,
-                json={"content": text[:MAX_MESSAGE]},
-            )
-            resp.raise_for_status()  # a refused send must not read as delivered
-            return resp.json()
+        client = self._http(timeout=self.timeout)
+        resp = await client.post(
+            f"{self.api_base}/channels/{channel_id}/messages",
+            headers=self.headers,
+            json={"content": text[:MAX_MESSAGE]},
+        )
+        resp.raise_for_status()  # a refused send must not read as delivered
+        return resp.json()
 
     async def run(self):
         """Stay connected until stop(). A dropped socket is retried with backoff."""

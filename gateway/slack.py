@@ -14,7 +14,6 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -65,12 +64,12 @@ class SlackAdapter(ChannelAdapter):
         return os.getenv("BOOM_SLACK_SIGNING_SECRET", "")
 
     async def _post(self, method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._base()}/{method}",
-                headers={"Authorization": f"Bearer {self._token()}"},
-                json=payload,
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._base()}/{method}",
+            headers={"Authorization": f"Bearer {self._token()}"},
+            json=payload,
+        )
         try:
             body = resp.json() or {}
         except ValueError:

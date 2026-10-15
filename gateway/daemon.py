@@ -74,6 +74,13 @@ class GatewayDaemon:
         """Delete a bot-sent channel message."""
         return await self.registry.delete_message(channel, target, message_id)
 
+    async def recall_message(self, channel: str, target: str,
+                             message_id: str) -> Dict[str, Any]:
+        """Recall/unsend a message ("thu hồi"). On Telegram/Discord/Slack this
+        deletes the bot-sent message (removal for everyone = recall); Zalo OA
+        and LINE have no bot recall API and answer {"error": ...} honestly."""
+        return await self.registry.recall_message(channel, target, message_id)
+
     async def kick_member(self, channel: str, target: str,
                           user_id: str) -> Dict[str, Any]:
         """Remove a member from a group chat (they can rejoin). Admin-only:

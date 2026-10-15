@@ -11,7 +11,6 @@ import hmac
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -48,21 +47,21 @@ class TelegramAdapter(ChannelAdapter):
         return bool(self._tok())
 
     async def send_text(self, target: str, text: str) -> bool:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(f"{self._api()}/sendMessage",
-                                     json={"chat_id": target, "text": text})
+        client = self._http()
+        resp = await client.post(f"{self._api()}/sendMessage",
+                                 json={"chat_id": target, "text": text})
         print(f"[telegram] -> {resp.status_code} {len(text)} chars", flush=True)
         return resp.status_code < 300
 
     # -- actions -----------------------------------------------------------
 
     async def react(self, target: str, message_id: str, emoji: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/setMessageReaction",
-                json={"chat_id": target, "message_id": self._msg_id(message_id),
-                      "reaction": [{"type": "emoji", "emoji": emoji}]},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/setMessageReaction",
+            json={"chat_id": target, "message_id": self._msg_id(message_id),
+                  "reaction": [{"type": "emoji", "emoji": emoji}]},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -73,12 +72,12 @@ class TelegramAdapter(ChannelAdapter):
                          f"HTTP {resp.status_code}: {body or 'no body'}"}
 
     async def edit_message(self, target: str, message_id: str, text: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/editMessageText",
-                json={"chat_id": target, "message_id": self._msg_id(message_id),
-                      "text": text},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/editMessageText",
+            json={"chat_id": target, "message_id": self._msg_id(message_id),
+                  "text": text},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -89,11 +88,11 @@ class TelegramAdapter(ChannelAdapter):
                          f"HTTP {resp.status_code}: {body or 'no body'}"}
 
     async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/deleteMessage",
-                json={"chat_id": target, "message_id": self._msg_id(message_id)},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/deleteMessage",
+            json={"chat_id": target, "message_id": self._msg_id(message_id)},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -106,11 +105,11 @@ class TelegramAdapter(ChannelAdapter):
     async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
         """POST /sendSticker. `sticker` is a file_id from a previous sticker,
         an http(s) URL to a .webp/.tgs/.webm sticker, or an uploaded file_id."""
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/sendSticker",
-                json={"chat_id": target, "sticker": sticker},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/sendSticker",
+            json={"chat_id": target, "sticker": sticker},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -133,37 +132,37 @@ class TelegramAdapter(ChannelAdapter):
         """Kick = banChatMember then unbanChatMember immediately, so the user
         is removed but can rejoin (a plain ban would block re-entry).
         Admin-only: call only on the user's explicit request."""
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            ban = await client.post(
-                f"{self._api()}/banChatMember",
-                json={"chat_id": target, "user_id": user_id},
-            )
-            try:
-                ban_body = ban.json() or {}
-            except ValueError:
-                ban_body = {}
-            if not (ban.status_code < 300 and ban_body.get("ok")):
-                return self._refused("banChatMember", ban.status_code, ban_body)
-            unban = await client.post(
-                f"{self._api()}/unbanChatMember",
-                json={"chat_id": target, "user_id": user_id},
-            )
-            try:
-                unban_body = unban.json() or {}
-            except ValueError:
-                unban_body = {}
-            if not (unban.status_code < 300 and unban_body.get("ok")):
-                return self._refused("unbanChatMember", unban.status_code, unban_body)
+        client = self._http()
+        ban = await client.post(
+            f"{self._api()}/banChatMember",
+            json={"chat_id": target, "user_id": user_id},
+        )
+        try:
+            ban_body = ban.json() or {}
+        except ValueError:
+            ban_body = {}
+        if not (ban.status_code < 300 and ban_body.get("ok")):
+            return self._refused("banChatMember", ban.status_code, ban_body)
+        unban = await client.post(
+            f"{self._api()}/unbanChatMember",
+            json={"chat_id": target, "user_id": user_id},
+        )
+        try:
+            unban_body = unban.json() or {}
+        except ValueError:
+            unban_body = {}
+        if not (unban.status_code < 300 and unban_body.get("ok")):
+            return self._refused("unbanChatMember", unban.status_code, unban_body)
         return {"ok": True}
 
     async def ban_member(self, target: str, user_id: str) -> Dict[str, Any]:
         """banChatMember: the user is removed and cannot rejoin until unbanned.
         Admin-only: call only on the user's explicit request."""
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/banChatMember",
-                json={"chat_id": target, "user_id": user_id},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/banChatMember",
+            json={"chat_id": target, "user_id": user_id},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -179,9 +178,9 @@ class TelegramAdapter(ChannelAdapter):
         call: when it fails (e.g. a private chat), member_count stays None but
         the rest of the info still returns.
         """
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(f"{self._api()}/getChat",
-                                     json={"chat_id": target})
+        client = self._http()
+        resp = await client.post(f"{self._api()}/getChat",
+                                 json={"chat_id": target})
         try:
             body = resp.json() or {}
         except ValueError:
@@ -197,9 +196,9 @@ class TelegramAdapter(ChannelAdapter):
             "member_count": None,
         }
         try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                cresp = await client.post(f"{self._api()}/getChatMemberCount",
-                                          json={"chat_id": target})
+            client = self._http()
+            cresp = await client.post(f"{self._api()}/getChatMemberCount",
+                                      json={"chat_id": target})
             cbody = cresp.json() or {}
             if cresp.status_code < 300 and cbody.get("ok"):
                 info["member_count"] = cbody.get("result")
@@ -214,11 +213,11 @@ class TelegramAdapter(ChannelAdapter):
         stranger — or a chat the bot is not in — makes Telegram answer
         400/403, which is reported as an error, never fabricated.
         """
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._api()}/getChatMember",
-                json={"chat_id": target, "user_id": user_id},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._api()}/getChatMember",
+            json={"chat_id": target, "user_id": user_id},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
