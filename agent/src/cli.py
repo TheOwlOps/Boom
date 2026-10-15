@@ -179,11 +179,13 @@ class BoomCLI:
                 print("\n\nSession terminated by user.")
                 break
 
-    async def _serve_cron(self):
+    async def _serve_cron(self, deliver=None):
         """Run scheduled prompts for as long as the daemon lives.
 
         Only the daemon hosts this: the interactive REPL blocks on input, so a scheduler
         there would never fire. A failing job is logged by the runner, not fatal here.
+        `deliver`, when given, is an async (channel, target, text) -> bool hook that pushes
+        a successful job's result to its deliver_to target (see tools.cronjob_tool).
         """
         from tools.cronjob_tool import JOBS_FILE, CronRunner, CronStore
 
@@ -192,7 +194,7 @@ class BoomCLI:
             jobs = store.list()
             if jobs:
                 print(f"Cron: {len(jobs)} scheduled job(s) from memories/{JOBS_FILE}")
-            await CronRunner(store, get_loop=lambda: self.loop).serve()
+            await CronRunner(store, get_loop=lambda: self.loop, deliver=deliver).serve()
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -220,7 +222,17 @@ class BoomCLI:
             "/webhook/<channel>"
         )
         print("Ready and listening for incoming messages.")
-        cron_task = asyncio.create_task(self._serve_cron())
+
+        async def _cron_deliver(channel: str, target: str, text: str) -> bool:
+            """Push a cron job's result to its deliver_to target via the channel adapters."""
+            try:
+                return await daemon.send_to(channel, target, text)
+            except Exception as e:
+                print(f"[cron] delivery to {channel}:{target} failed: "
+                      f"{type(e).__name__}: {e}", flush=True)
+                return False
+
+        cron_task = asyncio.create_task(self._serve_cron(deliver=_cron_deliver))
         try:
             await daemon.start()
         finally:

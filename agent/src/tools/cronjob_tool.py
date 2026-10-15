@@ -9,6 +9,12 @@ is kept on the job. Occurrences missed while the process was down can be replaye
 `BOOM_CRON_CATCHUP` (default 1) is how many of them a due job runs again on restart, 0 restoring
 the plain "run once" behaviour. Schedule times are the host's local time: a job set in another
 timezone needs the host set to it, because a cron expression carries no zone of its own.
+
+A job may carry `deliver_to: {"channel": ..., "target": ...}`: when the runner is given a
+`deliver` hook (the gateway daemon binds it to `daemon.send_to`), a successful run's text is
+pushed to that channel target — this is how a scheduled job proactively messages the owner
+instead of its result dying in the ledger. Without a bound hook, delivery is skipped and
+recorded as such; it never fails the job.
 """
 
 import asyncio
@@ -190,11 +196,17 @@ class CronStore:
         tmp.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
         os.replace(tmp, self.jobs_file)
 
-    def add(self, cron: str, prompt: str, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """Append a job and return it. ValueError if the expression or the id is unusable."""
+    def add(self, cron: str, prompt: str, job_id: Optional[str] = None,
+            deliver_to: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Append a job and return it. ValueError if the expression or the id is unusable.
+
+        `deliver_to`, when given, is {"channel": ..., "target": ...}: a successful run's
+        text is pushed there by a runner with a deliver hook bound (see CronRunner).
+        """
         parse_cron(cron)
         if not (prompt or "").strip():
             raise ValueError("a cron job needs a prompt to run")
+        dest = self._checked_deliver_to(deliver_to)
         jobs = self.list()
         jid = job_id or f"cron_{int(self.clock().timestamp() * 1000)}"
         if any(j["id"] == jid for j in jobs):
@@ -208,10 +220,24 @@ class CronStore:
             "runs": 0,
             "enabled": True,
             "last_error": "",
+            "deliver_to": dest,
         }
         jobs.append(job)
         self._save(jobs)
         return job
+
+    @staticmethod
+    def _checked_deliver_to(deliver_to: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        """Normalise a deliver_to mapping, or ValueError when it cannot name a target."""
+        if deliver_to is None:
+            return None
+        if not isinstance(deliver_to, dict):
+            raise ValueError("deliver_to must be a mapping like {'channel': ..., 'target': ...}")
+        channel = str(deliver_to.get("channel") or "").strip()
+        target = str(deliver_to.get("target") or "").strip()
+        if not channel or not target:
+            raise ValueError("deliver_to needs non-empty 'channel' and 'target'")
+        return {"channel": channel, "target": target}
 
     def remove(self, job_id: str) -> bool:
         jobs = self.list()
@@ -259,9 +285,23 @@ def _anchor(job: Dict[str, Any]) -> Optional[datetime]:
     return None
 
 
+def _result_text(result: Any) -> str:
+    """Human-readable text from a loop.step() result, mirroring the gateway runner's pick."""
+    if isinstance(result, dict):
+        return str(result.get("action") or result.get("observation")
+                   or result.get("text") or "Done.")
+    return str(result) if result is not None else "Done."
+
+
 class CronRunner:
     """Fires due jobs through the agent loop. Clock and sleep are injected, so a test can call
-    `run_due(now)` and never wait; `serve()` is the standing loop."""
+    `run_due(now)` and never wait; `serve()` is the standing loop.
+
+    `deliver` is an optional `async (channel, target, text) -> bool` hook. When a job carries
+    `deliver_to`, a successful run's text is pushed through it (the gateway daemon binds this
+    to `daemon.send_to`, so a cron job can proactively message a channel). Delivery never
+    fails the job: its outcome lands on the run record as `delivered` (True/False/None).
+    """
 
     def __init__(
         self,
@@ -273,6 +313,7 @@ class CronRunner:
         catchup: Optional[int] = None,
         retries: Optional[int] = None,
         retry_delay: Optional[float] = None,
+        deliver: Optional[Callable[[str, str, str], Any]] = None,
     ):
         self.store = store
         self.get_loop = get_loop or (lambda: None)
@@ -283,6 +324,7 @@ class CronRunner:
         self.retries = int(os.getenv("BOOM_CRON_RETRIES", DEFAULT_RETRIES)) if retries is None else retries
         self.retry_delay = (float(os.getenv("BOOM_CRON_RETRY_DELAY", DEFAULT_RETRY_DELAY))
                             if retry_delay is None else retry_delay)
+        self.deliver = deliver
 
     def _due(self, job: Dict[str, Any], now: datetime) -> bool:
         anchor = _anchor(job)
@@ -380,7 +422,30 @@ class CronRunner:
         }
         if not error:
             record["result"] = result
+            record["delivered"] = await self._maybe_deliver(job, result)
         return record
+
+    async def _maybe_deliver(self, job: Dict[str, Any], result: Any) -> Optional[bool]:
+        """Push a successful run's text to the job's deliver_to target.
+
+        Returns True/False on delivery, None when the job has no deliver_to (or no hook
+        is bound). A delivery failure is logged, never raised: the job already ran fine.
+        """
+        dest = job.get("deliver_to") or {}
+        channel = str(dest.get("channel") or "").strip()
+        target = str(dest.get("target") or "").strip()
+        if not channel or not target:
+            return None
+        if self.deliver is None:
+            logger.warning("cron job %s wants delivery to %s:%s but no deliver hook is bound",
+                           job.get("id"), channel, target)
+            return None
+        try:
+            return bool(await self.deliver(channel, target, _result_text(result)))
+        except Exception as e:
+            logger.warning("cron job %s delivery to %s:%s failed: %s: %s",
+                           job.get("id"), channel, target, type(e).__name__, e)
+            return False
 
     async def serve(self):
         """Sleep until the next due job, run what is due, repeat."""
@@ -409,11 +474,12 @@ def build_tools(env) -> Dict[str, Dict[str, Any]]:
     store = CronStore(_jobs_path(root_dir)) if root_dir is not None else None
     runner = CronRunner(store, get_loop=lambda: getattr(env, "loop", None)) if store else None
 
-    def _add(cron: str, prompt: str, job_id: Optional[str] = None) -> Dict[str, Any]:
+    def _add(cron: str, prompt: str, job_id: Optional[str] = None,
+             deliver_to: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         if store is None:
             return {"error": "environment has no root_dir: nowhere to keep cron jobs"}
         try:
-            return {"job": store.add(cron, prompt, job_id)}
+            return {"job": store.add(cron, prompt, job_id, deliver_to=deliver_to)}
         except ValueError as e:
             return {"error": str(e)}
         except OSError as e:
@@ -445,13 +511,20 @@ def build_tools(env) -> Dict[str, Dict[str, Any]]:
                 "Schedule a prompt to run on a 5-field cron expression "
                 "(minute hour day-of-month month day-of-week, '*' '*/n' 'a-b' 'a-b/n' and comma "
                 "lists; @hourly/@daily/@weekly/@monthly/@yearly also work). Jobs persist in "
-                "memories/cron_jobs.json and fire while the runner is up."
+                "memories/cron_jobs.json and fire while the runner is up. With deliver_to "
+                "({'channel': ..., 'target': ...}) a successful run's text is pushed to that "
+                "channel target by the daemon's scheduler."
             ),
             "schema": _schema(
                 {
                     "cron": {"type": "string", "description": "Cron expression, e.g. '0 9 * * 1-5'."},
                     "prompt": {"type": "string", "description": "Prompt to send to the agent when it fires."},
                     "job_id": {"type": "string", "description": "Optional id; generated if omitted."},
+                    "deliver_to": {
+                        "type": "object",
+                        "description": "Optional {'channel': 'telegram', 'target': '<chat id>'}: "
+                                       "deliver the run's result there when the daemon fires it.",
+                    },
                 },
                 ["cron", "prompt"],
             ),
