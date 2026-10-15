@@ -139,9 +139,9 @@ def _schema(props: Dict[str, Any], required: list) -> Dict[str, Any]:
 
 
 def build_tools(env_or_root_dir=None) -> Dict[str, Dict[str, Any]]:
-    """2 tools: ocr_image, ocr_image_url. Env is accepted for convention
-    but not needed -- OCR is stateless."""
-    return {
+    """3 tools: ocr_image, ocr_image_url, ocr_image_queued. Env is accepted
+    for convention but not needed -- OCR is stateless."""
+    tools = {
         "ocr_image": {
             "name": "ocr_image",
             "func": ocr_image,
@@ -175,4 +175,323 @@ def build_tools(env_or_root_dir=None) -> Dict[str, Dict[str, Any]]:
                 ["url"],
             ),
         },
+        "ocr_image_queued": {
+            "name": "ocr_image_queued",
+            "func": ocr_image_queued,
+            "description": ("OCR via a bounded worker queue: safe under heavy "
+                            "concurrent load (limits simultaneous tesseract "
+                            "processes, caches repeat images). Returns "
+                            "{'text', 'lang', 'char_count'}."),
+            "schema": _schema(
+                {
+                    "image_path": {"type": "string",
+                                   "description": "Local path to the image."},
+                    "lang": {"type": "string",
+                             "description": "Tesseract languages, e.g. "
+                                            "'vie+eng'. Default 'vie+eng'."},
+                    "timeout": {"type": "number",
+                                "description": "Max seconds to wait. "
+                                               "Default 120."},
+                },
+                ["image_path"],
+            ),
+        },
     }
+    return tools
+
+
+# ---------------------------------------------------------------------------
+# Async OCR queue: bounded concurrency + result cache + backpressure.
+#
+# Problem: 100 users asking for OCR at once would spawn 100 tesseract
+# processes and hang the machine. OCRQueue serializes the work through a
+# small worker pool, caches results by image hash, and refuses new work
+# with an honest {"error"} when the backlog is full instead of hanging.
+#
+# The original sync functions above (ocr_image / ocr_image_url) are
+# untouched for backward compatibility.
+# ---------------------------------------------------------------------------
+
+import asyncio
+import hashlib
+import random
+import threading
+import time
+from collections import OrderedDict
+
+QUEUE_MAX_PENDING = 1000  # backpressure: refuse beyond this many active jobs
+
+
+def _new_job_id() -> str:
+    return "ocr_%d_%04x" % (int(time.time() * 1000), random.getrandbits(16))
+
+
+class OCRQueue:
+    """Bounded async OCR worker pool.
+
+    Single event loop per instance. Create one per loop, or use the
+    sync wrapper ocr_image_queued() which manages its own loop.
+
+    - submit(image_path, lang) -> job_id | {"error"}  (sync, fail-fast)
+    - await get_result(job_id, timeout) -> {"status", ...}  (async)
+    - stats() -> dict  (sync)
+    """
+
+    def __init__(self, max_workers: int = 4, cache_size: int = 100,
+                 max_pending: int = QUEUE_MAX_PENDING) -> None:
+        self._max_workers = max(1, int(max_workers))
+        self._cache_size = max(0, int(cache_size))
+        self._max_pending = max(1, int(max_pending))
+        self._jobs: Dict[str, Dict[str, Any]] = {}
+        self._queue: Optional[asyncio.Queue] = None
+        self._sem: Optional[asyncio.Semaphore] = None
+        self._cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._inflight: Dict[str, str] = {}  # sha:lang -> job_id
+        self._workers_started = False
+        self._submit_lock = threading.Lock()
+        self._cache_hits = 0
+        self._done_count = 0
+
+    # -- internals ------------------------------------------------------
+
+    def _ensure(self) -> None:
+        # asyncio primitives bind lazily (3.10+); safe without a running loop.
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+            self._sem = asyncio.Semaphore(self._max_workers)
+
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    async def _ensure_workers(self) -> None:
+        self._ensure()
+        if not self._workers_started:
+            self._workers_started = True
+            self._worker_tasks = []
+            for _ in range(self._max_workers):
+                self._worker_tasks.append(asyncio.create_task(self._worker_loop()))
+
+    async def aclose(self) -> None:
+        """Cancel worker tasks. Call before dropping the queue to avoid
+        'Task was destroyed but it is pending' warnings."""
+        for t in getattr(self, "_worker_tasks", []):
+            t.cancel()
+        for t in getattr(self, "_worker_tasks", []):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        self._workers_started = False
+
+    async def _worker_loop(self) -> None:
+        assert self._queue is not None
+        while True:
+            job_id = await self._queue.get()
+            try:
+                await self._process_job(job_id)
+            except Exception as e:  # never let a worker die
+                job = self._jobs.get(job_id)
+                if job is not None and job["status"] not in ("done", "error"):
+                    job["status"] = "error"
+                    job["result"] = {"error": "ocr worker crashed: %s" % (e,)}
+                    with self._submit_lock:
+                        self._inflight.pop(job["sha"], None)
+            finally:
+                self._queue.task_done()
+
+    async def _process_job(self, job_id: str) -> None:
+        job = self._jobs.get(job_id)
+        if job is None or job["status"] != "pending":
+            return
+        job["status"] = "running"
+        try:
+            assert self._sem is not None
+            async with self._sem:
+                # _run_tesseract is resolved at call time so tests can patch it.
+                result = await asyncio.to_thread(
+                    _run_tesseract, job["image_path"], job["lang"])
+        except Exception as e:
+            result = {"error": "ocr execution failed: %s" % (e,)}
+        if not isinstance(result, dict):
+            result = {"error": "ocr returned non-dict: %r" % (result,)}
+        ok = "error" not in result
+        with self._submit_lock:
+            self._inflight.pop(job["sha"], None)
+            if ok and self._cache_size > 0:
+                self._cache[job["sha"]] = dict(result)
+                self._cache.move_to_end(job["sha"])
+                while len(self._cache) > self._cache_size:
+                    self._cache.popitem(last=False)
+        if ok:
+            self._done_count += 1
+        job["result"] = result
+        job["status"] = "done" if ok else "error"
+
+    @staticmethod
+    def _format(job: Dict[str, Any]) -> Dict[str, Any]:
+        st = job["status"]
+        if st == "done":
+            r = job.get("result") or {}
+            return {"status": "done", "job_id": job["job_id"],
+                    "text": r.get("text", ""),
+                    "lang": r.get("lang", job["lang"]),
+                    "char_count": r.get("char_count", 0)}
+        if st == "error":
+            r = job.get("result") or {}
+            return {"status": "error", "job_id": job["job_id"],
+                    "error": r.get("error", "unknown error")}
+        return {"status": st, "job_id": job["job_id"]}
+
+    # -- public API -----------------------------------------------------
+
+    def submit(self, image_path: str, lang: str = "vie+eng") -> Any:
+        """Validate (fail fast) and enqueue. Returns job_id, or {"error"}.
+
+        Sync-safe: validates and enqueues immediately; workers start when a
+        running loop is available (submit from async code, or first
+        get_result / ocr_image_queued call).
+        """
+        path = (image_path or "").strip()
+        if not path:
+            return {"error": "image_path is required"}
+        if not os.path.isfile(path):
+            return {"error": "file not found: %s" % path}
+        if not _looks_like_image(path):
+            return {"error": "not a supported image: %s "
+                             "(png/jpg/webp/bmp/tiff)" % path}
+        lang = (lang or "").strip()
+        if not lang:
+            return {"error": "lang must be a non-empty string, e.g. 'vie+eng'"}
+        try:
+            key = self._sha256_file(path) + ":" + lang
+        except OSError as e:
+            return {"error": "could not read file: %s" % (e,)}
+
+        with self._submit_lock:
+            if key in self._cache:  # instant hit, no worker needed
+                self._cache_hits += 1
+                self._cache.move_to_end(key)
+                job_id = _new_job_id()
+                self._jobs[job_id] = {
+                    "job_id": job_id, "image_path": path, "lang": lang,
+                    "sha": key, "status": "done",
+                    "result": dict(self._cache[key]),
+                    "created_at": time.time(),
+                }
+                self._done_count += 1
+                return job_id
+            if key in self._inflight:  # same image already queued: dedupe
+                return self._inflight[key]
+            active = sum(1 for j in self._jobs.values()
+                         if j["status"] in ("pending", "running"))
+            if active >= self._max_pending:
+                return {"error": "ocr queue full (%d active jobs), "
+                                 "try again later" % active}
+            job_id = _new_job_id()
+            self._jobs[job_id] = {
+                "job_id": job_id, "image_path": path, "lang": lang,
+                "sha": key, "status": "pending", "result": None,
+                "created_at": time.time(),
+            }
+            self._inflight[key] = job_id
+            self._ensure()
+            assert self._queue is not None
+            self._queue.put_nowait(job_id)
+
+        # Opportunistically start workers if we're inside a running loop.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            asyncio.create_task(self._ensure_workers())
+        return job_id
+
+    async def get_result(self, job_id: str,
+                         timeout: float = 30) -> Dict[str, Any]:
+        """Wait up to `timeout` seconds for a job. Never raises.
+
+        Returns {"status": "done", "text", ...}, {"status": "error", "error"},
+        or the current {"status": "pending"/"running"} on timeout.
+        """
+        await self._ensure_workers()
+        job = self._jobs.get(job_id)
+        if job is None:
+            return {"status": "error", "job_id": job_id,
+                    "error": "unknown job_id: %s" % (job_id,)}
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while time.monotonic() < deadline:
+            if job["status"] in ("done", "error"):
+                return self._format(job)
+            await asyncio.sleep(0.05)
+        return self._format(job)
+
+    def stats(self) -> Dict[str, Any]:
+        with self._submit_lock:
+            queued = sum(1 for j in self._jobs.values()
+                         if j["status"] == "pending")
+            running = sum(1 for j in self._jobs.values()
+                          if j["status"] == "running")
+            return {
+                "queued": queued,
+                "running": running,
+                "done": self._done_count,
+                "total_jobs": len(self._jobs),
+                "cache_hits": self._cache_hits,
+                "cache_size": len(self._cache),
+                "max_workers": self._max_workers,
+                "max_pending": self._max_pending,
+            }
+
+
+def ocr_image_queued(image_path: str, lang: str = "vie+eng",
+                     timeout: float = 120, max_workers: int = 4) -> Dict[str, Any]:
+    """Sync convenience: submit to a private queue and wait for the result.
+
+    Returns {"text", "lang", "char_count"} or {"error"}. Never raises.
+    Safe to call with or without a running event loop.
+    """
+    async def _run() -> Dict[str, Any]:
+        q = OCRQueue(max_workers=max_workers)
+        try:
+            rid = q.submit(image_path, lang)
+            if isinstance(rid, dict):  # validation / backpressure error
+                return rid
+            res = await q.get_result(rid, timeout=timeout)
+            if res.get("status") == "done":
+                return {"text": res.get("text", ""),
+                        "lang": res.get("lang", (lang or "vie+eng").strip()),
+                        "char_count": res.get("char_count", 0)}
+            if res.get("status") == "error":
+                return {"error": res.get("error", "unknown ocr error")}
+            return {"error": "ocr timed out after %ss (job %s)" %
+                             (timeout, res.get("status"))}
+        finally:
+            await q.aclose()
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            return asyncio.run(_run())
+        except Exception as e:
+            return {"error": "queued ocr failed: %s" % (e,)}
+    # Already inside a loop: run in a helper thread with a fresh loop
+    # so we never deadlock the caller's loop.
+    out: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            out["r"] = asyncio.run(_run())
+        except Exception as e:  # pragma: no cover - defensive
+            out["r"] = {"error": "queued ocr failed: %s" % (e,)}
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout + 10)
+    return out.get("r", {"error": "queued ocr thread did not finish"})
