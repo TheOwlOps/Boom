@@ -1,0 +1,262 @@
+"""Interactive Terminal CLI and Daemon Runner for Boom Agent Harness."""
+
+import argparse
+import asyncio
+import os
+import sys
+import time
+from pathlib import Path
+
+# Add root directory to path
+root_dir = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(root_dir / "agent" / "src"))
+
+from agent.src.config import BoomConfig
+from agent.src.environment import AgentEnvironment
+from agent.src.loop.react import ReActLoop
+from agent.src.providers.llm import LLMProvider
+from agent.src.security.system_one_gate import SystemOneGate
+from gateway.daemon import GatewayDaemon
+
+BANNER = r"""
+  ██████╗  ██████╗  ██████╗ ███╗   ███╗
+  ██╔══██╗██╔═══██╗██╔═══██╗████╗ ████║
+  ██████╔╝██║   ██║██║   ██║██╔████╔██║
+  ██╔══██╗██║   ██║██║   ██║██║╚██╔╝██║
+  ██████╔╝╚██████╔╝╚██████╔╝██║ ╚═╝ ██║
+  ╚═════╝  ╚═════╝  ╚═════╝ ╚═╝     ╚═╝
+  Autonomous Agent Harness (Parity Edition)
+"""
+
+class BoomCLI:
+    def __init__(self, config: BoomConfig):
+        self.config = config
+        self.env = AgentEnvironment(workdir=Path(config.workdir), yolo=config.yolo)
+        self.llm = LLMProvider(
+            base_url=config.primary_provider.base_url,
+            api_key=config.primary_provider.api_key,
+            model=config.primary_provider.model,
+            timeout=config.primary_provider.timeout
+        )
+        self.session_id = f"session_{int(time.time())}"
+        self.loop = ReActLoop(
+            self.env,
+            self.llm,
+            accountant=self.env.token_accountant,
+            session_id=self.session_id,
+        )
+        # cron_run needs a loop to run a scheduled prompt through; without it the tool refuses.
+        self.env.loop = self.loop
+        self._attach_evaluator()
+
+    def _attach_evaluator(self):
+        """Run the adversarial critics on a second provider when one is configured.
+
+        MASS's own caveat is that solver, evaluator and optimizer share one model and so
+        share its blind spots. A different model is the only defence available here, so it
+        is opt-in: BOOM_EVALUATOR_BASE_URL / _API_KEY / _MODEL.
+        """
+        base_url = os.environ.get("BOOM_EVALUATOR_BASE_URL")
+        model = os.environ.get("BOOM_EVALUATOR_MODEL")
+        if not base_url or not model:
+            return
+        evaluator = LLMProvider(
+            base_url=base_url,
+            api_key=os.environ.get("BOOM_EVALUATOR_API_KEY", ""),
+            model=model,
+            timeout=self.config.primary_provider.timeout,
+        )
+        self.env.delegation.evaluator_llm = evaluator
+        self.env.delegation.optimizer_llm = evaluator
+        print(f"Evaluator model: {model} (separate from {self.config.primary_provider.model})")
+    def print_banner(self):
+        print(BANNER)
+        print(f"Model: {self.config.primary_provider.model} | Mode: {'YOLO (Auto-approve)' if self.config.yolo else 'Interactive Approval'}")
+        print(f"Session: {self.session_id} | Working Directory: {Path(self.config.workdir).resolve()}")
+        print("Type your message or /help for commands. Press Ctrl+C or type /exit to quit.\n" + "-" * 70)
+
+    async def handle_slash_command(self, cmd_text: str) -> bool:
+        """Handle slash command. Returns True if handled, False if regular turn."""
+        parts = cmd_text.strip().split()
+        cmd = parts[0].lower()
+
+        if cmd in ("/exit", "/quit"):
+            print("\nShutting down Boom CLI. Goodbye!")
+            sys.exit(0)
+        elif cmd == "/new":
+            self.session_id = f"session_{int(time.time())}"
+            self.loop.reset()
+            self.loop.session_id = self.session_id
+            print(f"[OK] Started new session: {self.session_id}")
+            return True
+        elif cmd == "/help":
+            print("\nAvailable Slash Commands:")
+            print("  /new              - Start a fresh session")
+            print("  /sessions         - List recent sessions from SQLite WAL")
+            print("  /model <name>     - Switch active LLM model")
+            print("  /skills           - List all available Agent Skills")
+            print("  /tools            - List all registered tools and toolsets")
+            print("  /status           - Display token metrics, cost & active background tasks")
+            print("  /exit             - Quit the CLI\n")
+            return True
+        elif cmd == "/skills":
+            skills = self.env.skill_loader.list_skills()
+            print(f"\nAvailable Skills ({len(skills)}):")
+            for s in skills:
+                print(f"  - {s['name']}: {s['description']}")
+            print()
+            return True
+        elif cmd == "/tools":
+            tools = self.env.get_tools()
+            print(f"\nRegistered Tools ({len(tools)}):")
+            for name, meta in tools.items():
+                print(f"  - {name}: {meta.get('description', '')}")
+            print()
+            return True
+        elif cmd == "/status":
+            usage = self.env.token_accountant.get_usage(self.session_id)
+            cost = self.env.token_accountant.calculate_cost(self.session_id, self.llm.model)
+            print(f"\nStatus Report:")
+            print(f"  Session ID: {self.session_id}")
+            print(f"  History turns: {len(self.loop.history)}")
+            print(
+                f"  Tokens: in {usage.input_tokens} / out {usage.output_tokens}"
+                f" / reasoning {usage.reasoning_tokens} / cache read {usage.cache_read_tokens}"
+            )
+            print(f"  Session Cost: ${cost:.4f}")
+            print(f"  Model: {self.llm.model}")
+            return True
+        elif cmd == "/model" and len(parts) > 1:
+            self.llm.model = parts[1]
+            print(f"[OK] Model switched to: {self.llm.model}")
+            return True
+
+        return False
+
+    async def start_repl(self):
+        self.print_banner()
+        while True:
+            try:
+                user_input = input("\n[user] > ").strip()
+                if not user_input:
+                    continue
+
+                # Handle slash commands
+                if user_input.startswith("/"):
+                    if await self.handle_slash_command(user_input):
+                        continue
+
+                # Owner-Only Guard Check
+                route, meta = SystemOneGate.evaluate(user_input, user_identity="Ryan")
+                if route == "owner_guard_blocked":
+                    print(f"\n[agent] {meta['response']}")
+                    continue
+                elif route == "blocked":
+                    print(f"\n[security] {meta['reason']}")
+                    continue
+
+                # Run turn
+                t0 = time.time()
+                print("\n[thinking] analyzing request...")
+                try:
+                    result = await self.loop.step(user_input)
+                except Exception as e:
+                    print(f"\n[error] {type(e).__name__}: {e}")
+                    continue
+                dt = time.time() - t0
+
+                print(f"\n[agent] {result.get('action', 'Response:')}")
+                if "observation" in result:
+                    print(f"\n[output]\n{result['observation']}")
+                if result.get("steps"):
+                    print(f"\n[tools: {result['steps']} call(s)]")
+
+                print(f"\n[latency: {dt:.2f}s]")
+
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nSession terminated by user.")
+                break
+
+    async def _serve_cron(self):
+        """Run scheduled prompts for as long as the daemon lives.
+
+        Only the daemon hosts this: the interactive REPL blocks on input, so a scheduler
+        there would never fire. A failing job is logged by the runner, not fatal here.
+        """
+        from tools.cronjob_tool import JOBS_FILE, CronRunner, CronStore
+
+        try:
+            store = CronStore(self.env.root_dir / "memories" / JOBS_FILE)
+            jobs = store.list()
+            if jobs:
+                print(f"Cron: {len(jobs)} scheduled job(s) from memories/{JOBS_FILE}")
+            await CronRunner(store, get_loop=lambda: self.loop).serve()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[cron] scheduler stopped: {type(e).__name__}: {e}")
+
+    async def run_daemon(self):
+        """Run as autonomous multi-channel gateway daemon."""
+        print(BANNER)
+        print("Starting Boom Autonomous Gateway Daemon...")
+
+        async def _gateway_runner(text: str, channel: str, sender: str):
+            res = await self.loop.step(text)
+            return res.get("action") or res.get("observation") or "Done."
+
+        daemon = GatewayDaemon(
+            runner_fn=_gateway_runner,
+            delivery_ledger=self.env.delivery_ledger,
+            root_dir=self.env.root_dir,  # the turn queue is persisted under memories/
+        )
+        print(f"Telegram Listener: {'ENABLED' if daemon.tg_token else 'DISABLED (No token)'}")
+        print(f"Discord Listener: {'ENABLED' if daemon.dc_token else 'DISABLED (No token)'}")
+        print(
+            "Ingress Webhooks: http://"
+            f"{os.getenv('BOOM_INGRESS_HOST', '127.0.0.1')}:{os.getenv('BOOM_INGRESS_PORT', '8788')}"
+            "/webhook/<channel>"
+        )
+        print("Ready and listening for incoming messages.")
+        cron_task = asyncio.create_task(self._serve_cron())
+        try:
+            await daemon.start()
+        finally:
+            cron_task.cancel()
+
+def main():
+    # The banner and arbitrary model output are not cp1252-safe on a default Windows console.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+    parser = argparse.ArgumentParser(description="Boom Agent Harness")
+    parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve mutating tool actions without prompting")
+    parser.add_argument("--model", "-m", type=str, help="LLM model name")
+    parser.add_argument("--gateway", "-g", action="store_true", help="Run as multi-channel gateway daemon")
+    args = parser.parse_args()
+
+    config = BoomConfig.load()
+    if args.yolo:
+        config.yolo = True
+    if args.model:
+        config.primary_provider.model = args.model
+
+    cli = BoomCLI(config)
+
+    # Retention is opt-in: it deletes history, so nothing is dropped until the operator asks
+    # for it with BOOM_STATE_RETENTION_DAYS. The daemon is restarted far more often than a REPL,
+    # but doing it here covers both and costs one call.
+    retention = float(os.getenv("BOOM_STATE_RETENTION_DAYS", "0") or 0)
+    if retention > 0:
+        print(f"State: pruned history older than {retention:g} days: "
+              f"{cli.env.state_db.prune(retention)}")
+
+    if args.gateway:
+        asyncio.run(cli.run_daemon())
+    else:
+        asyncio.run(cli.start_repl())
+
+if __name__ == "__main__":
+    main()

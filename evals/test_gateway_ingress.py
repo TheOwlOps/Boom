@@ -1,0 +1,304 @@
+"""Offline check of the HTTP ingress: real loopback socket, real requests over it.
+
+The point of this route is that a bridge we did not write (Zalo, Slack, anything) can push a
+message in and get the agent's reply back. So the assertions are about the wire contract: the
+ledger drops a retried message_id, a bad token or body is refused, and the happy path actually
+reaches the runner.
+"""
+
+import asyncio
+import hashlib
+import hmac
+import json
+import os
+import socket
+import sys
+import time
+from pathlib import Path
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(root_dir / "agent" / "src"))
+
+import httpx
+
+from gateway.daemon import GatewayDaemon
+from gateway.delivery_ledger import DeliveryLedger
+from gateway.dispatcher import TurnDispatcher
+from gateway.ingress import SLACK_WINDOW, IngressServer
+
+TOKEN = "s3cret"
+HDR = {"X-Boom-Token": TOKEN}
+
+
+async def main():
+    seen = []
+
+    async def runner(text: str, channel: str, sender: str) -> str:
+        seen.append((text, channel, sender))
+        return f"echo:{text}"
+
+    daemon = GatewayDaemon(runner_fn=runner, delivery_ledger=DeliveryLedger(":memory:"))
+    server = IngressServer(daemon, port=0, token=TOKEN)
+    port = await server.start()
+    base = f"http://127.0.0.1:{port}"
+
+    def event(**over):
+        base_event = {"sender_id": "u1", "sender_name": "Ryan", "text": "hi", "message_id": "m1"}
+        base_event.update(over)
+        return base_event
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(f"{base}/health")
+        assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+        print("[PASS] GET /health answered.")
+
+        # 1. Happy path: the message reaches the runner and its reply comes back.
+        r = await client.post(f"{base}/webhook/discord", json=event(), headers=HDR)
+        assert r.status_code == 200, r.text
+        assert r.json()["reply"] == "echo:hi", r.json()
+        assert seen == [("hi", "discord", "Ryan")], seen
+        print("[PASS] POST /webhook/discord reached the runner and returned its reply.")
+
+        # 2. The same message_id again is a bridge retry, not a second turn.
+        r = await client.post(f"{base}/webhook/discord", json=event(), headers=HDR)
+        assert r.status_code == 200 and r.json()["reply"] is None, r.json()
+        assert len(seen) == 1, seen
+        print("[PASS] Retried message_id suppressed by the DeliveryLedger.")
+
+        # 3. The idempotency key includes the channel, so two platforms do not collide.
+        r = await client.post(f"{base}/webhook/zalo", json=event(), headers=HDR)
+        assert r.status_code == 200 and r.json()["reply"] == "echo:hi", r.json()
+        assert len(seen) == 2, seen
+        print("[PASS] Same message_id on another channel is a separate turn.")
+
+        # 4. Refusals: auth, routing, verb, and an unusable body.
+        r = await client.post(f"{base}/webhook/discord", json=event(message_id="m2"))
+        assert r.status_code == 401, r.text
+        r = await client.post(f"{base}/nope", json=event(message_id="m3"), headers=HDR)
+        assert r.status_code == 404, r.text
+        r = await client.get(f"{base}/webhook/discord", headers=HDR)
+        assert r.status_code == 405, r.text
+        for bad, why in (
+            (event(message_id="m4", text="   "), "empty text"),
+            (event(message_id=""), "missing message_id"),
+            (event(message_id="m5", sender_id=""), "missing sender_id"),
+        ):
+            r = await client.post(f"{base}/webhook/discord", json=bad, headers=HDR)
+            assert r.status_code == 400, f"{why}: {r.status_code} {r.text}"
+        r = await client.post(f"{base}/webhook/discord", content=b"not json", headers=HDR)
+        assert r.status_code == 400, r.text
+        r = await client.post(f"{base}/webhook/discord", json=event(message_id="m6", text="x" * 70000),
+                              headers=HDR)
+        assert r.status_code == 400, r.status_code
+        assert len(seen) == 2, seen  # nothing bad got through to the runner
+        print("[PASS] 401/404/405/400 refusals: no bad request reached the runner.")
+
+        # 5. A bridge that cannot hold the connection gives us a callback instead.
+        received = []
+
+        async def sink(reader, writer):
+            head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
+            length = 0
+            for line in head.split("\r\n")[1:]:
+                if line.lower().startswith("content-length:"):
+                    length = int(line.split(":", 1)[1])
+            received.append(json.loads(await reader.readexactly(length)))
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+
+        sink_server = await asyncio.start_server(sink, "127.0.0.1", 0)
+        sink_port = sink_server.sockets[0].getsockname()[1]
+        hook = f"http://127.0.0.1:{sink_port}/reply"
+
+        r = await client.post(f"{base}/webhook/zalo",
+                              json=event(message_id="m7", reply_url=hook), headers=HDR)
+        assert r.status_code == 200 and r.json() == {"channel": "zalo", "reply": None,
+                                                     "delivered": True}, r.json()
+        assert received == [{"channel": "zalo", "sender_id": "u1", "message_id": "m7",
+                             "text": "echo:hi"}], received
+        print("[PASS] reply_url delivered the reply to the bridge callback.")
+
+        # A callback off this machine would let a caller aim the agent's replies anywhere.
+        r = await client.post(f"{base}/webhook/zalo",
+                              json=event(message_id="m8", reply_url="http://example.com/hook"),
+                              headers=HDR)
+        assert r.status_code == 200 and r.json()["delivered"] is False, r.json()
+        assert "loopback" in r.json()["error"], r.json()
+        assert r.json()["reply"] == "echo:hi", r.json()
+        print("[PASS] Non-loopback reply_url refused, reply kept in the response.")
+
+        # A dead bridge must not swallow the turn: the text comes back in the response.
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()
+        r = await client.post(f"{base}/webhook/zalo",
+                              json=event(message_id="m9",
+                                         reply_url=f"http://127.0.0.1:{dead_port}/reply"),
+                              headers=HDR)
+        assert r.status_code == 200 and r.json()["delivered"] is False, r.json()
+        assert r.json()["reply"] == "echo:hi" and r.json()["error"], r.json()
+        print("[PASS] Unreachable bridge reported, not silently dropped.")
+
+        sink_server.close()
+        await sink_server.wait_closed()
+
+        # 6. The cancel handle needs a queue; this daemon has none, and says so instead of
+        # pretending. It is behind the same token as everything else.
+        r = await client.post(f"{base}/cancel", json={"job_id": "x"}, headers=HDR)
+        assert r.status_code == 503 and "queue" in r.json()["error"], r.text
+        r = await client.post(f"{base}/cancel", json={"job_id": "x"})
+        assert r.status_code == 401, r.text
+        print("[PASS] POST /cancel is token-guarded and refuses when there is no turn queue.")
+
+        # 7. With the real turn queue attached, /cancel reaches it, and a turn for a channel the
+        # daemon cannot reach on its own waits for its reply instead of being acked.
+        queue = TurnDispatcher(runner, concurrency=1, max_queued=4)
+        await queue.start()
+        daemon.dispatcher = queue
+        try:
+            r = await client.post(f"{base}/cancel", json={"channel": "zalo"}, headers=HDR)
+            assert r.json() == {"channel": "zalo", "queued": 0, "running": 0}, r.json()
+            r = await client.post(f"{base}/cancel", json={"job_id": "nosuchjob"}, headers=HDR)
+            assert r.json()["status"] == "unknown", r.json()
+            r = await client.post(f"{base}/cancel", json={}, headers=HDR)
+            assert r.status_code == 400, r.text
+
+            r = await client.post(f"{base}/webhook/zalo",
+                                  json=event(message_id="m10", text="after", priority=3), headers=HDR)
+            assert r.json()["reply"] == "echo:after", r.json()
+            job = list(queue.jobs.values())[-1]
+            assert (job.text, job.priority, job.target) == ("after", 3, "u1"), job
+        finally:
+            daemon.dispatcher = None
+            await queue.stop()
+        print("[PASS] /cancel reached the queue; a waiting turn answered in-band with its priority.")
+
+        # 8. A platform that signs its own webhooks is authenticated by that signature, over the
+        # raw body, not by the shared token.
+        signed = IngressServer(daemon, port=0, token="", slack_secret="slack-secret",
+                               feishu_key="feishu-key")
+        sbase = f"http://127.0.0.1:{await signed.start()}"
+
+        def slack_headers(raw: bytes, stamp=None, secret="slack-secret") -> dict:
+            stamp = stamp or str(int(time.time()))
+            mac = hmac.new(secret.encode(), b"v0:" + stamp.encode() + b":" + raw,
+                           hashlib.sha256).hexdigest()
+            return {"X-Slack-Signature": f"v0={mac}", "X-Slack-Request-Timestamp": stamp}
+
+        raw = json.dumps(event(message_id="sig1", text="signed")).encode()
+        r = await client.post(f"{sbase}/webhook/slack", content=raw, headers=slack_headers(raw))
+        assert r.status_code == 200 and r.json()["reply"] == "echo:signed", r.text
+
+        stale = str(int(time.time()) - SLACK_WINDOW - 5)
+        r = await client.post(f"{sbase}/webhook/slack", content=raw,
+                              headers=slack_headers(raw, stamp=stale))
+        assert r.status_code == 401 and "stale" in r.json()["error"], r.text
+        r = await client.post(f"{sbase}/webhook/slack", content=raw,
+                              headers=slack_headers(raw, secret="wrong-secret"))
+        assert r.status_code == 401 and "signature" in r.json()["error"], r.text
+        r = await client.post(f"{sbase}/webhook/slack", content=raw)
+        assert r.status_code == 401, r.text
+        # A signature lifted from one body must not authenticate another.
+        r = await client.post(f"{sbase}/webhook/slack", content=b'{"text":"evil"}',
+                              headers=slack_headers(raw))
+        assert r.status_code == 401, r.text
+
+        lark = json.dumps(event(message_id="sig2", text="lark")).encode()
+        stamp, nonce = str(int(time.time())), "nonce1"
+        lark_sig = hashlib.sha256((stamp + nonce + "feishu-key").encode() + lark).hexdigest()
+        r = await client.post(f"{sbase}/webhook/feishu", content=lark, headers={
+            "X-Lark-Signature": lark_sig, "X-Lark-Request-Timestamp": stamp,
+            "X-Lark-Request-Nonce": nonce})
+        assert r.status_code == 200 and r.json()["reply"] == "echo:lark", r.text
+        r = await client.post(f"{sbase}/webhook/feishu", content=lark, headers={
+            "X-Lark-Signature": "0" * 64, "X-Lark-Request-Timestamp": stamp,
+            "X-Lark-Request-Nonce": nonce})
+        assert r.status_code == 401 and "Feishu" in r.json()["error"], r.text
+        assert len([s for s in seen if s[0] in ("signed", "lark")]) == 2, seen
+        await signed.aclose()
+        print("[PASS] Slack and Feishu signatures verified; stale, wrong and borrowed ones refused.")
+
+        # 9. A listener that is not on loopback must have something to authenticate callers with.
+        unsafe = IngressServer(daemon, host="0.0.0.0", port=0, token="", slack_secret="",
+                               feishu_key="")
+        try:
+            await unsafe.start()
+            raise AssertionError("binding 0.0.0.0 with no secret must be refused")
+        except ValueError as e:
+            assert "refusing to bind" in str(e), e
+        finally:
+            await unsafe.aclose()
+        print("[PASS] Binding 0.0.0.0 refused without a token or a signature secret.")
+
+        # 10. A channel that only pushes to us can still be answered, when its token is set:
+        # Slack's chat.postMessage and the WhatsApp Cloud API, posted to their real endpoints.
+        posts = []
+        answer = {"body": {"ok": True}, "status": 200}
+
+        async def api_sink(reader, writer):
+            head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
+            length = 0
+            for line in head.split("\r\n")[1:]:
+                if line.lower().startswith("content-length:"):
+                    length = int(line.split(":", 1)[1])
+            lines = head.split("\r\n")
+            posts.append((
+                lines[0].split(" ")[1],
+                next((v.split(":", 1)[1].strip() for v in lines
+                      if v.lower().startswith("authorization:")), ""),
+                json.loads(await reader.readexactly(length)) if length else {},
+            ))
+            blob = json.dumps(answer["body"]).encode()
+            writer.write(
+                f"HTTP/1.1 {answer['status']} X\r\nContent-Length: {len(blob)}\r\n"
+                f"Connection: close\r\n\r\n".encode("latin-1") + blob
+            )
+            await writer.drain()
+            writer.close()
+
+        api_server = await asyncio.start_server(api_sink, "127.0.0.1", 0)
+        api_base = f"http://127.0.0.1:{api_server.sockets[0].getsockname()[1]}"
+
+        # No token means no route: a Slack turn then waits for its reply instead of being acked.
+        assert daemon.can_deliver("slack") is False
+        os.environ.update({
+            "BOOM_SLACK_BOT_TOKEN": "xoxb-test", "BOOM_SLACK_API_BASE": api_base,
+            "BOOM_WHATSAPP_TOKEN": "wa-test", "BOOM_WHATSAPP_PHONE_ID": "1234",
+            "BOOM_WHATSAPP_API_BASE": api_base,
+        })
+        try:
+            assert daemon.can_deliver("slack") and daemon.can_deliver("whatsapp")
+            assert await daemon.send_to("slack", "C42", "hello slack") is True
+            assert posts[-1] == ("/chat.postMessage", "Bearer xoxb-test",
+                                 {"channel": "C42", "text": "hello slack"}), posts[-1]
+
+            # Slack answers 200 with {"ok": false} when it refused: that is not a delivery.
+            answer["body"] = {"ok": False, "error": "channel_not_found"}
+            assert await daemon.send_to("slack", "C42", "again") is False
+            answer.update({"body": {"ok": True}, "status": 500})
+            assert await daemon.send_to("slack", "C42", "again") is False
+
+            answer.update({"body": {"messages": [{"id": "wamid"}]}, "status": 200})
+            assert await daemon.send_to("whatsapp", "8490", "hello wa") is True
+            assert posts[-1] == ("/1234/messages", "Bearer wa-test",
+                                 {"messaging_product": "whatsapp", "to": "8490", "type": "text",
+                                  "text": {"body": "hello wa"}}), posts[-1]
+            answer["status"] = 400
+            assert await daemon.send_to("whatsapp", "8490", "nope") is False
+        finally:
+            for name in ("BOOM_SLACK_BOT_TOKEN", "BOOM_SLACK_API_BASE", "BOOM_WHATSAPP_TOKEN",
+                         "BOOM_WHATSAPP_PHONE_ID", "BOOM_WHATSAPP_API_BASE"):
+                os.environ.pop(name, None)
+            api_server.close()
+            await api_server.wait_closed()
+        print("[PASS] Slack and WhatsApp replies posted with the real payload; a refused one is False.")
+
+    await server.aclose()
+    print("ALL GATEWAY INGRESS TESTS PASSED.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

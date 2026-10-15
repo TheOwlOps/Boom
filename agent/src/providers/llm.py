@@ -1,0 +1,148 @@
+import json
+import os
+import re
+from typing import Any, Dict, List, Optional
+import httpx
+from pydantic import BaseModel
+
+class MissingAPIKeyError(RuntimeError):
+    """Raised when a live completion is requested but no API key is configured."""
+
+class ToolCallSpec(BaseModel):
+    id: str
+    name: str
+    arguments: Dict[str, Any]
+    args_error: Optional[str] = None
+
+class LLMUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+
+class LLMResponse(BaseModel):
+    content: str
+    thought: Optional[str] = None
+    tool_calls: List[ToolCallSpec] = []
+    usage: Optional[LLMUsage] = None
+    finish_reason: Optional[str] = None
+
+class LLMProvider:
+    """Universal OpenAI-compatible API Provider with Thought Scrubber & Structured Tool Calling."""
+
+    def __init__(
+        self,
+        base_url: str = "https://api.openai.com/v1",
+        api_key: Optional[str] = None,
+        model: str = "gpt-4o",
+        timeout: float = 60.0
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+        self.model = model
+        self.timeout = timeout
+
+    @staticmethod
+    def scrub_thought(raw_text: str) -> tuple[Optional[str], str]:
+        """Extract <thought>...</thought> blocks from model response."""
+        thought_match = re.search(r"<thought>(.*?)</thought>", raw_text, re.DOTALL)
+        if thought_match:
+            thought = thought_match.group(1).strip()
+            clean_text = re.sub(r"<thought>.*?</thought>", "", raw_text, flags=re.DOTALL).strip()
+            return thought, clean_text
+        return None, raw_text
+
+    @staticmethod
+    def parse_usage(raw: Optional[Dict[str, Any]]) -> LLMUsage:
+        """Map an OpenAI-compatible `usage` object onto LLMUsage. Absent fields stay 0."""
+        u = raw or {}
+        completion_details = u.get("completion_tokens_details") or {}
+        prompt_details = u.get("prompt_tokens_details") or {}
+        return LLMUsage(
+            input_tokens=u.get("prompt_tokens") or 0,
+            output_tokens=u.get("completion_tokens") or 0,
+            cache_read_tokens=prompt_details.get("cached_tokens") or 0,
+            cache_write_tokens=prompt_details.get("cache_creation_tokens") or 0,
+            reasoning_tokens=completion_details.get("reasoning_tokens") or 0,
+        )
+
+    async def chat_complete(
+        self,
+        messages: List[Dict[str, str]],
+        tools_schema: Optional[List[Dict[str, Any]]] = None,
+        timeout: Optional[float] = None
+    ) -> LLMResponse:
+        """Call the completions endpoint. Raises MissingAPIKeyError if no key is configured."""
+        if not self.api_key:
+            raise MissingAPIKeyError(
+                f"No API key configured for provider at {self.base_url}. "
+                "Set OPENAI_API_KEY (or OPENROUTER_API_KEY / ANTHROPIC_API_KEY) before running a live turn."
+            )
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            # Several OpenAI-compatible gateways default to SSE; force a single JSON body.
+            "stream": False,
+        }
+        if tools_schema:
+            payload["tools"] = [
+                {"type": "function", "function": t} for t in tools_schema
+            ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"LLM request failed: HTTP {resp.status_code} from {self.base_url} "
+                    f"for model '{self.model}': {resp.text[:400]}"
+                )
+            data = resp.json()
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"LLM returned no choices for model '{self.model}': {str(data)[:400]}")
+        choice = choices[0].get("message") or {}
+
+        raw_content = choice.get("content") or ""
+        thought, clean_content = self.scrub_thought(raw_content)
+        # Reasoning models expose chain-of-thought on a dedicated field rather than inline tags.
+        if not thought and choice.get("reasoning_content"):
+            thought = str(choice["reasoning_content"]).strip() or None
+
+        tool_calls = []
+        for tc in choice.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            raw_args = fn.get("arguments") or "{}"
+            args_error = None
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                args = {}
+                args_error = f"{e}: {str(raw_args)[:200]}"
+            tool_calls.append(
+                ToolCallSpec(
+                    id=tc.get("id") or f"call_{len(tool_calls)}",
+                    name=fn.get("name") or "",
+                    arguments=args,
+                    args_error=args_error
+                )
+            )
+
+        return LLMResponse(
+            content=clean_content,
+            thought=thought,
+            tool_calls=tool_calls,
+            usage=self.parse_usage(data.get("usage")),
+            finish_reason=choices[0].get("finish_reason")
+        )
