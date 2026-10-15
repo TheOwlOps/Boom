@@ -1,39 +1,278 @@
-import React from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Hash,
+  MessageCircle,
+  MessageSquare,
+  MessagesSquare,
+  Phone,
+  RefreshCw,
+  Send,
+  Smartphone,
+  type LucideIcon,
+} from "lucide-react";
+import { EmptyState } from "./EmptyState";
+import { getChannels } from "../lib/api";
+import type { ChannelStatus } from "../lib/types";
 
-export interface ChannelMessage {
-  id: string;
-  channel: string;
-  sender: string;
-  text: string;
-  timestamp: string;
+const REFRESH_MS = 30_000;
+
+// Map channel name -> a recognizable lucide icon. Unknown names fall back to
+// an initial letter in a colored dot.
+const CHANNEL_ICONS: Record<string, LucideIcon> = {
+  telegram: Send,
+  discord: Hash,
+  slack: Hash,
+  whatsapp: Phone,
+  messenger: MessageCircle,
+  line: MessageSquare,
+  zalo: Smartphone,
+  feishu: MessagesSquare,
+};
+
+const FALLBACK_COLORS = [
+  "#6366F1",
+  "#22C55E",
+  "#F59E0B",
+  "#EC4899",
+  "#14B8A6",
+  "#F97316",
+];
+
+function fallbackColor(name: string): string {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return FALLBACK_COLORS[h % FALLBACK_COLORS.length];
 }
 
-export const ChannelMonitor: React.FC<{ messages: ChannelMessage[] }> = ({ messages }) => {
+function capitalize(s: string): string {
+  return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+const iconBox: React.CSSProperties = {
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "var(--surface-2)",
+  color: "var(--muted)",
+  flexShrink: 0,
+};
+
+function ChannelIcon({ name }: { name: string }) {
+  const Icon = CHANNEL_ICONS[name.toLowerCase()];
+  if (Icon) {
+    return (
+      <span style={iconBox} aria-hidden>
+        <Icon size={16} />
+      </span>
+    );
+  }
+  const color = fallbackColor(name);
   return (
-    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 shadow-lg">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold tracking-wide text-slate-400 uppercase">
-          Multi-Channel Stream
-        </h3>
-        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-          LIVE
-        </span>
-      </div>
-      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className="p-2.5 rounded-lg border border-slate-800/80 bg-slate-950/40 text-xs font-mono"
-          >
-            <div className="flex justify-between items-center text-slate-500 mb-1">
-              <span className="text-indigo-400 font-semibold">[{m.channel}] {m.sender}</span>
-              <span>{m.timestamp}</span>
-            </div>
-            <p className="text-slate-200">{m.text}</p>
-          </div>
-        ))}
-      </div>
+    <span
+      style={{ ...iconBox, background: `${color}1f`, color }}
+      aria-hidden
+    >
+      {(name[0] ?? "?").toUpperCase()}
+    </span>
+  );
+}
+
+function StatusDot({ connected, size = 8 }: { connected: boolean; size?: number }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 999,
+        background: connected ? "var(--success)" : "var(--muted)",
+        opacity: connected ? 1 : 0.45,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: "12px 14px",
+        borderRadius: 10,
+        border: "1px solid var(--border)",
+        background: "rgba(239,68,68,0.08)",
+        color: "var(--text)",
+        fontSize: 13,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
+      <span>Couldn&apos;t reach backend</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 10px",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--surface-2)",
+          color: "var(--text)",
+          fontSize: 12,
+          cursor: "pointer",
+        }}
+      >
+        <RefreshCw size={13} />
+        Retry
+      </button>
     </div>
   );
-};
+}
+
+function ListSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading channels" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {[0, 1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="skeleton-shimmer"
+          style={{
+            height: 48,
+            borderRadius: 10,
+            background: "var(--surface-2)",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CompactSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading channels" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <span
+          key={i}
+          className="skeleton-shimmer"
+          style={{ width: 10, height: 10, borderRadius: 999, background: "var(--surface-2)" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export interface ChannelMonitorProps {
+  /** Compact sidebar variant: dots row + "N/M connected". */
+  compact?: boolean;
+}
+
+export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
+  const [channels, setChannels] = useState<ChannelStatus[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const list = await getChannels();
+      setChannels(list);
+      setFailed(false);
+    } catch {
+      // Keep stale rows on screen when we already have data; show the error
+      // card only when there is nothing to display.
+      setFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, REFRESH_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
+  // Still loading and never fetched successfully.
+  if (channels === null) {
+    if (failed) return <ErrorCard onRetry={load} />;
+    return compact ? <CompactSkeleton /> : <ListSkeleton />;
+  }
+
+  if (channels.length === 0) {
+    return (
+      <EmptyState
+        icon={MessageCircle}
+        title="No channels configured"
+        hint="Connect a channel to see its live status here."
+      />
+    );
+  }
+
+  if (compact) {
+    const connected = channels.filter((c) => c.connected).length;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }} role="status">
+          {channels.map((c) => (
+            <span
+              key={c.name}
+              title={`${capitalize(c.name)}: ${c.connected ? "connected" : (c.detail ?? "not connected")}`}
+            >
+              <StatusDot connected={c.connected} size={10} />
+            </span>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          {connected}/{channels.length} connected
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }} role="status">
+      {channels.map((c) => (
+        <div
+          key={c.name}
+          title={c.connected ? undefined : (c.detail ?? undefined)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "8px 10px",
+            borderRadius: 10,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--surface-2)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
+        >
+          <ChannelIcon name={c.name} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, color: "var(--text)" }}>{capitalize(c.name)}</div>
+            {!c.connected && c.detail && (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.detail}
+              </div>
+            )}
+          </div>
+          <StatusDot connected={c.connected} />
+        </div>
+      ))}
+    </div>
+  );
+}

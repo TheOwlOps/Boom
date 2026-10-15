@@ -3,9 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Harness Multi-Channel Dashboard</title>
+    <title>Boom</title>
+    <!--
+      NOTE (fonts): fonts load from Google Fonts CDN here.
+      When the Tauri desktop bundle is built for offline use, replace these
+      <link> tags with self-hosted @font-face files in src/assets/fonts/
+      (Outfit 600/700, Work Sans 400/500/600, JetBrains Mono 400/500)
+      and drop the preconnects. Web dev build keeps the CDN links.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
   </head>
-  <body class="bg-slate-950 text-slate-100 min-h-screen">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

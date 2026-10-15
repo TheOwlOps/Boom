@@ -1,0 +1,252 @@
+/* ============================================================
+ * Boom Web UI — shared animations
+ * CSS keyframes + utility classes only. No colors/fonts defined
+ * here (those live in tokens/theme.css); only var() references.
+ * Spec: DESIGN_CONTRACT.md § Animation guidelines.
+ * Import at app entry (main.tsx), AFTER tokens/theme.css.
+ * ============================================================ */
+
+/* ---------- keyframes ---------- */
+
+@keyframes anim-msg-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes anim-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes anim-panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes anim-panel-slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes anim-shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* Subtle ring pulse for a running DAG node (status indicator, loops). */
+@keyframes anim-node-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 35%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes anim-dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ---------- message appear ---------- */
+
+/* fade + rise 8px, 250ms cubic-bezier(0.33,1,0.68,1) */
+.msg-appear {
+  animation: anim-msg-appear 250ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+/* ---------- staggered list items ---------- */
+
+/* pair with style={{ animationDelay: `${i * 30}ms` }} */
+.stagger-item {
+  animation: anim-msg-appear 300ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+/* ---------- panels ---------- */
+
+/* slide + fade, 200ms ease-out (right panel opens from right) */
+.panel-slide-in {
+  animation: anim-panel-slide-in 200ms ease-out both;
+}
+
+.panel-slide-in-left {
+  animation: anim-panel-slide-in-left 200ms ease-out both;
+}
+
+/* ---------- generic fade ---------- */
+
+/* view/page switch, 180ms */
+.fade-in {
+  animation: anim-fade-in 180ms ease-out both;
+}
+
+/* ---------- button hover lift ---------- */
+
+.btn-hover {
+  transition:
+    transform 150ms ease-out,
+    filter 150ms ease-out;
+  will-change: transform;
+}
+
+.btn-hover:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+.btn-hover:active {
+  transform: translateY(0);
+}
+
+/* ---------- skeleton shimmer ---------- */
+
+/* gradient sweep 1.5s; element must have its own background-size */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--border) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: anim-shimmer 1.5s linear infinite;
+  border-radius: 6px;
+  color: transparent !important;
+  user-select: none;
+}
+
+.skeleton-row {
+  height: 14px;
+  width: 100%;
+}
+
+/* ---------- DAG running node pulse ---------- */
+
+.node-pulse {
+  animation: anim-node-pulse 1.8s ease-out infinite;
+}
+
+/* ---------- tool call running pulse ---------- */
+
+/* gentle 1.5s opacity pulse for the Loader2 icon in a running ToolCallCard */
+@keyframes toolcall-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.toolcall-pulse {
+  animation: toolcall-pulse 1.5s ease-in-out infinite;
+}
+
+/* ---------- spinner ---------- */
+
+@keyframes anim-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* continuous rotation for loading spinners (e.g. Settings "Test connection") */
+.spin {
+  animation: anim-spin 1s linear infinite;
+}
+
+/* ---------- typing / thinking dots ---------- */
+
+/* 1.2s loop, stagger via inline animationDelay or nth-child */
+.dot-bounce {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: anim-dot-bounce 1.2s ease-in-out infinite;
+}
+
+.dot-bounce:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dot-bounce:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.dot-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .msg-appear,
+  .stagger-item,
+  .panel-slide-in,
+  .panel-slide-in-left,
+  .fade-in,
+  .btn-hover,
+  .node-pulse,
+  .toolcall-pulse,
+  .spin,
+  .dot-bounce,
+  .skeleton-shimmer {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .skeleton-shimmer {
+    background: var(--surface-2);
+  }
+}
