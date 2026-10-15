@@ -337,11 +337,12 @@ class AgentEnvironment:
         }
 
         # 5e. Optional tool modules (web, cron, browser, artifacts, goals,
-        #     people, digest, research). Each module builds its own tool dicts,
-        #     so this is the only place that has to know about them. Imported
-        #     lazily and guarded: a subsystem that cannot load must not take
-        #     the whole environment down. people.tools takes root_dir instead
-        #     of the env; everything else takes the env.
+        #     people, digest, research, tasks, verify). Each module builds its
+        #     own tool dicts, so this is the only place that has to know about
+        #     them. Imported lazily and guarded: a subsystem that cannot load
+        #     must not take the whole environment down. people.tools, tasks.tools
+        #     and verify.tools take root_dir instead of the env; everything
+        #     else takes the env.
         for module_name, use_root_dir in (
             ("tools.web_tools", False),
             ("tools.cronjob_tool", False),
@@ -352,6 +353,8 @@ class AgentEnvironment:
             ("tools.research_tool", False),
             ("tools.scraper", False),
             ("people.tools", True),
+            ("tasks.tools", True),
+            ("verify.tools", True),
         ):
             try:
                 factory = getattr(import_module(module_name), "build_tools", None)

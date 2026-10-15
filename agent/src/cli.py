@@ -31,6 +31,39 @@ BANNER = r"""
   Autonomous Agent Harness (Parity Edition)
 """
 
+class _BrainAdapter:
+    """Adapt the real async Brain.run() to the sync run_brain() the task
+    runner expects.
+
+    The runner calls ``brain.run_brain(prompt, strategy="auto")`` and needs
+    ``{"text": ..., "error": ...}`` back. The real Brain exposes
+    ``async run(prompt, strategy=...) -> BrainResult``.
+    """
+
+    def __init__(self, brain):
+        self._brain = brain
+
+    def run_brain(self, prompt, strategy="auto"):
+        try:
+            result = asyncio.run(self._brain.run(prompt, strategy=strategy))
+        except RuntimeError:
+            # already inside a running loop (e.g. called from async code):
+            # schedule on a fresh thread with its own loop.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(
+                    asyncio.run, self._brain.run(prompt, strategy=strategy)
+                ).result()
+        text = getattr(result, "text", "") or ""
+        errors = getattr(result, "errors", None) or {}
+        err = "; ".join(f"{k}: {v}" for k, v in errors.items())
+        # Non-fatal notes (e.g. "unknown strategy") should not fail the step;
+        # only an empty result counts as a real error.
+        if not text.strip() and err:
+            return {"text": "", "error": err}
+        return {"text": text, "error": ""}
+
+
 class BoomCLI:
     def __init__(self, config: BoomConfig):
         self.config = config
@@ -53,6 +86,9 @@ class BoomCLI:
         # Brain unifies ReAct + DAG + MASS behind one run(). Old paths keep
         # calling self.loop directly; new callers (ACP, slash commands) use run_brain.
         self.brain = Brain(make_loop=self._make_loop, llm=self.llm)
+        # Long-task engine stays uninitialised until first use: the tasks/ module
+        # is still being built on main, and startup must not crash without it.
+        self.task_runner = None
         self._attach_evaluator()
 
     def _attach_evaluator(self):
@@ -105,6 +141,100 @@ class BoomCLI:
         return await self.brain.run(
             prompt, strategy=strategy, session_id=self.session_id, **kw
         )
+
+    # ------------------------------------------------------- long-task engine
+
+    def _get_task_runner(self):
+        """Lazy long-task runner.
+
+        The tasks/ module is being built by a parallel worker and does not exist
+        on main yet, so the import happens here, not in __init__, and failures
+        surface as an honest RuntimeError the caller can report instead of a
+        startup crash.
+        """
+        if self.task_runner is None:
+            try:
+                from tasks.store import TaskStore
+                from tasks.runner import TaskRunner
+            except ImportError as e:
+                raise RuntimeError(
+                    "long-task engine not installed: "
+                    f"{e}; the tasks/ module has not been merged to main yet"
+                ) from e
+            db_path = self.env.root_dir / "memories" / "tasks.db"
+            self.task_runner = TaskRunner(TaskStore(db_path),
+                                          _BrainAdapter(self.brain))
+        return self.task_runner
+
+    def _create_task_record(self, goal: str, title=None):
+        """Create a task row (planned when an llm is available).
+
+        Returns the task id. Raises RuntimeError when the tasks/ module
+        is missing, ValueError on bad input.
+        """
+        try:
+            from tasks.models import Task, TaskStatus, TaskStep
+            from tasks.planner import plan_goal
+            from tasks.store import TaskStore
+        except ImportError as e:
+            raise RuntimeError(f"long-task engine not installed: {e}") from e
+        if not (goal or "").strip():
+            raise ValueError("task_submit needs a non-empty goal")
+        steps = None
+        llm = getattr(self, "_task_llm", None)
+        if callable(llm):
+            try:
+                steps = plan_goal(goal, llm)
+            except Exception:
+                steps = None
+        if not steps:
+            steps = [TaskStep(id="1", desc=goal.strip())]
+        from datetime import datetime
+        now = datetime.now().isoformat(timespec="seconds")
+        task = Task(
+            id="",
+            title=(title.strip() if title and title.strip()
+                   else goal.strip()[:60]),
+            goal=goal.strip(),
+            status=TaskStatus.PENDING,
+            steps=steps,
+            created_at=now,
+            updated_at=now,
+        )
+        store = TaskStore(self.env.root_dir / "memories" / "tasks.db")
+        store.create(task)
+        return task.id
+
+    async def run_long_task(self, goal: str, title: str = None) -> dict:
+        """Submit a long-running task and wait for it.
+
+        Never raises: every failure is returned as {"error": ...} so a
+        background worker dies with a recorded error instead of an unlogged
+        exception killing the host loop.
+        """
+        try:
+            runner = self._get_task_runner()
+            task_id = self._create_task_record(goal, title)
+            # TaskRunner.run is synchronous (it checkpoints to SQLite after
+            # every step); run it in a thread so the event loop stays alive.
+            task = await asyncio.to_thread(runner.run, task_id)
+            return {"task_id": task_id, "status": task.status.value,
+                    "steps": [s.to_dict() for s in task.steps]}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    async def _run_task_background(self, task_id: str):
+        """Drive an already-submitted task to completion in the background.
+
+        Called via asyncio.create_task from the RPC loop. Errors are recorded
+        on the task by the runner itself; nothing is raised into serve_rpc.
+        """
+        try:
+            runner = self._get_task_runner()
+            await asyncio.to_thread(runner.run, task_id)
+        except Exception as e:
+            print(f"[rpc] long task {task_id} failed: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
 
     def print_banner(self):
         print(BANNER)
@@ -317,6 +447,10 @@ class BoomCLI:
                     "status": "pong", "model": getattr(self.llm, "model", "default")})
             elif method == "turn":
                 await self._rpc_turn(out, rid, params)
+            elif method == "task_submit":
+                await self._rpc_task_submit(out, rid, params)
+            elif method == "task_status":
+                await self._rpc_task_status(out, rid, params)
             else:
                 self._reply(out, rid, error=f"Unknown method: {method}")
 
@@ -341,6 +475,69 @@ class BoomCLI:
             "steps": int(res.get("steps") or 0),
             "error": res.get("error"),
         })
+
+    async def _rpc_task_submit(self, out, rid, params):
+        """Submit a long-running task; reply at once, run it in the background.
+
+        serve_rpc processes one request at a time on purpose (the live context is
+        instance state), so a long task must NOT block the read loop: it is kicked
+        off with asyncio.create_task and the caller polls task_status with the
+        returned task_id for completion.
+
+        NOTE on run_long_task: it is the foreground helper (create + await +
+        merged dict). Using it here would create a SECOND task, so the submit
+        path creates the task id once, spawns a background worker for that id,
+        and replies immediately.
+        """
+        goal = str(params.get("goal") or "")
+        if not goal:
+            self._reply(out, rid, error="task_submit needs a goal")
+            return
+        title = params.get("title") or None
+        try:
+            runner = self._get_task_runner()
+        except RuntimeError as e:
+            # tasks/ module not on main yet: honest error, the RPC loop keeps running.
+            self._reply(out, rid, error=str(e))
+            return
+        try:
+            self._get_task_runner()  # fail fast when the module is missing
+            task_id = self._create_task_record(goal, title)
+        except Exception as e:
+            print(f"[rpc] task_submit failed: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
+            self._reply(out, rid, error=f"{type(e).__name__}: {e}")
+            return
+        # Background: serve_rpc's read loop must stay responsive for ping/turn.
+        asyncio.create_task(self._run_task_background(task_id))
+        self._reply(out, rid, result={"task_id": task_id, "status": "running"})
+
+    async def _rpc_task_status(self, out, rid, params):
+        """Report a task's status. An unknown task_id is an error reply, never
+        an exception escaping into the RPC loop."""
+        task_id = str(params.get("task_id") or "")
+        if not task_id:
+            self._reply(out, rid, error="task_status needs a task_id")
+            return
+        try:
+            runner = self._get_task_runner()
+        except RuntimeError as e:
+            self._reply(out, rid, error=str(e))
+            return
+        try:
+            from tasks.store import TaskStore
+            store = TaskStore(self.env.root_dir / "memories" / "tasks.db")
+            task = store.get(task_id)
+            if task is None:
+                self._reply(out, rid, error=f"no task {task_id!r}")
+                return
+            status = {"task": task.to_dict()}
+        except Exception as e:
+            print(f"[rpc] task_status failed: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
+            self._reply(out, rid, error=f"{type(e).__name__}: {e}")
+            return
+        self._reply(out, rid, result=status)
 
     @staticmethod
     def _reply(out, rid, result=None, error=None):

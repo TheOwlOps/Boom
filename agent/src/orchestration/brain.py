@@ -26,6 +26,16 @@ Routing (``_choose_strategy``) is a rule-based heuristic v1 — it is *not* an A
 classifier and the docstring says so: an explicit strategy always wins; in
 ``auto`` mode dependency keywords pick DAG, an explicit multi-item list picks
 MASS, everything else is REACT.
+
+Verification (``verify=True``)
+------------------------------
+Passing ``verify=True`` to ``run()`` does not change execution at all: the same
+``BrainResult`` is produced first, then the optional ``verify.verifier`` module
+— built by another coordinator, *not* part of this file — is imported lazily
+and its ``verify(text, kind="text", llm=..., search_fn=...)`` called on
+``result.text``. When the module is missing or verification crashes, ``run()``
+degrades honestly with ``verification={"status": "skipped", "reason": ...}`` —
+never raised, never a faked verification.
 """
 
 import asyncio
@@ -121,11 +131,20 @@ class Brain:
         strategy: str = "auto",
         session_id: Optional[str] = None,
         roles: Optional[List[Any]] = None,
+        verify: bool = False,
         **kw: Any,
-    ) -> BrainResult:
+    ) -> Any:
         """Run one prompt through the chosen strategy. Never raises: every
         failure is returned as BrainResult(errors=...). ``kw`` is accepted for
-        forward compatibility and currently unused."""
+        forward compatibility and currently unused.
+
+        ``verify=False`` (default) returns the ``BrainResult`` exactly as
+        before — execution is untouched, byte-for-byte the same behaviour.
+        ``verify=True`` returns a dict ``{"result": <BrainResult>,
+        "verification": <dict>}`` where ``verification`` comes from the
+        optional ``verify.verifier`` module (lazy import; a missing module or
+        any error degrades to ``{"status": "skipped", "reason": ...}``).
+        """
         chosen, note = self._choose_strategy(prompt, strategy)
         errors: Dict[str, str] = {}
         if note:
@@ -138,12 +157,15 @@ class Brain:
             else:
                 result = await self.run_react(prompt, session_id=session_id)
         except Exception as e:  # last-resort net: sub-runners already guard internally
-            return BrainResult(
+            result = BrainResult(
                 strategy=chosen.value, text="",
                 errors={**errors, "brain": f"{type(e).__name__}: {e}"},
             )
-        result.errors = {**errors, **result.errors}
-        return result
+        else:
+            result.errors = {**errors, **result.errors}
+        if not verify:
+            return result
+        return {"result": result, "verification": self._verify_result(result)}
 
     # ------------------------------------------------------------------ helpers
 
@@ -166,6 +188,30 @@ class Brain:
         loses that tool (mass.py's documented caveat) — never a crash."""
         all_tools = self._all_tools()
         return {name: all_tools[name] for name in allowed_tools if name in all_tools}
+
+    def _verify_result(self, result: BrainResult) -> Dict[str, Any]:
+        """Run optional post-hoc verification over ``result.text``.
+
+        The ``verify.verifier`` module is built by another coordinator and may
+        not exist on this machine, so it is imported lazily *inside* this call —
+        a top-level import would make ``brain.py`` unimportable until the
+        verifier lands. Any ImportError or runtime error degrades honestly to
+        ``{"status": "skipped", "reason": ...}``; never raised, never faked.
+        """
+        try:
+            from importlib import import_module
+            mod = import_module("verify.verifier")
+            t = self._all_tools().get("web_search")
+            search_fn = (
+                t["func"]
+                if isinstance(t, dict) and callable(t.get("func"))
+                else None
+            )
+            return mod.verify(
+                result.text, kind="text", llm=self.llm, search_fn=search_fn
+            )
+        except Exception as e:
+            return {"status": "skipped", "reason": f"{type(e).__name__}: {e}"}
 
     # ------------------------------------------------------------------ REACT
 
