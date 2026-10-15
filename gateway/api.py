@@ -275,6 +275,47 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, self.api.channel_status())
         elif path == "/api/dag/status":
             self._send_json(200, self.api.dag_status())
+        elif path == "/api/tools":
+            # Danh sách tools thật từ environment
+            tools = []
+            try:
+                from agent.src.environment import build_environment
+                env = build_environment()
+                for name, t in (getattr(env, "tools", {}) or {}).items():
+                    tools.append({
+                        "name": name,
+                        "description": getattr(t, "description", "") or "",
+                        "group": getattr(t, "group", "other") or "other",
+                    })
+            except Exception as e:
+                api_log(f"/api/tools error: {e}")
+            self._send_json(200, {"tools": tools, "count": len(tools)})
+        elif path == "/api/skills":
+            # Quét skills/ thật từ repo
+            skills = []
+            try:
+                from pathlib import Path
+                skills_dir = Path(__file__).resolve().parent.parent / "skills"
+                if skills_dir.exists():
+                    for p in sorted(skills_dir.iterdir()):
+                        if not p.is_dir():
+                            continue
+                        desc = ""
+                        md = p / "SKILL.md"
+                        if md.exists():
+                            try:
+                                lines = md.read_text(encoding="utf-8").split("\n")
+                                for ln in lines[1:10]:
+                                    ln = ln.strip()
+                                    if ln and not ln.startswith("#"):
+                                        desc = ln[:200]
+                                        break
+                            except Exception:
+                                pass
+                        skills.append({"name": p.name, "description": desc})
+            except Exception as e:
+                api_log(f"/api/skills error: {e}")
+            self._send_json(200, {"skills": skills, "count": len(skills)})
         else:
             self._error(404, "not found")
 
@@ -282,6 +323,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/chat":
             self._handle_chat()
+        elif path == "/api/tools/run":
+            self._handle_tool_run()
         else:
             self._error(404, "not found")
 
@@ -294,6 +337,39 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     # ----------------------------------------------------------------- chat
+
+    def _handle_tool_run(self):
+        """Chạy thử 1 tool qua API (dùng SandboxedToolRunner nếu có)."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        tool_name = data.get("tool")
+        args = data.get("args", {})
+        if not isinstance(tool_name, str) or not tool_name:
+            return self._error(400, "tool is required")
+        if not isinstance(args, dict):
+            return self._error(400, "args must be an object")
+        try:
+            from agent.src.environment import build_environment
+            env = build_environment()
+            tools = getattr(env, "tools", {}) or {}
+            if tool_name not in tools:
+                return self._error(404, f"tool not found: {tool_name}")
+            tool = tools[tool_name]
+            func = getattr(tool, "func", None) or tool
+            # Chạy qua sandbox nếu có
+            try:
+                from agent.src.security.toolsandbox import SandboxedToolRunner
+                runner = SandboxedToolRunner()
+                result = runner.run(tool_name, func, args, user="api")
+            except ImportError:
+                result = func(**args) if callable(func) else {"error": "not callable"}
+            api_log(f"tool_run: {tool_name} ok")
+            return self._send_json(200, {"ok": True, "result": str(result)[:2000]})
+        except Exception as e:
+            api_log(f"tool_run: {tool_name} error: {e}")
+            return self._send_json(200, {"ok": False, "error": str(e)[:500]})
 
     def _handle_chat(self):
         data, err = self._read_json_body()

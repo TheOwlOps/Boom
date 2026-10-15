@@ -1,12 +1,16 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { Menu, PanelRightClose, Radio, Workflow, X } from "lucide-react";
+import { Menu, PanelRightClose, Radio, Workflow, X, Wrench, Sparkles, TerminalSquare } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import DagViewer from "./components/DagViewer";
 import { ChannelMonitor } from "./components/ChannelMonitor";
 import { SettingsPanel } from "./components/SettingsPanel";
+import StatusBar from "./components/StatusBar";
+import ToolManager from "./components/ToolManager";
+import SkillList from "./components/SkillList";
+import TerminalLog from "./components/TerminalLog";
 
-type PanelTab = "dag" | "channels";
+type PanelTab = "dag" | "channels" | "tools" | "skills" | "logs";
 
 const LS_SIDEBAR_COLLAPSED = "boom.sidebarCollapsed";
 const LS_PANEL_OPEN = "boom.panelOpen";
@@ -38,6 +42,9 @@ function usePersistedState<T>(
 const TABS: Array<{ id: PanelTab; label: string; icon: typeof Workflow }> = [
   { id: "dag", label: "DAG", icon: Workflow },
   { id: "channels", label: "Channels", icon: Radio },
+  { id: "tools", label: "Tools", icon: Wrench },
+  { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "logs", label: "Logs", icon: TerminalSquare },
 ];
 
 /** Right-panel body shared by the desktop column and the <1024px drawer. */
@@ -87,7 +94,11 @@ function RightPanel({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "dag" ? <DagViewer /> : <ChannelMonitor />}
+        {tab === "dag" && <DagViewer />}
+        {tab === "channels" && <ChannelMonitor />}
+        {tab === "tools" && <ToolManager />}
+        {tab === "skills" && <SkillList />}
+        {tab === "logs" && <TerminalLog />}
       </div>
     </div>
   );
@@ -147,6 +158,7 @@ export default function App() {
 
       {/* Center column — chat */}
       <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
+        <StatusBar />
         <ChatView sessionId={activeSession} onTogglePanel={togglePanel} />
       </main>
 
