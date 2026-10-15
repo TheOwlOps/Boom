@@ -174,6 +174,38 @@ class FeishuAdapter(ChannelAdapter):
             )
         return self._refused(resp) or {"ok": True}
 
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """GET /open-apis/im/v1/chats/{chat_id} -> {id, name, member_count, type}.
+
+        Only chats the bot is in. Feishu answers HTTP 200 with a non-zero
+        `code` on refusal — the body is checked via _refused(), like every
+        other Feishu action here. member_count needs the separate (paged)
+        members endpoint and is left None; callers that need it should page
+        /chats/{chat_id}/members themselves.
+        """
+        client, headers = await self._authed()
+        if client is None:
+            return {"error": "feishu: no tenant token (check BOOM_FEISHU_APP_ID/SECRET)"}
+        async with client:
+            resp = await client.get(
+                f"{self._base()}/open-apis/im/v1/chats/{target}",
+                headers=headers,
+            )
+        refused = self._refused(resp)
+        if refused:
+            return refused
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        chat = body.get("data") or {}
+        return {
+            "id": str(chat.get("chat_id", target)),
+            "name": chat.get("name", ""),
+            "member_count": None,
+            "type": chat.get("chat_type", ""),
+        }
+
     # -- ingress path -------------------------------------------------------
 
     def has_verify_secret(self) -> bool:

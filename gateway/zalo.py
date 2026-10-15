@@ -64,6 +64,31 @@ class ZaloAdapter(ChannelAdapter):
     # react / edit_message / delete_message: the OA API has no such endpoints —
     # the base class's honest {"error": ...} stands.
 
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """OA customer-service message with a sticker id. Zalo answers
+        {"error": 0, ...} on success."""
+        token = self._token()
+        if not token:
+            return {"error": "zalo: no OA access token configured"}
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{self.api_base}/v3.0/oa/message/cs",
+                headers={"access_token": token},
+                json={"recipient": {"user_id": str(target)},
+                      "message": {"stickerid": str(sticker)}},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        ok = resp.status_code < 300 and body.get("error") == 0
+        print(f"[zalo] sticker -> {resp.status_code} ok={ok}", flush=True)
+        if ok:
+            return {"ok": True}
+        return {"error": f"zalo send sticker refused: HTTP {resp.status_code}: "
+                         f"{body or 'no body'}"}
+    # the base class's honest {"error": ...} stands.
+
     # -- ingress path -------------------------------------------------------
     # Zalo reaches us through a bridge that posts the canonical event shape;
     # the base normalize() passes it through untouched.

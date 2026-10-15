@@ -67,6 +67,89 @@ class LineAdapter(ChannelAdapter):
     # react / edit_message / delete_message: no such LINE Messaging API
     # endpoints — the base class's honest {"error": ...} stands.
 
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """Push a sticker message. `sticker` is "packageId:stickerId"
+        (e.g. "446:1988" — LINE documents the package/sticker ids)."""
+        parts = str(sticker or "").split(":", 1)
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            return {"error": "line sticker must look like 'packageId:stickerId'"}
+        package_id, sticker_id = parts[0].strip(), parts[1].strip()
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{self._base()}/v2/bot/message/push",
+                headers={"Authorization": f"Bearer {self._token()}"},
+                json={"to": target, "messages": [{"type": "sticker",
+                                                  "packageId": package_id,
+                                                  "stickerId": sticker_id}]},
+            )
+        print(f"[line] sticker -> {resp.status_code}", flush=True)
+        if resp.status_code < 300:
+            return {"ok": True}
+        return {"error": f"line send sticker refused: HTTP {resp.status_code}"}
+
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """GET /bot/group/{groupId}/summary (+ best-effort member count)
+        -> {id, name, member_count, type}.
+
+        LINE's group summary carries no member count; the members/count
+        endpoint is called best-effort and member_count stays None when it
+        fails.
+        """
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.get(
+                f"{self._base()}/bot/group/{target}/summary", headers=headers)
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code >= 300:
+            return {"error": f"line group summary refused (bot not in group?): "
+                             f"HTTP {resp.status_code}"}
+        info: Dict[str, Any] = {
+            "id": str(body.get("groupId", target)),
+            "name": body.get("groupName", ""),
+            "member_count": None,
+            "type": "group",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                cresp = await client.get(
+                    f"{self._base()}/bot/group/{target}/members/count",
+                    headers=headers)
+            cbody = cresp.json() or {}
+            if cresp.status_code < 300:
+                info["member_count"] = cbody.get("count")
+        except Exception:
+            pass
+        return info
+
+    async def get_member_info(self, target: str, user_id: str) -> Dict[str, Any]:
+        """GET /bot/group/{groupId}/member/{userId} -> {id, name}.
+
+        HONESTY: LINE only exposes profiles of members in groups the bot
+        belongs to. Anyone else answers 404 — reported honestly, never
+        fabricated. (LINE member profiles carry no role or join date.)
+        """
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.get(
+                f"{self._base()}/bot/group/{target}/member/{user_id}",
+                headers={"Authorization": f"Bearer {self._token()}"},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code == 404:
+            return {"error": f"line: user {user_id} not visible to the bot "
+                             f"in group {target}"}
+        if resp.status_code >= 300:
+            return {"error": f"line member profile refused: HTTP {resp.status_code}"}
+        return {
+            "id": str(body.get("userId", user_id)),
+            "name": body.get("displayName", ""),
+        }
+
     # -- ingress path -------------------------------------------------------
 
     def has_verify_secret(self) -> bool:

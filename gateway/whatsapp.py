@@ -84,6 +84,28 @@ class WhatsAppAdapter(ChannelAdapter):
         return {"error": f"whatsapp reaction refused: HTTP {resp.status_code}: "
                          f"{err.get('message') if isinstance(err, dict) else body or 'no body'}"}
 
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """Cloud API sticker message. `sticker` is a media id, or an http(s)
+        URL (sent as a link — the sticker must be WebP)."""
+        sticker = str(sticker or "").strip()
+        if not sticker:
+            return {"error": "whatsapp sticker is empty"}
+        media = ({"link": sticker} if sticker.startswith(("http://", "https://"))
+                 else {"id": sticker})
+        resp = await self._post_message({
+            "messaging_product": "whatsapp", "to": target, "type": "sticker",
+            "sticker": media,
+        })
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code < 300 and not body.get("error"):
+            return {"ok": True}
+        err = (body.get("error") or {})
+        return {"error": f"whatsapp sticker refused: HTTP {resp.status_code}: "
+                         f"{err.get('message') if isinstance(err, dict) else body or 'no body'}"}
+
     # -- ingress path -------------------------------------------------------
 
     def normalize(self, event: Dict[str, Any]) -> Dict[str, Any]:

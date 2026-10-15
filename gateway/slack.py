@@ -116,6 +116,77 @@ class SlackAdapter(ChannelAdapter):
             return {"ok": True}
         return {"error": f"slack chat.delete refused: {res['body'].get('error') or res['status']}"}
 
+    async def kick_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """conversations.kick: remove a user from a channel. `target` is the
+        channel id. Needs an admin/owner token scope; a plain bot token gets
+        "not_admin". Admin-only: call only on the user's explicit request.
+        (Slack has no bot ban API, so ban_member keeps the base honest error.)"""
+        res = await self._post("conversations.kick", {
+            "channel": target, "user": user_id,
+        })
+        if res["status"] < 300 and res["body"].get("ok"):
+            return {"ok": True}
+        err = str(res["body"].get("error") or "")
+        # Slack reports missing rights as ok:false + an error name, not HTTP 403.
+        if err in ("not_admin", "missing_scope"):
+            return {"error": "bot lacks admin permission"}
+        return {"error": f"slack conversations.kick refused: {err or res['status']}"}
+
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """conversations.info -> {id, name, member_count, type}.
+
+        Slack answers HTTP 200 with {"ok": false} on refusal, so the body —
+        not the status code — is checked, like every other Slack action here.
+        """
+        res = await self._post("conversations.info", {"channel": target})
+        body = res["body"]
+        if not body.get("ok"):
+            return {"error": f"slack conversations.info refused: "
+                             f"{body.get('error') or res['status']}"}
+        ch = body.get("channel") or {}
+        if ch.get("is_im"):
+            ctype = "dm"
+        elif ch.get("is_mpim"):
+            ctype = "mpim"
+        elif ch.get("is_group"):
+            ctype = "private_channel"
+        else:
+            ctype = "channel"
+        return {
+            "id": str(ch.get("id", target)),
+            "name": ch.get("name", ""),
+            "member_count": ch.get("num_members"),
+            "type": ctype,
+        }
+
+    async def get_member_info(self, target: str, user_id: str) -> Dict[str, Any]:
+        """users.info -> {id, name, role, is_bot, timezone}.
+
+        HONESTY: a bot can only look up users in workspaces it belongs to.
+        An unknown user answers {"ok": false, "error": "user_not_found"} —
+        reported honestly, never fabricated.
+        """
+        res = await self._post("users.info", {"user": user_id})
+        body = res["body"]
+        if not body.get("ok"):
+            return {"error": f"slack users.info refused (user not visible to "
+                             f"bot?): {body.get('error') or res['status']}"}
+        user = body.get("user") or {}
+        profile = user.get("profile") or {}
+        if user.get("is_owner"):
+            role = "owner"
+        elif user.get("is_admin"):
+            role = "admin"
+        else:
+            role = "member"
+        return {
+            "id": str(user.get("id", user_id)),
+            "name": profile.get("display_name") or profile.get("real_name") or user.get("name") or "",
+            "role": role,
+            "is_bot": bool(user.get("is_bot")),
+            "timezone": user.get("tz"),
+        }
+
     # -- ingress path -------------------------------------------------------
 
     def has_verify_secret(self) -> bool:
