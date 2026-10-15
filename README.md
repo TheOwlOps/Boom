@@ -1,11 +1,7 @@
 # Boom 🤖
 
 <p align="center">
-  <img src="docs/logo.png" width="200" alt="Boom Owl Logo"/>
-</p>
-
-<p align="center">
-  <img src="docs/boom_intro.gif" width="640" alt="Boom intro"/>
+  <img src="docs/boom_banner.gif" width="100%" alt="Boom — Autonomous Multi-Channel AI Agent"/>
 </p>
 
 [![CI](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg)](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml)
