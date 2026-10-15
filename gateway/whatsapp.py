@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -43,12 +42,12 @@ class WhatsAppAdapter(ChannelAdapter):
         return os.getenv("BOOM_WHATSAPP_API_BASE", DEFAULT_API_BASE).rstrip("/")
 
     async def _post_message(self, payload: Dict[str, Any]) -> Any:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            return await client.post(
-                f"{self._base()}/{self._phone()}/messages",
-                headers={"Authorization": f"Bearer {self._token()}"},
-                json=payload,
-            )
+        client = self._http()
+        return await client.post(
+            f"{self._base()}/{self._phone()}/messages",
+            headers={"Authorization": f"Bearer {self._token()}"},
+            json=payload,
+        )
 
     # -- reply path -------------------------------------------------------
 

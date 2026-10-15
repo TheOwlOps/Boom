@@ -16,7 +16,6 @@ import hmac
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -60,14 +59,14 @@ class MessengerAdapter(ChannelAdapter):
         token = self._token()
         if not token:
             return False
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self.api_base}/me/messages",
-                params={"access_token": token},
-                json={"recipient": {"id": str(target)},
-                      "messaging_type": "RESPONSE",
-                      "message": {"text": text}},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self.api_base}/me/messages",
+            params={"access_token": token},
+            json={"recipient": {"id": str(target)},
+                  "messaging_type": "RESPONSE",
+                  "message": {"text": text}},
+        )
         try:
             body = resp.json() or {}
         except ValueError:

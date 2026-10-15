@@ -100,8 +100,8 @@ class FeishuAdapter(ChannelAdapter):
         token = await _feishu_token(self._base(), self._app(), self._secret())
         if not token:
             return None, {}
-        client = httpx.AsyncClient(timeout=35.0)
-        return client, {"Authorization": f"Bearer {token}"}
+        # Shared connection: callers must NOT close it.
+        return self._http(), {"Authorization": f"Bearer {token}"}
 
     @staticmethod
     def _refused(resp: Any) -> Optional[Dict[str, Any]]:
@@ -123,14 +123,13 @@ class FeishuAdapter(ChannelAdapter):
         client, headers = await self._authed()
         if client is None:
             return False
-        async with client:
-            resp = await client.post(
-                f"{self._base()}/open-apis/im/v1/messages",
-                params={"receive_id_type": "chat_id"},
-                headers=headers,
-                json={"receive_id": target, "msg_type": "text",
-                      "content": json.dumps({"text": text})},
-            )
+        resp = await client.post(
+            f"{self._base()}/open-apis/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers=headers,
+            json={"receive_id": target, "msg_type": "text",
+                  "content": json.dumps({"text": text})},
+        )
         refused = self._refused(resp)
         ok = refused is None
         print(f"[feishu] -> {resp.status_code} ok={ok} {len(text)} chars", flush=True)
@@ -142,36 +141,33 @@ class FeishuAdapter(ChannelAdapter):
         client, headers = await self._authed()
         if client is None:
             return {"error": "feishu: no tenant token (check BOOM_FEISHU_APP_ID/SECRET)"}
-        async with client:
-            resp = await client.post(
-                f"{self._base()}/open-apis/im/v1/messages/{message_id}/reactions",
-                headers=headers,
-                # emoji_type is Feishu's reaction code ("SMILE", "OK", ...).
-                json={"reaction_type": {"emoji_type": emoji}},
-            )
+        resp = await client.post(
+            f"{self._base()}/open-apis/im/v1/messages/{message_id}/reactions",
+            headers=headers,
+            # emoji_type is Feishu's reaction code ("SMILE", "OK", ...).
+            json={"reaction_type": {"emoji_type": emoji}},
+        )
         return self._refused(resp) or {"ok": True}
 
     async def edit_message(self, target: str, message_id: str, text: str) -> Dict[str, Any]:
         client, headers = await self._authed()
         if client is None:
             return {"error": "feishu: no tenant token (check BOOM_FEISHU_APP_ID/SECRET)"}
-        async with client:
-            resp = await client.put(
-                f"{self._base()}/open-apis/im/v1/messages/{message_id}",
-                headers=headers,
-                json={"msg_type": "text", "content": json.dumps({"text": text})},
-            )
+        resp = await client.put(
+            f"{self._base()}/open-apis/im/v1/messages/{message_id}",
+            headers=headers,
+            json={"msg_type": "text", "content": json.dumps({"text": text})},
+        )
         return self._refused(resp) or {"ok": True}
 
     async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
         client, headers = await self._authed()
         if client is None:
             return {"error": "feishu: no tenant token (check BOOM_FEISHU_APP_ID/SECRET)"}
-        async with client:
-            resp = await client.delete(
-                f"{self._base()}/open-apis/im/v1/messages/{message_id}",
-                headers=headers,
-            )
+        resp = await client.delete(
+            f"{self._base()}/open-apis/im/v1/messages/{message_id}",
+            headers=headers,
+        )
         return self._refused(resp) or {"ok": True}
 
     async def get_group_info(self, target: str) -> Dict[str, Any]:
@@ -186,11 +182,10 @@ class FeishuAdapter(ChannelAdapter):
         client, headers = await self._authed()
         if client is None:
             return {"error": "feishu: no tenant token (check BOOM_FEISHU_APP_ID/SECRET)"}
-        async with client:
-            resp = await client.get(
-                f"{self._base()}/open-apis/im/v1/chats/{target}",
-                headers=headers,
-            )
+        resp = await client.get(
+            f"{self._base()}/open-apis/im/v1/chats/{target}",
+            headers=headers,
+        )
         refused = self._refused(resp)
         if refused:
             return refused

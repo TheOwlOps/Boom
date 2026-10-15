@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -45,13 +44,13 @@ class ZaloAdapter(ChannelAdapter):
         token = self._token()
         if not token:
             return False
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self.api_base}/v3.0/oa/message/cs",
-                headers={"access_token": token},
-                json={"recipient": {"user_id": str(target)},
-                      "message": {"text": text}},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self.api_base}/v3.0/oa/message/cs",
+            headers={"access_token": token},
+            json={"recipient": {"user_id": str(target)},
+                  "message": {"text": text}},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
@@ -64,19 +63,25 @@ class ZaloAdapter(ChannelAdapter):
     # react / edit_message / delete_message: the OA API has no such endpoints —
     # the base class's honest {"error": ...} stands.
 
+    async def recall_message(self, target: str, message_id: str) -> Dict[str, Any]:
+        """Zalo OA exposes no message-recall endpoint (verified against the
+        public OA API docs — "thu hồi" exists only in the personal Zalo app
+        and unofficial personal-account APIs). Honest error, never a fake call."""
+        return {"error": "zalo: OA API has no message recall endpoint"}
+
     async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
         """OA customer-service message with a sticker id. Zalo answers
         {"error": 0, ...} on success."""
         token = self._token()
         if not token:
             return {"error": "zalo: no OA access token configured"}
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self.api_base}/v3.0/oa/message/cs",
-                headers={"access_token": token},
-                json={"recipient": {"user_id": str(target)},
-                      "message": {"stickerid": str(sticker)}},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self.api_base}/v3.0/oa/message/cs",
+            headers={"access_token": token},
+            json={"recipient": {"user_id": str(target)},
+                  "message": {"stickerid": str(sticker)}},
+        )
         try:
             body = resp.json() or {}
         except ValueError:

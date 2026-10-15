@@ -12,7 +12,6 @@ import hmac
 import os
 from typing import Any, Dict, Optional
 
-import httpx
 
 from gateway.channel import ChannelAdapter
 
@@ -54,18 +53,24 @@ class LineAdapter(ChannelAdapter):
         return bool(self._token())
 
     async def send_text(self, target: str, text: str) -> bool:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._base()}/v2/bot/message/push",
-                headers={"Authorization": f"Bearer {self._token()}"},
-                json={"to": target, "messages": [{"type": "text", "text": text}]},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._base()}/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {self._token()}"},
+            json={"to": target, "messages": [{"type": "text", "text": text}]},
+        )
         print(f"[line] -> {resp.status_code} {len(text)} chars", flush=True)
         return resp.status_code < 300
 
     # -- actions -----------------------------------------------------------
     # react / edit_message / delete_message: no such LINE Messaging API
     # endpoints — the base class's honest {"error": ...} stands.
+
+    async def recall_message(self, target: str, message_id: str) -> Dict[str, Any]:
+        """LINE Messaging API has no unsend/delete endpoint for bot messages
+        (verified: all Messaging API methods checked — "unsend" exists only
+        as a webhook event when a *user* unsends). Honest error, never fake."""
+        return {"error": "line: Messaging API has no unsend endpoint for bot messages"}
 
     async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
         """Push a sticker message. `sticker` is "packageId:stickerId"
@@ -74,14 +79,14 @@ class LineAdapter(ChannelAdapter):
         if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
             return {"error": "line sticker must look like 'packageId:stickerId'"}
         package_id, sticker_id = parts[0].strip(), parts[1].strip()
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(
-                f"{self._base()}/v2/bot/message/push",
-                headers={"Authorization": f"Bearer {self._token()}"},
-                json={"to": target, "messages": [{"type": "sticker",
-                                                  "packageId": package_id,
-                                                  "stickerId": sticker_id}]},
-            )
+        client = self._http()
+        resp = await client.post(
+            f"{self._base()}/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {self._token()}"},
+            json={"to": target, "messages": [{"type": "sticker",
+                                              "packageId": package_id,
+                                              "stickerId": sticker_id}]},
+        )
         print(f"[line] sticker -> {resp.status_code}", flush=True)
         if resp.status_code < 300:
             return {"ok": True}
@@ -96,9 +101,9 @@ class LineAdapter(ChannelAdapter):
         fails.
         """
         headers = {"Authorization": f"Bearer {self._token()}"}
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.get(
-                f"{self._base()}/bot/group/{target}/summary", headers=headers)
+        client = self._http()
+        resp = await client.get(
+            f"{self._base()}/bot/group/{target}/summary", headers=headers)
         try:
             body = resp.json() or {}
         except ValueError:
@@ -113,10 +118,10 @@ class LineAdapter(ChannelAdapter):
             "type": "group",
         }
         try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                cresp = await client.get(
-                    f"{self._base()}/bot/group/{target}/members/count",
-                    headers=headers)
+            client = self._http()
+            cresp = await client.get(
+                f"{self._base()}/bot/group/{target}/members/count",
+                headers=headers)
             cbody = cresp.json() or {}
             if cresp.status_code < 300:
                 info["member_count"] = cbody.get("count")
@@ -131,11 +136,11 @@ class LineAdapter(ChannelAdapter):
         belongs to. Anyone else answers 404 — reported honestly, never
         fabricated. (LINE member profiles carry no role or join date.)
         """
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.get(
-                f"{self._base()}/bot/group/{target}/member/{user_id}",
-                headers={"Authorization": f"Bearer {self._token()}"},
-            )
+        client = self._http()
+        resp = await client.get(
+            f"{self._base()}/bot/group/{target}/member/{user_id}",
+            headers={"Authorization": f"Bearer {self._token()}"},
+        )
         try:
             body = resp.json() or {}
         except ValueError:
