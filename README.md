@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <video src="docs/boom_intro.mp4" width="640" controls></video>
+  <img src="docs/boom_intro.gif" width="640" alt="Boom intro"/>
 </p>
 
 [![CI](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg)](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml)
