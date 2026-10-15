@@ -1,5 +1,13 @@
 # Boom 🤖
 
+<p align="center">
+  <img src="docs/logo.png" width="200" alt="Boom Owl Logo"/>
+</p>
+
+<p align="center">
+  <video src="docs/boom_intro.mp4" width="640" controls></video>
+</p>
+
 [![CI](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg)](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 22](https://img.shields.io/badge/node-22-green.svg)](https://nodejs.org/)
