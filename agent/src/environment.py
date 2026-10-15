@@ -350,6 +350,7 @@ class AgentEnvironment:
             ("goals.tools", False),
             ("digest.tools", False),
             ("tools.research_tool", False),
+            ("tools.scraper", False),
             ("people.tools", True),
         ):
             try:
