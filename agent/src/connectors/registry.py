@@ -20,6 +20,10 @@ DEFAULT_CONNECTOR_MODULES: Tuple[str, ...] = (
     "connectors.google_calendar",
     "connectors.google_drive",
     "connectors.http_api",
+    "connectors.github",
+    "connectors.spotify",
+    "connectors.weather",
+    "connectors.news",
 )
 
 

@@ -13,6 +13,10 @@ reports `connected: false` and its tools return `{"error": ...}`.
 | Google Calendar | `BOOM_GOOGLE_CALENDAR_ACCESS_TOKEN` | `calendar_list`, `calendar_create`, `calendar_delete` |
 | Google Drive | `BOOM_GOOGLE_DRIVE_ACCESS_TOKEN` | `drive_list`, `drive_search`, `drive_download`, `drive_upload` |
 | Generic HTTP API | `BOOM_HTTP_API_DEFS` (path, default `memories/http_apis.json`) | `http_<api>_<endpoint>` per definition |
+| GitHub | `BOOM_GITHUB_TOKEN` | `github_list_issues`, `github_get_issue`, `github_list_prs`, `github_read_file`, `github_search_code` |
+| Spotify | `BOOM_SPOTIFY_ACCESS_TOKEN` | `spotify_search`, `spotify_now_playing`, `spotify_play`, `spotify_pause` |
+| Weather | none (Open-Meteo, free) | `weather_now`, `weather_daily` |
+| News | none (VnExpress RSS, free) | `news_headlines`, `news_search` |
 
 ## Getting a token
 
@@ -31,6 +35,8 @@ Then:
 export BOOM_GMAIL_ACCESS_TOKEN="ya29...."
 export BOOM_GOOGLE_CALENDAR_ACCESS_TOKEN="ya29...."
 export BOOM_GOOGLE_DRIVE_ACCESS_TOKEN="ya29...."
+export BOOM_GITHUB_TOKEN="ghp_..."          # GitHub Settings → Developer settings → Personal access tokens
+export BOOM_SPOTIFY_ACCESS_TOKEN="..."       # Spotify user OAuth token (scopes: user-read-playback-state, user-modify-playback-state)
 ```
 
 ## Custom HTTP APIs
