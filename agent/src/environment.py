@@ -358,6 +358,7 @@ class AgentEnvironment:
             ("tasks.tools", True),
             ("verify.tools", True),
             ("learning.tools", False),
+            ("triggers.tools", False),
         ):
             try:
                 factory = getattr(import_module(module_name), "build_tools", None)
