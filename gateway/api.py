@@ -36,6 +36,24 @@ for _p in (str(_root), str(_root / "agent" / "src")):
         sys.path.insert(0, _p)
 
 VERSION = "0.1.0"
+
+import time
+_API_START_TIME = time.time()
+
+# In-memory log buffer for /api/logs (also useful for debugging)
+_LOG_BUFFER: list = []
+_LOG_MAX = 200
+
+
+def api_log(msg: str):
+    """Thêm log vào buffer (giữ tối đa 200 dòng mới nhất)."""
+    import datetime
+    _LOG_BUFFER.append({
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "msg": str(msg)[:500],
+    })
+    if len(_LOG_BUFFER) > _LOG_MAX:
+        del _LOG_BUFFER[:-_LOG_MAX]
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420")  # Vite, Tauri
@@ -215,14 +233,40 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/health":
+            # Đếm tools/skills thật từ environment
+            tools_count = 0
+            skills_count = 0
+            try:
+                from agent.src.environment import build_environment
+                env = build_environment()
+                tools_count = len(getattr(env, "tools", {}) or {})
+            except Exception:
+                pass
+            try:
+                from pathlib import Path
+                skills_dir = Path(__file__).resolve().parent.parent / "skills"
+                if skills_dir.exists():
+                    skills_count = sum(1 for p in skills_dir.iterdir() if p.is_dir())
+            except Exception:
+                pass
             self._send_json(
                 200,
                 {
                     "status": "ok",
                     "version": VERSION,
                     "model": self.api.model or "unconfigured",
+                    "uptime_sec": int(time.time() - _API_START_TIME),
+                    "tools_count": tools_count,
+                    "skills_count": skills_count,
                 },
             )
+        elif path == "/api/logs":
+            try:
+                limit = int(urlparse(self.path).query.split("limit=")[-1].split("&")[0]) if "limit=" in self.path else 50
+            except (ValueError, IndexError):
+                limit = 50
+            limit = max(1, min(limit, _LOG_MAX))
+            self._send_json(200, {"logs": _LOG_BUFFER[-limit:]})
         elif path == "/api/sessions":
             # ReActLoop's SQLite session store exposes load_session but no
             # listing API — honest empty state, never invented sessions.
