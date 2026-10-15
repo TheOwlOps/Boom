@@ -360,6 +360,9 @@ class AgentEnvironment:
             ("learning.tools", False),
             ("triggers.tools", False),
             ("tools.ocr_tool", False),
+            ("authz.tools", False),
+            ("audit.tools", True),
+            ("gateway.broadcast", False),
         ):
             try:
                 factory = getattr(import_module(module_name), "build_tools", None)
