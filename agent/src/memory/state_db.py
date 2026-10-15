@@ -174,14 +174,16 @@ class StateDB:
             )
             return cur.lastrowid
 
-    def get_session_messages(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_session_messages(self, session_id: str, limit: int = 50,
+                             newest: bool = False) -> List[Dict[str, Any]]:
+        order = "DESC" if newest else "ASC"
+        inner = ("SELECT id, role, content, tool_calls, timestamp FROM messages "
+                 f"WHERE session_id = ? ORDER BY id {order} LIMIT ?")
+        # `newest` asks for the tail of a long session, which is what a reader rebuilding a live
+        # context needs; either way the rows come back oldest-first, the order a conversation is
+        # rebuilt in.
         cur = self.conn.execute(
-            """
-            SELECT id, role, content, tool_calls, timestamp 
-            FROM messages 
-            WHERE session_id = ? 
-            ORDER BY id ASC LIMIT ?
-            """,
+            f"SELECT * FROM ({inner}) ORDER BY id ASC" if newest else inner,
             (session_id, limit)
         )
         messages = []

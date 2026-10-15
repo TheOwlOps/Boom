@@ -3,6 +3,10 @@ import json
 from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
 
+# How many transcript messages a loop rebuilds when it takes over a session another process was
+# serving: enough for the model to keep the thread, small enough to stay a fresh context.
+HYDRATE_MESSAGES = 40
+
 class ToolCall(BaseModel):
     name: str
     arguments: Dict[str, Any]
@@ -82,6 +86,44 @@ class ReActLoop:
         self.messages.clear()
         self._system_message = None
         self._session_created = False
+
+    def load_session(self, session_id: str, channel: str = "",
+                     limit: int = HYDRATE_MESSAGES) -> bool:
+        """Point this loop at a session, rebuilding a context another process left behind.
+
+        The live context lives in memory, so a loop that never served this session starts empty
+        and rebuilds it from the transcript. Tool messages are skipped on purpose: a
+        `role: tool` message has to follow the assistant call it answers, and `tool_call_id` is
+        not persisted, so a paired-up guess would be rejected by the provider. Returns whether a
+        context was rebuilt.
+        """
+        if session_id == self.session_id and self.messages:
+            # Same session: keep the fuller in-memory context, but the platform tone is part of
+            # the system prompt, so a different channel rebuilds that one message.
+            if channel and channel != self.channel:
+                self.channel = channel
+                self._system_message = None
+            return False
+
+        self.reset()
+        self.session_id = session_id
+        if channel:
+            self.channel = channel
+        if self.checkpoints is not None:
+            self.checkpoints.session_id = (session_id or "session").split("/")[0]
+        if self.state_db is None:
+            return False
+
+        rows = self.state_db.get_session_messages(session_id, limit=limit, newest=True)
+        for row in rows:
+            role = row.get("role")
+            content = row.get("content") or ""
+            if role in ("user", "assistant") and content:
+                self.messages.append({"role": role, "content": content})
+        # The session row already exists (that is where these messages came from), so it must not
+        # be created again as if this were a new conversation.
+        self._session_created = bool(self.messages)
+        return bool(self.messages)
 
     def _refusal(self, name: str, arguments: Dict[str, Any]) -> Optional[str]:
         """Guardrail and approval verdict for a call, or None when it may proceed.

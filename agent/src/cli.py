@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import time
@@ -225,9 +226,88 @@ class BoomCLI:
         finally:
             cron_task.cancel()
 
+    # ---------------------------------------------------------------- rpc worker
+
+    def run_rpc_worker(self, out):
+        """Serve turns for the Go edge; `out` is where the protocol lines go.
+
+        The caller has already pointed sys.stdout at stderr: tools print freely (progress,
+        checkpoints, browser logs), and one stray print on stdout would land between two protocol
+        lines and break the reader on the other side.
+        """
+        asyncio.run(self.serve_rpc(out))
+
+    async def serve_rpc(self, out):
+        """One JSON message per line in, one reply per line out, one turn at a time.
+
+        The framing is the one `proto/rpc.json` and `crates/core/src/ipc.rs` already define:
+        `{"id", "method", "params"}` in, `{"id", "result"}` or `{"id", "error"}` out. A single
+        turn runs at a time on purpose: the live context is instance state, so two turns in one
+        process would interleave into one transcript. The edge starts as many of these processes
+        as it wants turns at once.
+        """
+        event_loop = asyncio.get_running_loop()
+        while True:
+            line = await event_loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
+                break  # the edge closed the pipe
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+            except ValueError as e:
+                self._reply(out, 0, error=f"Invalid JSON: {e}")
+                continue
+            if not isinstance(request, dict):
+                self._reply(out, 0, error="request must be a JSON object")
+                continue
+            rid = request.get("id") or 0
+            method = str(request.get("method") or "")
+            params = request.get("params") or {}
+            if method == "ping":
+                self._reply(out, rid, result={
+                    "status": "pong", "model": getattr(self.llm, "model", "default")})
+            elif method == "turn":
+                await self._rpc_turn(out, rid, params)
+            else:
+                self._reply(out, rid, error=f"Unknown method: {method}")
+
+    async def _rpc_turn(self, out, rid, params):
+        text = str(params.get("text") or "")
+        if not text:
+            self._reply(out, rid, error="turn needs a text")
+            return
+        self.loop.load_session(str(params.get("session_id") or self.session_id),
+                               channel=str(params.get("channel") or ""))
+        try:
+            res = await self.loop.step(text)
+        except Exception as e:
+            # The edge logs this and answers the channel; the traceback stays on stderr, never
+            # inside a protocol line.
+            print(f"[rpc] turn failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            self._reply(out, rid, error=f"{type(e).__name__}: {e}")
+            return
+        self._reply(out, rid, result={
+            "action": res.get("action") or res.get("observation") or "Done.",
+            "success": bool(res.get("success")),
+            "steps": int(res.get("steps") or 0),
+            "error": res.get("error"),
+        })
+
+    @staticmethod
+    def _reply(out, rid, result=None, error=None):
+        message = {"id": rid}
+        if error is not None:
+            message["error"] = str(error)
+        else:
+            message["result"] = result if result is not None else {}
+        print(json.dumps(message), file=out, flush=True)
+
 def main():
     # The banner and arbitrary model output are not cp1252-safe on a default Windows console.
-    for stream in (sys.stdout, sys.stderr):
+    # The protocol lines carry whatever a platform sent, which is not codepage-safe either.
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
@@ -235,7 +315,15 @@ def main():
     parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve mutating tool actions without prompting")
     parser.add_argument("--model", "-m", type=str, help="LLM model name")
     parser.add_argument("--gateway", "-g", action="store_true", help="Run as multi-channel gateway daemon")
+    parser.add_argument("--serve-rpc", action="store_true",
+                        help="Serve turns for the Go edge: line JSON-RPC on stdin/stdout")
     args = parser.parse_args()
+
+    protocol_out = sys.stdout
+    if args.serve_rpc:
+        # Setup prints too (MCP registration, provider selection), so the split happens before
+        # anything is constructed: stderr keeps the log, stdout carries protocol lines only.
+        sys.stdout = sys.stderr
 
     config = BoomConfig.load()
     if args.yolo:
@@ -253,7 +341,9 @@ def main():
         print(f"State: pruned history older than {retention:g} days: "
               f"{cli.env.state_db.prune(retention)}")
 
-    if args.gateway:
+    if args.serve_rpc:
+        cli.run_rpc_worker(protocol_out)
+    elif args.gateway:
         asyncio.run(cli.run_daemon())
     else:
         asyncio.run(cli.start_repl())

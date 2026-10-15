@@ -338,3 +338,4 @@ apps/desktop/.dist-build*
 .messenger-profile/
 scratch/
 *.log
+*.exe
