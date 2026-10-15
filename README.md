@@ -1,13 +1,21 @@
-# Boom 🤖
+# Boom 🦉
 
 <p align="center">
-  <img src="docs/boom_banner.gif" width="100%" alt="Boom — Autonomous Multi-Channel AI Agent"/>
+  <strong>The agent harness that powers Muse.</strong><br/>
+  Prompt in → guardrailed ReAct loops → tools dispatched across 8 channels.
 </p>
 
-[![CI](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg)](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![Node 22](https://img.shields.io/badge/node-22-green.svg)](https://nodejs.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml"><img src="https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"/>
+  <img src="https://img.shields.io/badge/node-22-green.svg" alt="Node 22"/>
+  <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT"/>
+  <img src="https://img.shields.io/badge/Muse-harness-orange.svg" alt="Muse harness"/>
+</p>
+
+<p align="center">
+  <img src="docs/boom_harness.gif" width="100%" alt="Boom harness orchestrating Muse agent loops"/>
+</p>
 
 **Boom** is an autonomous multi-channel AI agent harness. Chat with it via Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the web dashboard. It plans, codes, researches, and manages your business groups autonomously.
 
