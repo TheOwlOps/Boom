@@ -16,6 +16,7 @@ sys.path.insert(0, str(root_dir / "agent" / "src"))
 from agent.src.config import BoomConfig
 from agent.src.environment import AgentEnvironment
 from agent.src.loop.react import ReActLoop
+from agent.src.orchestration.brain import Brain
 from agent.src.providers.llm import LLMProvider
 from agent.src.security.system_one_gate import SystemOneGate
 from gateway.daemon import GatewayDaemon
@@ -49,6 +50,9 @@ class BoomCLI:
         )
         # cron_run needs a loop to run a scheduled prompt through; without it the tool refuses.
         self.env.loop = self.loop
+        # Brain unifies ReAct + DAG + MASS behind one run(). Old paths keep
+        # calling self.loop directly; new callers (ACP, slash commands) use run_brain.
+        self.brain = Brain(make_loop=self._make_loop, llm=self.llm)
         self._attach_evaluator()
 
     def _attach_evaluator(self):
@@ -71,6 +75,37 @@ class BoomCLI:
         self.env.delegation.evaluator_llm = evaluator
         self.env.delegation.optimizer_llm = evaluator
         print(f"Evaluator model: {model} (separate from {self.config.primary_provider.model})")
+
+    def _make_loop(self, system_prompt=None, tools=None, session_id=None):
+        """Factory for fresh ReActLoops sharing this CLI's env and provider.
+
+        ``tools=None`` means the full toolset (Brain probes this once to filter
+        per-role tool dicts). ``system_prompt`` pins a role prompt for sub-loops.
+        A passed ``session_id`` rehydrates prior context via load_session, so a
+        Brain react turn keeps the conversation thread.
+        """
+        loop = ReActLoop(
+            tools if tools is not None else self.env,
+            self.llm,
+            accountant=self.env.token_accountant,
+            session_id=session_id or self.session_id,
+            system_prompt=system_prompt,
+        )
+        if session_id:
+            loop.load_session(session_id)
+        return loop
+
+    async def run_brain(self, prompt: str, strategy: str = "auto", **kw):
+        """Run a prompt through the Brain (ReAct/DAG/MASS single path).
+
+        New callers (ACP adapter, future slash commands) use this. The existing
+        serve_rpc / gateway paths keep calling self.loop directly — no
+        behaviour change there.
+        """
+        return await self.brain.run(
+            prompt, strategy=strategy, session_id=self.session_id, **kw
+        )
+
     def print_banner(self):
         print(BANNER)
         print(f"Model: {self.config.primary_provider.model} | Mode: {'YOLO (Auto-approve)' if self.config.yolo else 'Interactive Approval'}")
