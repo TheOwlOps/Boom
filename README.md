@@ -1,102 +1,106 @@
-# Boom — Autonomous Agent Harness
+# Boom 🤖
 
-Boom is a multi-channel autonomous AI agent: chat via Telegram/Discord/Slack/Zalo/LINE/WhatsApp/Feishu/Messenger, with a web dashboard, event triggers, durable long tasks, self-debugging code agent, RBAC, audit logs, and broadcast.
+[![CI](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg)](https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Node 22](https://img.shields.io/badge/node-22-green.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Quick Start
+**Boom** is an autonomous multi-channel AI agent harness. Chat with it via Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the web dashboard. It plans, codes, researches, and manages your business groups autonomously.
 
-### Option 1: Devbox (recommended — reproducible, Nix-powered)
+> **Harness, not a model.** Boom orchestrates frontier LLMs (OpenAI, Anthropic, etc.) — like OpenClaw, but built for multi-channel business operations.
+
+## ✨ Features
+
+| Category | Highlights |
+|----------|------------|
+| 🧠 **Brain** | ReAct + DAG + MASS unified planning |
+| 💬 **Channels** | 8 platforms: Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, Messenger |
+| 🔍 **DeepSearch** | Multi-hop research with cross-source verification |
+| 🤔 **DeepThink** | Multi-perspective analysis, no topic avoidance |
+| 🤖 **Dynamic Agents** | Auto spawn/retire subagents by context (Coder, Researcher, Data Scientist...) |
+| 💻 **Autonomous Coding** | Plan → execute → verify → debug loop with AST refactoring |
+| 🏢 **Business** | Multi-group management, RBAC, approval flows, auto reports |
+| 🎤 **Voice** | STT + TTS voice conversations |
+| 🖼️ **Media** | Image generation, OCR (Vietnamese + English), video analysis |
+| 📊 **Documents** | Native XLSX (formulas/charts), PPTX, PDF generation |
+| 🔌 **Plugins** | Manifest-based with lifecycle, sandboxing, dependency resolution |
+| 🛡️ **Production** | Circuit breaker, rate limiting, structured logging, graceful shutdown |
+
+## 🚀 Quick Start
+
+### Devbox (recommended)
 
 ```bash
-# Install devbox: https://www.jetify.com/docs/devbox/installing-devbox/
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-devbox shell   # exact same environment on every machine
+devbox shell    # reproducible environment (Nix-powered)
 ./start.sh all
 ```
 
-### Option 2: Local
+### Manual
 
 ```bash
-# 1. Clone
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-
-# 2. Python deps
 pip install httpx pydantic
-
-# 3. System deps (for OCR)
-# Ubuntu/Debian:
-sudo apt install tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng
-
-# 4. Configure (optional — for channels & LLM)
-python3 boom.py setup
-
-# 5. Run everything
 ./start.sh all
 ```
 
-Open:
-- **Web UI:** http://127.0.0.1:5173
-- **API:** http://127.0.0.1:18080
-
-Stop: `./stop.sh`
-
-### Option 3: Docker (for deployment)
+### Docker
 
 ```bash
 docker compose up --build
 ```
 
-Set `TELEGRAM_BOT_TOKEN` in `.env` or environment to connect Telegram.
+Open **http://127.0.0.1:5173** for the web dashboard.
 
-### Individual services
+## 📖 Documentation
 
-```bash
-./start.sh api      # API server only (:18080)
-./start.sh web      # Web UI only (:5173)
-./start.sh gateway  # Gateway daemon (:8788)
-python3 boom.py             # Interactive CLI
-python3 boom.py --gateway  # Gateway daemon
-```
-
-## Features
-
-- **Brain**: ReAct + DAG + MASS unified planning (`agent/src/orchestration/brain.py`)
-- **Autonomous agent**: plan → execute → verify → debug loop (`agent/src/autonomous/`)
-- **Channels**: Telegram, Discord, Slack, LINE, Zalo, WhatsApp, Feishu, Messenger
-- **Triggers**: event-driven automation — Gmail, price drops, news keywords, webhooks
-- **Tasks**: durable long tasks with SQLite checkpoints + crash/resume
-- **Verify**: critic, self-debug, fact-checking
-- **Learning**: learns from conversations (SQLite)
-- **Enterprise**: RBAC, append-only audit log, broadcast
-- **OCR**: Tesseract (vie+eng) with queue + concurrency limit
-- **Web UI**: React + Vite dashboard (chat, DAG viewer, channel monitor)
-
-## Environment Variables
-
-| Var | Description |
+| Doc | Description |
 |-----|-------------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
-| `BOOM_API_PORT` | API port (default 18080) |
-| `BOOM_INGRESS_PORT` | Gateway port (default 8788) |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | LLM provider keys |
+| [docs/TOOLS.md](docs/TOOLS.md) | Full tool catalog (131 tools) |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Plugin system guide |
+| [docs/DEEPSEARCH.md](docs/DEEPSEARCH.md) | DeepSearch architecture |
+| [docs/CHANNELS.md](docs/CHANNELS.md) | Adding new channels |
 
-## Project Layout
+## 🏗️ Architecture
 
 ```
-boom.py              # Main entrypoint
-agent/src/           # Python agent (brain, tools, tasks, triggers, ...)
-gateway/             # Multi-channel gateway (adapters, daemon, API)
-apps/web/            # React dashboard
-acp/                 # ACP adapter
-evals/               # Test suites
-skills/              # Agent skills
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Channels   │────▶│    Brain     │────▶│    Tools    │
+│ (8 platforms)│     │ (ReAct+DAG+  │     │ (131 tools) │
+└─────────────┘     │  MASS)       │     └─────────────┘
+                    └──────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │   Memory    │
+                    │ (FTS5+long) │
+                    └─────────────┘
 ```
 
-## Tests
+- **Python** (`agent/`): brain, tools, orchestration, business logic
+- **TypeScript** (`apps/web/`): React dashboard
+- **Rust** (`crates/`): sandbox host
+
+## 🧪 Testing
 
 ```bash
-python3 evals/test_triggers.py
-python3 evals/test_autonomous.py
-# ... see evals/ for all suites
+# Run all evals
+for f in evals/test_*.py; do python3 "$f"; done
+
+# Or with pytest
+python3 -m pytest evals/ -q
 ```
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/amazing`)
+3. Commit your changes
+4. Push and open a Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
