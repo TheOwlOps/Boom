@@ -25,6 +25,8 @@ from tools.delegation import DelegationManager
 from tools.code_execution import CodeExecutionKernel
 from tools.session_search import SessionSearchTool
 from tools.ast_tool import ASTInspector
+from tools.tool_discovery import search_tools, list_toolsets
+from tools import gmail_tool as _gmail_tool
 from security.guardrail import SecurityGuardrail
 from security.approval import ApprovalGate
 from loop.context_compressor import ContextCompressor
@@ -484,6 +486,81 @@ class AgentEnvironment:
             "func": lambda code: kernel.execute(code),
             "description": "Run Python code in-process with the tool registry exposed. Returns captured stdout.",
             "schema": _schema({"code": {"type": "string", "description": "Python source to execute."}}, ["code"]),
+        }
+
+        # 11. Runtime tool discovery (meta tool)
+        self._tools["search_tools"] = {
+            "name": "search_tools",
+            "func": search_tools,
+            "description": "Find tools by keyword at runtime. Searches name, description, and toolset; returns matching tools with their schemas. Use this instead of guessing tool names.",
+            "schema": _schema(
+                {
+                    "keyword": {"type": "string", "description": "Keyword(s) to search for, e.g. 'gmail', 'file', 'send'."},
+                    "limit": {"type": "integer", "description": "Max tools to return. Default 10."},
+                },
+                ["keyword"],
+            ),
+        }
+        self._tools["list_toolsets"] = {
+            "name": "list_toolsets",
+            "func": list_toolsets,
+            "description": "List all registered toolsets and the tool names in each.",
+            "schema": _schema({}, []),
+        }
+
+        # 12. Gmail (OAuth2 desktop flow, lazy). gmail_send is NOT a safe tool:
+        # the approval gate always prompts before anything is sent.
+        self._tools["gmail_search"] = {
+            "name": "gmail_search",
+            "func": _gmail_tool.gmail_search,
+            "description": "Search Gmail messages. Returns id/snippet list, no bodies.",
+            "schema": _schema(
+                {
+                    "query": {"type": "string", "description": "Gmail search query, e.g. 'from:boss subject:report'."},
+                    "max_results": {"type": "integer", "description": "Max messages. Default 10."},
+                },
+                ["query"],
+            ),
+        }
+        self._tools["gmail_read"] = {
+            "name": "gmail_read",
+            "func": _gmail_tool.gmail_read,
+            "description": "Read one Gmail message: headers, snippet, and plain-text body.",
+            "schema": _schema(
+                {"message_id": {"type": "string", "description": "Gmail message id from gmail_search."}},
+                ["message_id"],
+            ),
+        }
+        self._tools["gmail_draft"] = {
+            "name": "gmail_draft",
+            "func": _gmail_tool.gmail_draft,
+            "description": "Create a LOCAL email draft (nothing sent, no Gmail API call). Returns a draft_id plus preview. Pass the draft_id to gmail_send to send (requires approval).",
+            "schema": _schema(
+                {
+                    "to": {"type": "string", "description": "Recipient email address."},
+                    "subject": {"type": "string", "description": "Email subject."},
+                    "body": {"type": "string", "description": "Email body text."},
+                },
+                ["to", "body"],
+            ),
+        }
+        self._tools["gmail_send"] = {
+            "name": "gmail_send",
+            "func": _gmail_tool.gmail_send,
+            "description": "Send a draft created by gmail_draft. DANGER: actually sends email. Always requires approval.",
+            "schema": _schema(
+                {"draft_id": {"type": "string", "description": "Draft id returned by gmail_draft."}},
+                ["draft_id"],
+            ),
+        }
+        self._tools["gmail_discard"] = {
+            "name": "gmail_discard",
+            "func": _gmail_tool.gmail_discard,
+            "description": "Discard a local draft without sending.",
+            "schema": _schema(
+                {"draft_id": {"type": "string", "description": "Draft id returned by gmail_draft."}},
+                ["draft_id"],
+            ),
         }
 
     def get_tools(self) -> Dict[str, Dict[str, Any]]:

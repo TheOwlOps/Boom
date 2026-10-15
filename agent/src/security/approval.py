@@ -9,6 +9,10 @@ from typing import Any, Callable, Dict, Optional
 SAFE_TOOLS = {
     "read_file", "list_skills", "view_skill", "session_search",
     "ast_inspect", "process_list", "process_poll", "sample_echo",
+    # Read-only discovery and mail tools: no external side effects.
+    "search_tools", "list_toolsets",
+    "gmail_search", "gmail_read", "gmail_draft", "gmail_discard",
+    # NOTE: gmail_send is deliberately NOT here — sending mail always prompts.
 }
 
 class ApprovalGate:

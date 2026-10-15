@@ -13,6 +13,8 @@ dependencies = [
 [project.optional-dependencies]
 # Browser automation tools (playwright) — only needed for browser_use tools
 browser = ["playwright>=1.40"]
+# Native Gmail tool (OAuth2 desktop flow) — only needed for gmail_* tools
+gmail = ["google-auth-oauthlib>=1.2"]
 # Everything else (Telegram, Discord, Zalo, Messenger, gateway) uses
 # httpx + stdlib only — no extra dependencies required.
 
