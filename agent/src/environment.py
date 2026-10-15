@@ -359,6 +359,7 @@ class AgentEnvironment:
             ("verify.tools", True),
             ("learning.tools", False),
             ("triggers.tools", False),
+            ("tools.ocr_tool", False),
         ):
             try:
                 factory = getattr(import_module(module_name), "build_tools", None)
