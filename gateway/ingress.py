@@ -9,30 +9,32 @@ delivery ledger without a new SDK per platform.
 turn that is still running — both behind the same token.
 
 Loopback-only by default, because anything that can reach this endpoint can talk to the agent.
-`BOOM_INGRESS_TOKEN` requires `X-Boom-Token` on every request; `BOOM_SLACK_SIGNING_SECRET` and
-`BOOM_FEISHU_ENCRYPT_KEY` verify those platforms' own signatures instead, replay window included,
-which is what makes binding off loopback defensible.
+`BOOM_INGRESS_TOKEN` requires `X-Boom-Token` on every request; channels whose adapter holds a
+signature secret (`BOOM_SLACK_SIGNING_SECRET`, `BOOM_FEISHU_ENCRYPT_KEY`,
+`BOOM_LINE_CHANNEL_SECRET`, `BOOM_MESSENGER_APP_SECRET`) verify their platform's own signature
+instead, replay window included, which is what makes binding off loopback defensible.
 
 The body may be a bridge's canonical event or the platform's own webhook payload: Slack's Events
 API (including the `url_verification` ping), the WhatsApp Cloud API, Feishu's v2 event (decrypted
-when the app's Encrypt Key is set) and LINE's webhook are read into the same event, so a real app
-can point at this endpoint with no translation service in front of it. A payload that needs no
-turn — a delivery receipt, an event we do not act on — is accepted with a 200 and ignored, because
-a platform retries anything it does not see accepted.
+when the app's Encrypt Key is set), LINE's webhook and Messenger's webhook are read into the same
+event by their channel adapters, so a real app can point at this endpoint with no translation
+service in front of it. A payload that needs no turn — a delivery receipt, an event we do not act
+on — is accepted with a 200 and ignored, because a platform retries anything it does not see
+accepted.
 """
 
 import asyncio
 import base64
 import hashlib
-import hmac
 import json
 import logging
 import os
-import time
 from typing import Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qsl
 
 import httpx
+
+from gateway.channel import build_default_registry, ChannelAdapter
 
 logger = logging.getLogger("boom.gateway.ingress")
 
@@ -40,15 +42,6 @@ MAX_BODY = 64 * 1024  # a chat message, not an upload
 _PREFIX = "/webhook/"
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 SLACK_WINDOW = 300  # seconds, Slack's own documented replay window
-
-
-def _text_of(content: Any) -> str:
-    """Feishu packs a message's text as a JSON string inside the event."""
-    try:
-        parsed = json.loads(content) if isinstance(content, str) else content
-    except ValueError:
-        return ""
-    return str((parsed or {}).get("text") or "") if isinstance(parsed, dict) else ""
 
 
 def _decrypt_feishu(key: str, blob: str) -> dict:
@@ -71,14 +64,21 @@ def _decrypt_feishu(key: str, blob: str) -> dict:
     return json.loads(padded[:-pad].decode("utf-8"))
 
 
+_DEFAULT_REGISTRY = None
+
+
+def _default_registry():
+    """Process-wide adapter registry for the module-level helpers below. Adapters
+    read their secrets from the environment at call time, so one instance is enough."""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = build_default_registry()
+    return _DEFAULT_REGISTRY
+
+
 def _handshake(channel: str, event: dict) -> Optional[dict]:
     """A platform's own endpoint-verification ping, answered without running a turn."""
-    if channel == "slack" and event.get("type") == "url_verification":
-        return {"challenge": event.get("challenge")}
-    # Feishu's v2 challenge is the same shape, and arrives encrypted when the key is set.
-    if channel == "feishu" and event.get("type") == "url_verification":
-        return {"challenge": event.get("challenge")}
-    return None
+    return _default_registry().handshake(channel, event)
 
 
 def _normalize(channel: str, event: dict) -> dict:
@@ -86,74 +86,13 @@ def _normalize(channel: str, event: dict) -> dict:
 
     A bridge we wrote posts the canonical shape (`sender_id`, `sender_name`, `text`,
     `message_id`, optional `reply_url`/`priority`/`target`) and falls straight through. The
-    branches above it read Slack's Events API, the WhatsApp Cloud API, Feishu's v2 event and
-    LINE's webhook, so a real app can point at this endpoint without a translation service in
-    between. Returns `{"ignore": reason}` for a payload that needs no turn (a delivery
-    receipt, an event we do not act on) and `{"error": reason}` for one we cannot read.
+    channel adapters read Slack's Events API, the WhatsApp Cloud API, Feishu's v2 event, LINE's
+    webhook, Telegram's update object and Messenger's webhook, so a real app can point at this
+    endpoint without a translation service in between. Returns `{"ignore": reason}` for a payload
+    that needs no turn (a delivery receipt, an event we do not act on) and `{"error": reason}`
+    for one we cannot read.
     """
-    if channel == "slack" and "type" in event:
-        if event.get("type") != "event_callback":
-            return {"ignore": f"Slack payload {event.get('type')!r}"}
-        inner = event.get("event") or {}
-        if inner.get("type") != "message":
-            return {"ignore": f"Slack event {inner.get('type')!r}"}
-        # Slack sends our own replies back as message events; acting on one would loop forever.
-        if inner.get("bot_id") or inner.get("subtype"):
-            return {"ignore": f"Slack message with subtype {inner.get('subtype') or 'bot'}"}
-        user = str(inner.get("user") or "")
-        return {"sender_id": user, "sender_name": user, "text": inner.get("text") or "",
-                # ts is unique per message and survives Slack's retries, so it is the key.
-                "message_id": str(inner.get("client_msg_id") or inner.get("ts") or ""),
-                "target": str(inner.get("channel") or "")}
-
-    if channel == "whatsapp" and "entry" in event:
-        for entry in event.get("entry") or []:
-            for change in (entry or {}).get("changes") or []:
-                value = (change or {}).get("value") or {}
-                for message in value.get("messages") or []:
-                    if (message or {}).get("type") != "text":
-                        continue
-                    sender = str(message.get("from") or "")
-                    contacts = value.get("contacts") or []
-                    name = ""
-                    if contacts and isinstance(contacts[0], dict):
-                        name = str((contacts[0].get("profile") or {}).get("name") or "")
-                    return {"sender_id": sender, "sender_name": name or sender,
-                            "text": str((message.get("text") or {}).get("body") or ""),
-                            "message_id": str(message.get("id") or ""), "target": sender}
-        return {"ignore": "WhatsApp status callback, not a message"}
-
-    if channel == "feishu" and ("encrypt" in event or "header" in event):
-        if "encrypt" in event:
-            # Only reached with no Encrypt Key configured here: the body is still ciphertext, and
-            # a turn answered from ciphertext would be answered from garbage.
-            return {"error": "encrypted Feishu event: set BOOM_FEISHU_ENCRYPT_KEY to the app's "
-                             "Encrypt Key so the body can be opened"}
-        header = event.get("header") or {}
-        if header.get("event_type") != "im.message.receive_v1":
-            return {"ignore": f"Feishu event {header.get('event_type')!r}"}
-        inner = event.get("event") or {}
-        message = inner.get("message") or {}
-        if message.get("message_type") != "text":
-            return {"ignore": f"Feishu {message.get('message_type')} message"}
-        sender = (inner.get("sender") or {}).get("sender_id") or {}
-        sender_id = str(sender.get("open_id") or sender.get("user_id") or "")
-        return {"sender_id": sender_id, "sender_name": sender_id,
-                "text": _text_of(message.get("content")),
-                "message_id": str(message.get("message_id") or ""),
-                "target": str(message.get("chat_id") or "")}
-
-    if channel == "line" and "events" in event:
-        for item in event.get("events") or []:
-            message = (item or {}).get("message") or {}
-            if (item or {}).get("type") != "message" or message.get("type") != "text":
-                continue
-            user = str(((item.get("source") or {}).get("userId")) or "")
-            return {"sender_id": user, "sender_name": user, "text": str(message.get("text") or ""),
-                    "message_id": str(message.get("id") or ""), "target": user}
-        return {"ignore": "LINE non-message event"}
-
-    return event
+    return _default_registry().normalize(channel, event)
 
 
 class IngressServer:
@@ -172,6 +111,12 @@ class IngressServer:
         self.line_secret = (os.getenv("BOOM_LINE_CHANNEL_SECRET", "")
                             if line_secret is None else line_secret)
         self._server: Optional[asyncio.AbstractServer] = None
+        # Each adapter verifies with the secret resolved here (None in the adapter means
+        # "read the environment at call time", so constructor values always win).
+        self.registry = build_default_registry()
+        self.registry.get("slack").signing_secret = self.slack_secret
+        self.registry.get("feishu").encrypt_key = self.feishu_key
+        self.registry.get("line").channel_secret = self.line_secret
 
     # ------------------------------------------------------------------ authentication
     def _verify(self, channel: str, headers: dict, body: bytes) -> Optional[str]:
@@ -182,56 +127,7 @@ class IngressServer:
         Slack timestamp is checked against a replay window so a captured request cannot be
         replayed later.
         """
-        if channel == "slack" and self.slack_secret:
-            return self._verify_slack(headers, body)
-        if channel == "feishu" and self.feishu_key:
-            return self._verify_feishu(headers, body)
-        if channel == "line" and self.line_secret:
-            return self._verify_line(headers, body)
-        if self.token and headers.get("x-boom-token") != self.token:
-            return "bad or missing X-Boom-Token"
-        return None
-
-    def _verify_slack(self, headers: dict, body: bytes) -> Optional[str]:
-        """Slack: v0 = HMAC-SHA256(secret, "v0:<timestamp>:<raw body>")."""
-        signature = headers.get("x-slack-signature", "")
-        stamp = headers.get("x-slack-request-timestamp", "")
-        if not signature or not stamp.isdigit():
-            return "missing X-Slack-Signature or X-Slack-Request-Timestamp"
-        if abs(time.time() - int(stamp)) > SLACK_WINDOW:
-            return f"stale Slack timestamp {stamp}"
-        expected = "v0=" + hmac.new(
-            self.slack_secret.encode(), b"v0:" + stamp.encode() + b":" + body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            return "bad Slack signature"
-        return None
-
-    def _verify_feishu(self, headers: dict, body: bytes) -> Optional[str]:
-        """Feishu/Lark v2: sha256(timestamp + nonce + encrypt_key) over the raw body."""
-        signature = headers.get("x-lark-signature", "")
-        stamp = headers.get("x-lark-request-timestamp", "")
-        nonce = headers.get("x-lark-request-nonce", "")
-        if not signature or not stamp:
-            return "missing X-Lark-Signature or X-Lark-Request-Timestamp"
-        computed = hashlib.sha256(
-            (stamp + nonce + self.feishu_key).encode() + body
-        ).hexdigest()
-        if not hmac.compare_digest(computed, signature):
-            return "bad Feishu signature"
-        return None
-
-    def _verify_line(self, headers: dict, body: bytes) -> Optional[str]:
-        """LINE: base64(HMAC-SHA256(channel secret, raw body)) in X-Line-Signature."""
-        signature = headers.get("x-line-signature", "")
-        if not signature:
-            return "missing X-Line-Signature"
-        expected = base64.b64encode(
-            hmac.new(self.line_secret.encode(), body, hashlib.sha256).digest()
-        ).decode("ascii")
-        if not hmac.compare_digest(expected, signature):
-            return "bad LINE signature"
-        return None
+        return self.registry.verify(channel, headers, body, shared_token=self.token)
 
     async def _read_request(self, reader: asyncio.StreamReader):
         """Request line, lowercased headers, body. Raises on a malformed or oversized request."""
@@ -262,10 +158,17 @@ class IngressServer:
             logger.warning("ingress request failed: %s: %s", type(e).__name__, e)
         finally:
             if not writer.is_closing():
-                blob = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                if isinstance(payload, str):
+                    # Webhook verification challenges (Messenger's hub.challenge) must be
+                    # answered as plain text, not JSON.
+                    blob = payload.encode("utf-8")
+                    content_type = "text/plain; charset=utf-8"
+                else:
+                    blob = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    content_type = "application/json; charset=utf-8"
                 writer.write(
                     f"HTTP/1.1 {status} {_REASONS.get(status, 'Error')}\r\n"
-                    f"Content-Type: application/json; charset=utf-8\r\n"
+                    f"Content-Type: {content_type}\r\n"
                     f"Content-Length: {len(blob)}\r\nConnection: close\r\n\r\n".encode("latin-1")
                     + blob
                 )
@@ -288,6 +191,20 @@ class IngressServer:
             if dispatcher is not None:
                 out["queue"] = dispatcher.status()
             return 200, out
+        parts = urlsplit(path)
+        if parts.path.startswith(_PREFIX) and len(parts.path) > len(_PREFIX):
+            # GET on a webhook path is a verification handshake, but only for
+            # channels that define one (Messenger's hub.challenge). Anything
+            # else keeps the old 405, exactly like before.
+            if method == "GET":
+                channel = parts.path[len(_PREFIX):].strip("/")
+                adapter = self.registry.get(channel)
+                if (adapter is not None and type(adapter).verify_webhook
+                        is not ChannelAdapter.verify_webhook):
+                    challenge = adapter.verify_webhook(dict(parse_qsl(parts.query)))
+                    if challenge is not None:
+                        return 200, challenge
+                    return 403, {"error": "webhook verification failed"}
         if method != "POST":
             return 405, {"error": "use POST"}
         if path == "/cancel":
@@ -308,12 +225,12 @@ class IngressServer:
             if not job_id:
                 return 400, {"error": "job_id or channel is required"}
             return 200, dispatcher.cancel(job_id)
-        if not path.startswith(_PREFIX) or len(path) <= len(_PREFIX):
+        if not parts.path.startswith(_PREFIX) or len(parts.path) <= len(_PREFIX):
             return 404, {"error": f"unknown path {path}"}
 
         # Which secret authenticates a request depends on its channel, so the channel is resolved
         # before anything is parsed, and the raw body is what gets verified.
-        channel = path[len(_PREFIX):].strip("/")
+        channel = parts.path[len(_PREFIX):].strip("/")
         refusal = self._verify(channel, headers, body)
         if refusal:
             return 401, {"error": refusal}
@@ -422,8 +339,7 @@ class IngressServer:
     async def serve(self):
         await self.start()
         logger.info("Ingress listening on http://%s:%s%s<channel>", self.host, self.port, _PREFIX)
-        async with self._server:
-            await self._server.serve_forever()
+        await self._server.serve_forever()
 
     def stop(self):
         if self._server is not None:

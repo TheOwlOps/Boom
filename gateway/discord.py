@@ -5,6 +5,9 @@ HELLO -> op 2 IDENTIFY, op 1 heartbeats, op 0 MESSAGE_CREATE dispatch, and a rec
 RECONNECT / op 9 INVALID_SESSION (the identify payload is valid once per connection, so the
 honest recovery is a fresh socket). Replies go out over `POST /channels/<id>/messages`.
 
+Message actions use the documented REST endpoints: PUT .../reactions/{emoji}/@me,
+PATCH the message for edit (own messages only), DELETE for delete.
+
 Anything it cannot do is logged and skipped; nothing here reports success it did not have.
 """
 
@@ -14,11 +17,14 @@ import asyncio
 import json
 import logging
 import ssl
-from typing import Any, Optional
+from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 import httpx
 
 from tools.ws_client import WebSocket
+
+from gateway.channel import ChannelAdapter
 
 logger = logging.getLogger("boom.gateway.discord")
 
@@ -32,7 +38,9 @@ INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
 RECONNECT_OPS = (7, 9)
 
 
-class DiscordChannel:
+class DiscordChannel(ChannelAdapter):
+    name = "discord"
+
     def __init__(self, daemon: Any, token: str, api_base: str = API_BASE,
                  ssl_context: Optional[ssl.SSLContext] = None, timeout: float = 30.0):
         self.daemon = daemon
@@ -48,6 +56,57 @@ class DiscordChannel:
     @property
     def headers(self) -> dict:
         return {"Authorization": f"Bot {self.token}"}
+
+    # ------------------------------------------------------------------ adapter
+
+    def can_deliver(self) -> bool:
+        return bool(self.token)
+
+    async def send_text(self, target: str, text: str) -> bool:
+        try:
+            await self.send_message(target, text)
+            return True
+        except Exception as e:
+            print(f"[gateway] discord send to {target} failed: {type(e).__name__}: {e}",
+                  flush=True)
+            return False
+
+    async def react(self, target: str, message_id: str, emoji: str) -> Dict[str, Any]:
+        """PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me -> 204."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.put(
+                f"{self.api_base}/channels/{target}/messages/{message_id}"
+                f"/reactions/{quote(emoji, safe='')}/@me",
+                headers=self.headers,
+            )
+        if resp.status_code in (200, 201, 204):
+            return {"ok": True}
+        return {"error": f"discord add reaction refused: HTTP {resp.status_code}"}
+
+    async def edit_message(self, target: str, message_id: str,
+                           text: str) -> Dict[str, Any]:
+        """PATCH the message content (only the bot's own messages)."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.patch(
+                f"{self.api_base}/channels/{target}/messages/{message_id}",
+                headers=self.headers,
+                json={"content": text[:MAX_MESSAGE]},
+            )
+        if resp.status_code in (200, 201):
+            return {"ok": True}
+        return {"error": f"discord edit refused: HTTP {resp.status_code}"}
+
+    async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.delete(
+                f"{self.api_base}/channels/{target}/messages/{message_id}",
+                headers=self.headers,
+            )
+        if resp.status_code in (200, 201, 204):
+            return {"ok": True}
+        return {"error": f"discord delete refused: HTTP {resp.status_code}"}
+
+    # ------------------------------------------------------------------ REST/WS
 
     async def gateway_url(self) -> str:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
