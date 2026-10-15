@@ -245,7 +245,7 @@ def test_validation():
 
 def test_build_tools_shape():
     tools = build_tools()
-    check("two tools", set(tools) == {"scrape_list", "scrape_product"}, set(tools))
+    check("six tools", set(tools) == {"scrape_list", "scrape_product", "scrape_table", "crawl_site", "read_sitemap", "watch_url"}, set(tools))
     for name, meta in tools.items():
         check(f"{name} shape",
               meta["name"] == name and callable(meta["func"])
