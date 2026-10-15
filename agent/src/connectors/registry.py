@@ -24,6 +24,10 @@ DEFAULT_CONNECTOR_MODULES: Tuple[str, ...] = (
     "connectors.spotify",
     "connectors.weather",
     "connectors.news",
+    "connectors.shopee",
+    "connectors.tiki",
+    "connectors.lazada",
+    "connectors.captcha",
 )
 
 
