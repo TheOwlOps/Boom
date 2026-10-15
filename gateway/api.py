@@ -26,6 +26,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from pathlib import Path
+
+# Ensure agent/src is on path for `tools.*` imports (e.g. tools.ws_client).
+# This makes `python -m gateway.api` work without manual PYTHONPATH.
+_root = Path(__file__).resolve().parent.parent
+for _p in (str(_root), str(_root / "agent" / "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 VERSION = "0.1.0"
 DEFAULT_PORT = 18080

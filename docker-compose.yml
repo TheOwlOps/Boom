@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  boom:
+    build: .
+    ports:
+      - "18080:18080"  # API
+      - "5173:5173"    # Web UI
+      - "8788:8788"    # Gateway
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - BOOM_API_PORT=18080
+    volumes:
+      - boom_data:/app/data
+      - ~/.boom:/root/.boom:ro
+    restart: unless-stopped
+
+volumes:
+  boom_data:
