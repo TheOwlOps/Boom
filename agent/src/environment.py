@@ -26,6 +26,9 @@ from tools.code_execution import CodeExecutionKernel
 from tools.session_search import SessionSearchTool
 from tools.ast_tool import ASTInspector
 from tools.tool_discovery import search_tools, list_toolsets
+from tools.web import web_search, web_fetch, web_extract
+from tools.fileops import edit_file, append_file, file_info
+from tools.shell import run as shell_run, run_bg, job_status, job_kill
 from tools import gmail_tool as _gmail_tool
 from security.guardrail import SecurityGuardrail
 from security.approval import ApprovalGate
@@ -565,6 +568,105 @@ class AgentEnvironment:
             "schema": _schema(
                 {"draft_id": {"type": "string", "description": "Draft id returned by gmail_draft."}},
                 ["draft_id"],
+            ),
+        }
+        # --- New unified tools (web, fileops, shell) ---
+        self._tools["web_search"] = {
+            "name": "web_search",
+            "func": web_search,
+            "description": "Search the web via DuckDuckGo HTML. Returns list of {title, url, snippet}.",
+            "schema": _schema(
+                {"query": {"type": "string", "description": "Search query."},
+                 "max_results": {"type": "integer", "description": "Max results (default 10)."}},
+                ["query"],
+            ),
+        }
+        self._tools["web_fetch"] = {
+            "name": "web_fetch",
+            "func": web_fetch,
+            "description": "Fetch a URL and return text content. Has timeout, retry, circuit breaker.",
+            "schema": _schema(
+                {"url": {"type": "string", "description": "URL to fetch."},
+                 "timeout": {"type": "integer", "description": "Timeout seconds (default 15)."}},
+                ["url"],
+            ),
+        }
+        self._tools["web_extract"] = {
+            "name": "web_extract",
+            "func": web_extract,
+            "description": "Extract main text content from a URL, removing nav/footer/scripts.",
+            "schema": _schema(
+                {"url": {"type": "string", "description": "URL to extract."},
+                 "selector": {"type": "string", "description": "Optional CSS selector."}},
+                ["url"],
+            ),
+        }
+        self._tools["edit_file"] = {
+            "name": "edit_file",
+            "func": edit_file,
+            "description": "Edit file by exact-match replacement. Creates .bak backup. Fails on 0 or >1 matches.",
+            "schema": _schema(
+                {"path": {"type": "string", "description": "File path."},
+                 "old": {"type": "string", "description": "Exact text to replace."},
+                 "new": {"type": "string", "description": "Replacement text."}},
+                ["path", "old", "new"],
+            ),
+        }
+        self._tools["append_file"] = {
+            "name": "append_file",
+            "func": append_file,
+            "description": "Append text to end of file.",
+            "schema": _schema(
+                {"path": {"type": "string", "description": "File path."},
+                 "text": {"type": "string", "description": "Text to append."}},
+                ["path", "text"],
+            ),
+        }
+        self._tools["file_info"] = {
+            "name": "file_info",
+            "func": file_info,
+            "description": "Get file metadata: size, mtime, line count.",
+            "schema": _schema(
+                {"path": {"type": "string", "description": "File path."}},
+                ["path"],
+            ),
+        }
+        self._tools["shell_run"] = {
+            "name": "shell_run",
+            "func": shell_run,
+            "description": "Run shell command with timeout (default 30s). No shell=True, blocks dangerous commands.",
+            "schema": _schema(
+                {"cmd": {"type": "string", "description": "Command to run."},
+                 "timeout": {"type": "integer", "description": "Timeout seconds."},
+                 "cwd": {"type": "string", "description": "Working directory."}},
+                ["cmd"],
+            ),
+        }
+        self._tools["shell_bg"] = {
+            "name": "shell_bg",
+            "func": run_bg,
+            "description": "Run command in background. Returns job_id.",
+            "schema": _schema(
+                {"cmd": {"type": "string", "description": "Command to run."}},
+                ["cmd"],
+            ),
+        }
+        self._tools["shell_status"] = {
+            "name": "shell_status",
+            "func": job_status,
+            "description": "Check status of background job.",
+            "schema": _schema(
+                {"job_id": {"type": "string", "description": "Job ID from shell_bg."}},
+                ["job_id"],
+            ),
+        }
+        self._tools["shell_kill"] = {
+            "name": "shell_kill",
+            "func": job_kill,
+            "description": "Kill background job.",
+            "schema": _schema(
+                {"job_id": {"type": "string", "description": "Job ID from shell_bg."}},
+                ["job_id"],
             ),
         }
 
