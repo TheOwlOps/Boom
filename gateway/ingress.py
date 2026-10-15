@@ -12,9 +12,17 @@ Loopback-only by default, because anything that can reach this endpoint can talk
 `BOOM_INGRESS_TOKEN` requires `X-Boom-Token` on every request; `BOOM_SLACK_SIGNING_SECRET` and
 `BOOM_FEISHU_ENCRYPT_KEY` verify those platforms' own signatures instead, replay window included,
 which is what makes binding off loopback defensible.
+
+The body may be a bridge's canonical event or the platform's own webhook payload: Slack's Events
+API (including the `url_verification` ping), the WhatsApp Cloud API, Feishu's v2 event (decrypted
+when the app's Encrypt Key is set) and LINE's webhook are read into the same event, so a real app
+can point at this endpoint with no translation service in front of it. A payload that needs no
+turn — a delivery receipt, an event we do not act on — is accepted with a 200 and ignored, because
+a platform retries anything it does not see accepted.
 """
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -34,10 +42,124 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 SLACK_WINDOW = 300  # seconds, Slack's own documented replay window
 
 
+def _text_of(content: Any) -> str:
+    """Feishu packs a message's text as a JSON string inside the event."""
+    try:
+        parsed = json.loads(content) if isinstance(content, str) else content
+    except ValueError:
+        return ""
+    return str((parsed or {}).get("text") or "") if isinstance(parsed, dict) else ""
+
+
+def _decrypt_feishu(key: str, blob: str) -> dict:
+    """Feishu's encrypted event: AES-256-CBC, the IV is the first 16 bytes, PKCS7 padded.
+
+    With an Encrypt Key set the whole body arrives as `{"encrypt": ...}`, so the signature check
+    passes on ciphertext: reading it is the only way to answer such an event at all.
+    """
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    raw = base64.b64decode(blob)
+    if len(raw) <= 16:
+        raise ValueError("encrypted body is too short to hold an IV and a block")
+    decryptor = Cipher(algorithms.AES(hashlib.sha256(key.encode()).digest()),
+                       modes.CBC(raw[:16])).decryptor()
+    padded = decryptor.update(raw[16:]) + decryptor.finalize()
+    pad = padded[-1] if padded else 0  # PKCS7: the last byte is the padding length
+    if not 0 < pad <= 16 or pad > len(padded):
+        raise ValueError("bad padding: wrong Encrypt Key?")
+    return json.loads(padded[:-pad].decode("utf-8"))
+
+
+def _handshake(channel: str, event: dict) -> Optional[dict]:
+    """A platform's own endpoint-verification ping, answered without running a turn."""
+    if channel == "slack" and event.get("type") == "url_verification":
+        return {"challenge": event.get("challenge")}
+    # Feishu's v2 challenge is the same shape, and arrives encrypted when the key is set.
+    if channel == "feishu" and event.get("type") == "url_verification":
+        return {"challenge": event.get("challenge")}
+    return None
+
+
+def _normalize(channel: str, event: dict) -> dict:
+    """The platform's own webhook body read as the canonical event, or why it is not one.
+
+    A bridge we wrote posts the canonical shape (`sender_id`, `sender_name`, `text`,
+    `message_id`, optional `reply_url`/`priority`/`target`) and falls straight through. The
+    branches above it read Slack's Events API, the WhatsApp Cloud API, Feishu's v2 event and
+    LINE's webhook, so a real app can point at this endpoint without a translation service in
+    between. Returns `{"ignore": reason}` for a payload that needs no turn (a delivery
+    receipt, an event we do not act on) and `{"error": reason}` for one we cannot read.
+    """
+    if channel == "slack" and "type" in event:
+        if event.get("type") != "event_callback":
+            return {"ignore": f"Slack payload {event.get('type')!r}"}
+        inner = event.get("event") or {}
+        if inner.get("type") != "message":
+            return {"ignore": f"Slack event {inner.get('type')!r}"}
+        # Slack sends our own replies back as message events; acting on one would loop forever.
+        if inner.get("bot_id") or inner.get("subtype"):
+            return {"ignore": f"Slack message with subtype {inner.get('subtype') or 'bot'}"}
+        user = str(inner.get("user") or "")
+        return {"sender_id": user, "sender_name": user, "text": inner.get("text") or "",
+                # ts is unique per message and survives Slack's retries, so it is the key.
+                "message_id": str(inner.get("client_msg_id") or inner.get("ts") or ""),
+                "target": str(inner.get("channel") or "")}
+
+    if channel == "whatsapp" and "entry" in event:
+        for entry in event.get("entry") or []:
+            for change in (entry or {}).get("changes") or []:
+                value = (change or {}).get("value") or {}
+                for message in value.get("messages") or []:
+                    if (message or {}).get("type") != "text":
+                        continue
+                    sender = str(message.get("from") or "")
+                    contacts = value.get("contacts") or []
+                    name = ""
+                    if contacts and isinstance(contacts[0], dict):
+                        name = str((contacts[0].get("profile") or {}).get("name") or "")
+                    return {"sender_id": sender, "sender_name": name or sender,
+                            "text": str((message.get("text") or {}).get("body") or ""),
+                            "message_id": str(message.get("id") or ""), "target": sender}
+        return {"ignore": "WhatsApp status callback, not a message"}
+
+    if channel == "feishu" and ("encrypt" in event or "header" in event):
+        if "encrypt" in event:
+            # Only reached with no Encrypt Key configured here: the body is still ciphertext, and
+            # a turn answered from ciphertext would be answered from garbage.
+            return {"error": "encrypted Feishu event: set BOOM_FEISHU_ENCRYPT_KEY to the app's "
+                             "Encrypt Key so the body can be opened"}
+        header = event.get("header") or {}
+        if header.get("event_type") != "im.message.receive_v1":
+            return {"ignore": f"Feishu event {header.get('event_type')!r}"}
+        inner = event.get("event") or {}
+        message = inner.get("message") or {}
+        if message.get("message_type") != "text":
+            return {"ignore": f"Feishu {message.get('message_type')} message"}
+        sender = (inner.get("sender") or {}).get("sender_id") or {}
+        sender_id = str(sender.get("open_id") or sender.get("user_id") or "")
+        return {"sender_id": sender_id, "sender_name": sender_id,
+                "text": _text_of(message.get("content")),
+                "message_id": str(message.get("message_id") or ""),
+                "target": str(message.get("chat_id") or "")}
+
+    if channel == "line" and "events" in event:
+        for item in event.get("events") or []:
+            message = (item or {}).get("message") or {}
+            if (item or {}).get("type") != "message" or message.get("type") != "text":
+                continue
+            user = str(((item.get("source") or {}).get("userId")) or "")
+            return {"sender_id": user, "sender_name": user, "text": str(message.get("text") or ""),
+                    "message_id": str(message.get("id") or ""), "target": user}
+        return {"ignore": "LINE non-message event"}
+
+    return event
+
+
 class IngressServer:
     def __init__(self, daemon: Any, host: str = "127.0.0.1", port: int = 8788,
                  token: Optional[str] = None, slack_secret: Optional[str] = None,
-                 feishu_key: Optional[str] = None):
+                 feishu_key: Optional[str] = None, line_secret: Optional[str] = None):
         self.daemon = daemon
         self.host = host
         self.port = port
@@ -47,6 +169,8 @@ class IngressServer:
         self.slack_secret = (os.getenv("BOOM_SLACK_SIGNING_SECRET", "")
                              if slack_secret is None else slack_secret)
         self.feishu_key = os.getenv("BOOM_FEISHU_ENCRYPT_KEY", "") if feishu_key is None else feishu_key
+        self.line_secret = (os.getenv("BOOM_LINE_CHANNEL_SECRET", "")
+                            if line_secret is None else line_secret)
         self._server: Optional[asyncio.AbstractServer] = None
 
     # ------------------------------------------------------------------ authentication
@@ -62,6 +186,8 @@ class IngressServer:
             return self._verify_slack(headers, body)
         if channel == "feishu" and self.feishu_key:
             return self._verify_feishu(headers, body)
+        if channel == "line" and self.line_secret:
+            return self._verify_line(headers, body)
         if self.token and headers.get("x-boom-token") != self.token:
             return "bad or missing X-Boom-Token"
         return None
@@ -93,6 +219,18 @@ class IngressServer:
         ).hexdigest()
         if not hmac.compare_digest(computed, signature):
             return "bad Feishu signature"
+        return None
+
+    def _verify_line(self, headers: dict, body: bytes) -> Optional[str]:
+        """LINE: base64(HMAC-SHA256(channel secret, raw body)) in X-Line-Signature."""
+        signature = headers.get("x-line-signature", "")
+        if not signature:
+            return "missing X-Line-Signature"
+        expected = base64.b64encode(
+            hmac.new(self.line_secret.encode(), body, hashlib.sha256).digest()
+        ).decode("ascii")
+        if not hmac.compare_digest(expected, signature):
+            return "bad LINE signature"
         return None
 
     async def _read_request(self, reader: asyncio.StreamReader):
@@ -185,6 +323,27 @@ class IngressServer:
             return 400, {"error": "body must be a JSON object"}
         if not isinstance(event, dict):
             return 400, {"error": "body must be a JSON object"}
+        # With an Encrypt Key set, Feishu encrypts the whole body: it has to be opened before
+        # anything can be read from it, and a body we cannot open is an error, not a turn.
+        if channel == "feishu" and self.feishu_key and "encrypt" in event:
+            try:
+                event = _decrypt_feishu(self.feishu_key, str(event.get("encrypt") or ""))
+            except Exception as e:
+                return 400, {"error": f"cannot decrypt Feishu event: {type(e).__name__}: {e}"}
+            if not isinstance(event, dict):
+                return 400, {"error": "decrypted Feishu event is not an object"}
+        # A platform's own ping is answered here, without a turn; its own payload shape is read
+        # into the canonical event, so no translation bridge is needed in front of this route.
+        handshake = _handshake(channel, event)
+        if handshake is not None:
+            return 200, handshake
+        event = _normalize(channel, event)
+        if "error" in event:
+            return 400, event
+        if "ignore" in event:
+            # 200 on purpose: a platform retries anything it does not see accepted, and there is
+            # nothing to retry about a delivery receipt.
+            return 200, {"channel": channel, "ignored": event["ignore"]}
         text = str(event.get("text") or "").strip()
         if not text:
             return 400, {"error": "text is required"}
@@ -211,6 +370,9 @@ class IngressServer:
         reply = await self.daemon.handle_incoming_message(
             channel, sender_id, str(event.get("sender_name") or sender_id), text, message_id,
             deliver=deliver if reply_url else None,
+            # The reply's destination, when the platform names one (Slack's channel, Feishu's
+            # chat): a reply goes back where the message came from, not to its author.
+            target=str(event.get("target") or sender_id),
             # A bridge that knows a message is urgent can say so; anything else is normal priority.
             priority=int(event.get("priority") or 0),
         )
@@ -245,7 +407,8 @@ class IngressServer:
 
     async def start(self) -> int:
         """Bind and take the real port (0 asks the OS for a free one). Returns it."""
-        if self.host not in LOOPBACK and not (self.token or self.slack_secret or self.feishu_key):
+        if self.host not in LOOPBACK and not (self.token or self.slack_secret or self.feishu_key
+                                              or self.line_secret):
             # Anything that can reach this port can talk to the agent, so a listener that is not
             # on loopback must have something to authenticate callers with.
             raise ValueError(

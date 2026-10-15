@@ -12,6 +12,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from urllib.parse import unquote
@@ -35,6 +36,23 @@ from tools.ws_client import (
     encode_frame,
     parse_ws_url,
 )
+
+
+# Chrome's own event shape for "a request went out" and "it came back" / "it failed". One of
+# each, so the log has to pair a response with its request and keep a failure's reason.
+NETWORK_EVENTS = [
+    {"method": "Network.requestWillBeSent",
+     "params": {"requestId": "r1", "type": "Script",
+                "request": {"method": "GET", "url": "http://example.test/app.js"}}},
+    {"method": "Network.responseReceived",
+     "params": {"requestId": "r1",
+                "response": {"status": 200, "url": "http://example.test/app.js"}}},
+    {"method": "Network.requestWillBeSent",
+     "params": {"requestId": "r2", "type": "Image",
+                "request": {"method": "GET", "url": "http://example.test/missing.png"}}},
+    {"method": "Network.loadingFailed",
+     "params": {"requestId": "r2", "errorText": "net::ERR_FAILED"}},
+]
 
 
 class Server:
@@ -191,17 +209,30 @@ def cdp_result(message, state):
     if method.startswith("Input."):
         state.setdefault("input", []).append((method, params))
         return {"result": {}}
+    if method == "Page.captureScreenshot":
+        state.setdefault("shots", []).append(params)
+        return {"result": {"data": base64.b64encode(b"fake-png-bytes").decode("ascii")}}
     if method == "Runtime.evaluate":
         expression = params.get("expression", "")
-        # The click/fill scripts are recognised by what they ask the page for, and answer
-        # with the state this test sets: a box, or a field that kept a different value.
+        # The page scripts are recognised by what they ask the page for, and answer with the
+        # state this test sets: a box, or a field that kept a different value.
         if "getBoundingClientRect" in expression:
             box = state["box"]
-            # Mirrors the real script: the element's centre, measured after scrollIntoView.
-            centre = {"x": box["x"] + box["w"] / 2, "y": box["y"] + box["h"] / 2,
-                      "w": box["w"], "h": box["h"]}
-            return {"result": {"result": {"type": "object",
-                                          "value": None if state.get("no_element") else centre}}}
+            if state.get("no_element"):
+                value = None
+            elif "scrollX" in expression:
+                # The clip script: scrolls first, then converts the viewport rect to a page
+                # coordinate — mirrors the real script, including the scroll offset.
+                value = {"x": box["x"] + state.get("scroll", 0.0), "y": box["y"] + state.get("scroll", 0.0),
+                         "w": box["w"], "h": box["h"]}
+            elif "scrollIntoView" in expression:
+                # The click script: the element's centre, measured after scrollIntoView.
+                value = {"x": box["x"] + box["w"] / 2, "y": box["y"] + box["h"] / 2,
+                         "w": box["w"], "h": box["h"]}
+            else:
+                # The wait script: the element's own top-left, and nothing else.
+                value = {"x": box["x"], "y": box["y"], "w": box["w"], "h": box["h"]}
+            return {"result": {"result": {"type": "object", "value": value}}}
         if "dispatchEvent" in expression:
             return {"result": {"result": {"type": "object", "value": {
                 "tag": state.get("fill_tag", "input"), "value": state["fill_value"]}}}}
@@ -221,6 +252,8 @@ def cdp_result(message, state):
                 }
             }
         return {"result": {"result": state["eval_result"]}}
+    if method == "Network.enable":
+        return {"result": {}}
     if method == "Browser.close":
         return {"result": {}}
     return {"error": {"code": -32601, "message": f"not implemented: {method}"}}
@@ -262,6 +295,11 @@ def cdp_handler(state):
                     continue
                 message = json.loads(payload.decode("utf-8"))
                 state.setdefault("methods", []).append(message.get("method"))
+                if message.get("method") == "Network.enable" and state.get("replay_events", True):
+                    # Events arrive before the reply to the call that enabled them, exactly as
+                    # Chrome sends them: the client must keep them, not mistake them for the reply.
+                    for event in NETWORK_EVENTS:
+                        conn.sendall(encode_frame(json.dumps(event), OP_TEXT, mask=False))
                 if state.get("error_next"):
                     state["error_next"] = False
                     reply = {"id": message["id"], "error": {"code": -32000, "message": "boom: no such node"}}
@@ -302,6 +340,8 @@ def test_cdp_tools():
             "browser_open_tab",
             "browser_use_tab",
             "browser_close_tab",
+            "browser_wait_for",
+            "browser_network",
         }, f"unexpected tool names: {sorted(tools)}"
         for name, tool in tools.items():
             assert tool["name"] == name and callable(tool["func"]), f"malformed tool {name}"
@@ -370,6 +410,45 @@ def test_cdp_tools():
         assert "error" in refused and "kept" in refused["error"], refused
         print("[PASS] CDP click/fill act on the element's box and never report a missed fill.")
 
+        # Waiting for an element is polling the page, not sleeping and hoping.
+        state["box"] = {"x": 5.0, "y": 7.0, "w": 20.0, "h": 10.0}
+        found = tools["browser_wait_for"]["func"]("#late")
+        assert found == {"status": "found", "selector": "#late", "x": 5.0, "y": 7.0,
+                         "w": 20.0, "h": 10.0}, found
+        state["no_element"] = True
+        missed = tools["browser_wait_for"]["func"]("#ghost", 0.25)
+        assert "no element matching" in missed["error"], missed
+        state["no_element"] = False
+        state["box"] = {"x": 1.0, "y": 1.0, "w": 0.0, "h": 0.0}
+        assert "no visible element" in tools["browser_wait_for"]["func"]("#hidden", 0.25, True)["error"]
+        print("[PASS] browser_wait_for reports what it saw; a timeout is an error, not a found.")
+
+        # One element, not the page: the clip is in page coordinates, so the scroll offset counts.
+        state["box"] = {"x": 40.0, "y": 20.0, "w": 100.0, "h": 30.0}
+        state["scroll"] = 300.0
+        shot_path = str(Path(tempfile.gettempdir()) / "boom-eval-shot.png")
+        shot = tools["browser_screenshot"]["func"]("#go", shot_path)
+        assert shot == {"path": shot_path, "bytes": len(b"fake-png-bytes"), "selector": "#go"}, shot
+        assert Path(shot_path).read_bytes() == b"fake-png-bytes", "the PNG was not written"
+        assert state["shots"][-1]["clip"] == {"x": 340.0, "y": 320.0, "width": 100.0,
+                                             "height": 30.0, "scale": 1}, state["shots"][-1]
+        assert "clip" not in tools["browser_screenshot"]["func"]("", shot_path) and \
+            "clip" not in state["shots"][-1], "the whole-page capture must not be clipped"
+        state["no_element"] = True
+        assert "no element matches" in tools["browser_screenshot"]["func"]("#ghost", shot_path)["error"]
+        state["no_element"] = False
+        print("[PASS] Element screenshot clipped to the element's page box; page shot unclipped.")
+
+        # The traffic log: a response is paired with its request, and a failure keeps its reason.
+        log = tools["browser_network"]["func"]()
+        assert log["count"] == 2, log
+        assert log["requests"][0] == {"method": "GET", "url": "http://example.test/app.js",
+                                      "type": "Script", "status": 200}, log["requests"][0]
+        assert log["requests"][1]["error"] == "net::ERR_FAILED", log["requests"][1]
+        state["replay_events"] = False  # a page that sends nothing new: only the drop is tested
+        assert tools["browser_network"]["func"](True)["count"] == 0, "clear did not drop the log"
+        print("[PASS] browser_network logged both requests with their outcome; clear dropped it.")
+
         assert tools["browser_close"]["func"]() == {"status": "closed"}
         assert browser_tool._SESSION is None, "browser_close left the session registered"
     finally:
@@ -399,7 +478,8 @@ def test_no_browser():
         assert "error" in screenshot, screenshot
         for tool, args in (("browser_tabs", ()), ("browser_open_tab", ("http://x.test/",)),
                            ("browser_use_tab", (0,)), ("browser_close_tab", (0,)),
-                           ("browser_click", ("#x",)), ("browser_fill", ("#x", "y"))):
+                           ("browser_click", ("#x",)), ("browser_fill", ("#x", "y")),
+                           ("browser_wait_for", ("#x", 0.1)), ("browser_network", ())):
             out = tools[tool]["func"](*args)
             assert "error" in out, (tool, out)
         assert tools["browser_close"]["func"]() == {"status": "closed"}

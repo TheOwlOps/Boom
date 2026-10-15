@@ -1,6 +1,7 @@
 """Production Multi-Channel Gateway Daemon (Telegram, Zalo Bridge, Ingress Webhooks)."""
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -17,6 +18,39 @@ logger = logging.getLogger("boom.gateway")
 
 FAILED_TEXT = "Xử lý thất bại. Chi tiết đã ghi trong log của daemon."
 QUEUED_ACK = "Yêu cầu đang được xử lý, kết quả sẽ được gửi sau."
+
+# Feishu wants a tenant_access_token (app_id + app_secret exchanged for one that lasts ~2h)
+# before it will accept a message, so the token is kept here until it is close to expiring.
+_FEISHU_TOKEN: Dict[str, Any] = {"value": "", "expiry": 0.0}
+
+
+async def _feishu_token(base: str) -> str:
+    """The cached tenant access token, fetched from Feishu when there is none or it is stale."""
+    if _FEISHU_TOKEN["value"] and time.monotonic() < _FEISHU_TOKEN["expiry"]:
+        return _FEISHU_TOKEN["value"]
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{base}/open-apis/auth/v3/tenant_access_token/internal",
+                json={"app_id": os.getenv("BOOM_FEISHU_APP_ID", ""),
+                      "app_secret": os.getenv("BOOM_FEISHU_APP_SECRET", "")},
+            )
+        body = resp.json() or {}
+    except Exception as e:
+        print(f"[feishu] token request failed: {type(e).__name__}: {e}", flush=True)
+        return ""
+    token = str(body.get("tenant_access_token") or "")
+    if body.get("code") or not token:
+        print(f"[feishu] token refused: {body}", flush=True)
+        return ""
+    _FEISHU_TOKEN["value"] = token
+    # A minute of slack, so a token does not expire in the middle of a send.
+    try:
+        expires = float(body.get("expire", 7200))
+    except (TypeError, ValueError):
+        expires = 7200.0
+    _FEISHU_TOKEN["expiry"] = time.monotonic() + max(0.0, expires - 60.0)
+    return token
 
 class GatewayDaemon:
     def __init__(
@@ -51,6 +85,10 @@ class GatewayDaemon:
             return bool(os.getenv("BOOM_SLACK_BOT_TOKEN"))
         if channel == "whatsapp":
             return bool(os.getenv("BOOM_WHATSAPP_TOKEN") and os.getenv("BOOM_WHATSAPP_PHONE_ID"))
+        if channel == "line":
+            return bool(os.getenv("BOOM_LINE_CHANNEL_TOKEN"))
+        if channel == "feishu":
+            return bool(os.getenv("BOOM_FEISHU_APP_ID") and os.getenv("BOOM_FEISHU_APP_SECRET"))
         return False
 
     async def handle_incoming_message(
@@ -169,6 +207,40 @@ class GatewayDaemon:
                 )
             print(f"[whatsapp] -> {resp.status_code} {len(text)} chars", flush=True)
             return resp.status_code < 300
+        if channel == "line" and os.getenv("BOOM_LINE_CHANNEL_TOKEN"):
+            # LINE answers a webhook with 200 and then expects the reply to be pushed: holding
+            # its request open for a whole turn is what makes it retry and duplicate the message.
+            base = os.getenv("BOOM_LINE_API_BASE", "https://api.line.me")
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                resp = await client.post(
+                    f"{base}/v2/bot/message/push",
+                    headers={"Authorization": f"Bearer {os.getenv('BOOM_LINE_CHANNEL_TOKEN')}"},
+                    json={"to": target, "messages": [{"type": "text", "text": text}]},
+                )
+            print(f"[line] -> {resp.status_code} {len(text)} chars", flush=True)
+            return resp.status_code < 300
+        if channel == "feishu" and os.getenv("BOOM_FEISHU_APP_ID"):
+            base = os.getenv("BOOM_FEISHU_API_BASE", "https://open.feishu.cn")
+            token = await _feishu_token(base)
+            if not token:
+                return False
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                resp = await client.post(
+                    f"{base}/open-apis/im/v1/messages",
+                    params={"receive_id_type": "chat_id"},
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"receive_id": target, "msg_type": "text",
+                          "content": json.dumps({"text": text})},
+                )
+            # Feishu answers HTTP 200 with a nonzero `code` for a refused send: the status alone
+            # would call that delivered.
+            try:
+                body = resp.json() or {}
+            except ValueError:
+                body = {}
+            ok = resp.status_code < 300 and not body.get("code")
+            print(f"[feishu] -> {resp.status_code} ok={ok} {len(text)} chars", flush=True)
+            return ok
         return False
 
     async def _recover_delivery(self, job: Any, reply: str):

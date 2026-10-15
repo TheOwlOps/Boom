@@ -70,6 +70,7 @@ class MCPClient:
         timeout: float = DEFAULT_TIMEOUT,
         url: str = "",
         headers: Optional[Dict[str, str]] = None,
+        oauth: Optional[Dict[str, str]] = None,
     ):
         self.name = name
         self.timeout = float(timeout)
@@ -78,6 +79,11 @@ class MCPClient:
         self.cwd = str(cwd) if cwd else None
         self.url = str(url or "")
         self.headers = {k: expand_env(v) for k, v in (headers or {}).items()}
+        # Client-credentials OAuth: the token is fetched on first use and fetched again when a
+        # server answers 401, so a rotated token does not need a restart.
+        self.oauth = {k: expand_env(v) for k, v in (oauth or {}).items()}
+        self._access_token = ""
+        self._token_expiry = 0.0
         self.tools: List[Dict[str, Any]] = []
         self.server_info: Dict[str, Any] = {}
 
@@ -175,10 +181,56 @@ class MCPClient:
             except Exception:
                 pass
 
+    def _fetch_token(self, force: bool = False) -> str:
+        """A client-credentials token from the server's own token endpoint.
+
+        Client credentials only: the interactive authorization-code flow needs a browser and a
+        redirect the daemon does not have. shortcut: a server that only offers authorization-code
+        cannot be reached this way.
+        """
+        if self._access_token and not force and time.monotonic() < self._token_expiry:
+            return self._access_token
+        token_url = self.oauth.get("token_url", "")
+        if not token_url:
+            raise MCPError(f"MCP server '{self.name}' declares oauth without a token_url")
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.oauth.get("client_id", ""),
+            "client_secret": self.oauth.get("client_secret", ""),
+        }
+        if self.oauth.get("scope"):
+            data["scope"] = self.oauth["scope"]
+        try:
+            resp = httpx.post(token_url, data=data, timeout=self.timeout)
+        except httpx.HTTPError as e:
+            raise MCPError(f"MCP server '{self.name}' token endpoint unreachable: {e}") from e
+        if resp.status_code >= 400:
+            raise MCPError(
+                f"MCP server '{self.name}' token endpoint answered HTTP "
+                f"{resp.status_code}: {resp.text[:200]}"
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError as e:
+            raise MCPError(f"MCP server '{self.name}' token endpoint sent no JSON: {e}") from e
+        token = body.get("access_token")
+        if not token:
+            raise MCPError(f"MCP server '{self.name}' token endpoint returned no access_token")
+        self._access_token = str(token)
+        # A minute of slack, so a token is not used up in the middle of a call.
+        try:
+            lifetime = float(body.get("expires_in", 3600))
+        except (TypeError, ValueError):
+            lifetime = 3600.0
+        self._token_expiry = time.monotonic() + max(0.0, lifetime - 60.0)
+        return self._access_token
+
     def _post_http(self, payload: dict, expect_id: Optional[int]) -> Optional[dict]:
-        """One POST. A dead connection or an expired session reconnects and tries once more."""
+        """One POST. A dead connection, an expired session or a stale token is retried once."""
         for attempt in (1, 2):
             headers = dict(self.headers)
+            if self.oauth:
+                headers["Authorization"] = f"Bearer {self._fetch_token()}"
             if self._session_id:
                 headers["mcp-session-id"] = self._session_id
             # Both encodings are legal replies to one POST; the server picks.
@@ -194,6 +246,10 @@ class MCPClient:
                         f"MCP server '{self.name}' unreachable at {self.url}: {e}"
                     ) from e
                 self._reconnect()
+                continue
+            if resp.status_code == 401 and self.oauth and attempt == 1:
+                # The token the server last handed out is no longer good for it: get a new one.
+                self._fetch_token(force=True)
                 continue
             if resp.status_code == 404 and self._session_id and payload.get("method") != "initialize":
                 self._discard_http()

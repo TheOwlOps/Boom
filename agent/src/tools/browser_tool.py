@@ -10,13 +10,15 @@ after a tab switch goes to that tab, and a tab closed under us falls back to ano
 rather than failing. Clicking and filling drive the page through the Input domain on
 the element's own box, so what happened is what the page received, not a script guess.
 
-Deliberately not implemented: TLS (wss://), network interception, element
-screenshots (a click/fill reports the coordinates it acted on, and a wrong
-selector is an error).
+A page that renders with JavaScript is waited for by selector rather than by sleeping, a
+screenshot can be one element instead of the whole page, and the requests the page made are
+readable as a log. What is deliberately not implemented: TLS (wss://) for CDP itself, and
+request interception — nothing here can block, rewrite or answer a request.
 """
 from __future__ import annotations
 
 import base64
+from collections import deque
 import http.client
 import json
 import os
@@ -59,6 +61,24 @@ _CLICK_JS = """(() => {
   el.scrollIntoView({block: 'center', inline: 'center'});
   const r = el.getBoundingClientRect();
   return {x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height};
+})()"""
+
+_BOX_JS = """(() => {
+  const el = document.querySelector(%s);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return {x: r.left, y: r.top, w: r.width, h: r.height};
+})()"""
+
+# A clip is in page coordinates, and the rect is in viewport ones: scroll first, then add the
+# scroll offset back, or an element below the fold is captured from the wrong place.
+_CLIP_JS = """(() => {
+  const el = document.querySelector(%s);
+  if (!el) return null;
+  el.scrollIntoView({block: 'center', inline: 'center'});
+  const r = el.getBoundingClientRect();
+  return {x: Math.max(0, r.left + window.scrollX), y: Math.max(0, r.top + window.scrollY),
+          w: r.width, h: r.height};
 })()"""
 
 _FILL_JS = """(() => {
@@ -189,11 +209,40 @@ def page_ws_url(port: int, timeout: float = 10.0) -> str:
 
 
 class CDPConnection:
-    """Id-matched CDP calls over one socket. Events are skipped; a CDP error raises."""
+    """Id-matched CDP calls over one socket. A CDP error raises; events are kept, not dropped."""
 
-    def __init__(self, ws: WebSocket):
+    def __init__(self, ws: WebSocket, max_events: int = 500):
         self.ws = ws
         self._next_id = 0
+        # Events carry no id and are not answers to anything, but they are what a network log
+        # is made of, so they are kept (bounded) instead of skipped.
+        self.events: deque = deque(maxlen=max_events)
+
+    def _keep(self, message: Dict[str, Any]) -> None:
+        if message.get("method"):
+            self.events.append(message)
+
+    def drain(self, timeout: float = 0.3) -> None:
+        """Read whatever the socket already holds.
+
+        Chrome only writes events we read: nothing arrives while no call is in flight, so a
+        caller that wants a complete log drains before reading it.
+        """
+        while True:
+            try:
+                raw = self.ws.recv(timeout=timeout)
+            except (socket.timeout, WSError, OSError):
+                return
+            if raw is None:
+                return  # the socket closed; nothing more will arrive
+            if isinstance(raw, bytes):
+                continue
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                self._keep(message)
 
     def call(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
         self._next_id += 1
@@ -216,8 +265,11 @@ class CDPConnection:
                 message = json.loads(raw)
             except ValueError:
                 continue
-            if not isinstance(message, dict) or message.get("id") != wanted:
-                continue  # an event, or a response to something else
+            if not isinstance(message, dict):
+                continue
+            if message.get("id") != wanted:
+                self._keep(message)  # an event, or a response to something else
+                continue
             if "error" in message:
                 error = message["error"]
                 detail = error.get("message", error) if isinstance(error, dict) else error
@@ -305,6 +357,12 @@ class BrowserTool:
             ws_url = page_ws_url(self.port, self.timeout)
         self._target = self._target or ws_url.rsplit("/", 1)[-1]
         self._page = CDPConnection(WebSocket.connect(ws_url, self.timeout))
+        try:
+            # Switch the traffic log on with the socket, not when someone asks for the log: a tap
+            # turned on after the page loaded would report nothing that page ever did.
+            self._page.call("Network.enable", {}, self.timeout)
+        except Exception:
+            pass  # a browser refusing this domain still works for every other call
         return self._page
 
     def call(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
@@ -497,9 +555,78 @@ class BrowserTool:
             return {"error": f"{selector!r} kept {result.get('value')!r} instead of the text typed"}
         return {"status": "filled", "selector": selector, "tag": result.get("tag"), "value": text}
 
-    def screenshot(self, path: Optional[str] = None) -> Dict[str, Any]:
+    # -- waiting, one element, and traffic ---------------------------------
+    def wait_for(self, selector: str, timeout: float = 10.0, visible: bool = False) -> Dict[str, Any]:
+        """Poll until the selector matches (with visible=True, until it also has a box).
+
+        A page that renders its content with JavaScript has nothing to click the moment
+        Page.navigate returns, so the wait belongs here rather than in a guess at how long
+        to sleep. Timing out is an error: a missing element is never reported as found.
+        """
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        script = _BOX_JS % json.dumps(selector)
+        while True:
+            try:
+                box = self.evaluate(script)
+            except Exception as exc:
+                return {"error": f"{type(exc).__name__}: {exc}"}
+            if isinstance(box, dict) and (not visible or (box.get("w", 0) > 0 and box.get("h", 0) > 0)):
+                return {"status": "found", "selector": selector, "x": box.get("x"),
+                        "y": box.get("y"), "w": box.get("w"), "h": box.get("h")}
+            if time.monotonic() >= deadline:
+                what = "visible element" if visible else "element"
+                return {"error": f"no {what} matching {selector!r} within {timeout:g}s"}
+            time.sleep(0.1)
+
+    def network(self, timeout: float = 0.3, clear: bool = False) -> Dict[str, Any]:
+        """The requests the page made, as Chrome reported them.
+
+        The log runs from the moment this session attached to the tab (Network.enable is sent
+        with the socket), and it is read, not tapped: Chrome only writes events while something
+        reads the socket, so this drains what was queued — the navigation and everything after
+        it. Requests cannot be blocked, rewritten or answered here; what this gives is the log,
+        including the status each one came back with.
+        """
         try:
-            result = self.call("Page.captureScreenshot", {"format": "png"}, 30.0)
+            page = self._ensure_page()
+            if clear:
+                page.events.clear()
+            self._ensure_page().drain(timeout)
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+        seen: Dict[Any, Dict[str, Any]] = {}
+        order: List[Any] = []
+        for event in list(self._ensure_page().events):
+            method, params = event.get("method"), event.get("params") or {}
+            rid = params.get("requestId")
+            if method == "Network.requestWillBeSent":
+                request = params.get("request") or {}
+                seen[rid] = {"method": request.get("method"), "url": request.get("url"),
+                             "type": params.get("type"), "status": None}
+                order.append(rid)
+            elif rid in seen and method == "Network.responseReceived":
+                seen[rid]["status"] = (params.get("response") or {}).get("status")
+            elif rid in seen and method == "Network.loadingFailed":
+                seen[rid]["error"] = params.get("errorText")
+        return {"count": len(order), "requests": [seen[r] for r in order]}
+
+    def screenshot(self, path: Optional[str] = None, selector: str = "") -> Dict[str, Any]:
+        """The whole page, or just the element the selector names."""
+        clip: Optional[Dict[str, Any]] = None
+        if selector:
+            try:
+                box = self.evaluate(_CLIP_JS % json.dumps(selector))
+            except Exception as exc:
+                return {"error": f"{type(exc).__name__}: {exc}"}
+            if not isinstance(box, dict):
+                return {"error": f"no element matches {selector!r}"}
+            if box.get("w", 0) <= 0 or box.get("h", 0) <= 0:
+                return {"error": f"{selector!r} has no visible box to capture"}
+            clip = {"x": box["x"], "y": box["y"], "width": box["w"], "height": box["h"], "scale": 1}
+        params = {"format": "png", **({"clip": clip} if clip else {})}
+        try:
+            result = self.call("Page.captureScreenshot", params, 30.0)
         except Exception as exc:
             return {"error": f"{type(exc).__name__}: {exc}"}
         data = result.get("data")
@@ -516,7 +643,7 @@ class BrowserTool:
             out.write_bytes(image)
         except OSError as exc:
             return {"error": f"cannot write the screenshot: {exc}"}
-        return {"path": str(out), "bytes": len(image)}
+        return {"path": str(out), "bytes": len(image), **({"selector": selector} if selector else {})}
 
     def close(self) -> Dict[str, Any]:
         """Browser.close, then terminate the process we launched, then drop the temp profile."""
@@ -614,8 +741,14 @@ def build_tools(env=None) -> Dict[str, dict]:
     def browser_fill(selector: str, text: str) -> Dict[str, Any]:
         return _guard(lambda: current().fill(selector, text))
 
-    def browser_screenshot() -> Dict[str, Any]:
-        return _guard(lambda: current().screenshot())
+    def browser_screenshot(selector: str = "", path: str = "") -> Dict[str, Any]:
+        return _guard(lambda: current().screenshot(path or None, selector))
+
+    def browser_wait_for(selector: str, timeout: float = 10.0, visible: bool = False) -> Dict[str, Any]:
+        return _guard(lambda: current().wait_for(selector, float(timeout), bool(visible)))
+
+    def browser_network(clear: bool = False) -> Dict[str, Any]:
+        return _guard(lambda: current().network(clear=bool(clear)))
 
     def browser_close() -> Dict[str, Any]:
         global _SESSION
@@ -652,8 +785,44 @@ def build_tools(env=None) -> Dict[str, dict]:
         "browser_screenshot": {
             "name": "browser_screenshot",
             "func": browser_screenshot,
-            "description": "Capture the current page as a PNG and return the path of the saved file.",
-            "schema": _schema(),
+            "description": (
+                "Capture a PNG and return the path of the saved file: the whole page by default, "
+                "or just the element a CSS selector names. A selector matching nothing, or an "
+                "element with no visible box, comes back as {\"error\": ...}."
+            ),
+            "schema": _schema(
+                {
+                    "selector": {"type": "string", "description": "Optional CSS selector to capture one element instead of the page."},
+                    "path": {"type": "string", "description": "Optional file path for the PNG. Default: screenshots/ in the project."},
+                },
+            ),
+        },
+        "browser_wait_for": {
+            "name": "browser_wait_for",
+            "func": browser_wait_for,
+            "description": (
+                "Wait until a CSS selector matches, instead of guessing how long a page needs. "
+                "With visible=true it also waits for a non-zero box. Timing out comes back as "
+                "{\"error\": ...}; nothing is reported as found that is not there."
+            ),
+            "schema": _schema(
+                {"selector": {"type": "string", "description": "CSS selector to wait for."},
+                 "timeout": {"type": "number", "description": "Seconds to wait. Default 10."},
+                 "visible": {"type": "boolean", "description": "Also require a visible box. Default false."}},
+                ["selector"],
+            ),
+        },
+        "browser_network": {
+            "name": "browser_network",
+            "func": browser_network,
+            "description": (
+                "List the requests the page made (method, url, type, status), including ones "
+                "that failed. This is a log, not interception: requests cannot be blocked, "
+                "rewritten or answered. clear=true forgets what was logged so far."
+            ),
+            "schema": _schema(
+                {"clear": {"type": "boolean", "description": "Drop the log collected so far first. Default false."}},
+            ),
         },
         "browser_click": {
             "name": "browser_click",

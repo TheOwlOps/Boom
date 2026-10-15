@@ -7,6 +7,7 @@ reaches the runner.
 """
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -237,6 +238,7 @@ async def main():
         # Slack's chat.postMessage and the WhatsApp Cloud API, posted to their real endpoints.
         posts = []
         answer = {"body": {"ok": True}, "status": 200}
+        answers = {}  # per-path replies, for an API whose token call and send call differ
 
         async def api_sink(reader, writer):
             head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
@@ -245,15 +247,17 @@ async def main():
                 if line.lower().startswith("content-length:"):
                     length = int(line.split(":", 1)[1])
             lines = head.split("\r\n")
+            path = lines[0].split(" ")[1]
             posts.append((
-                lines[0].split(" ")[1],
+                path,
                 next((v.split(":", 1)[1].strip() for v in lines
                       if v.lower().startswith("authorization:")), ""),
                 json.loads(await reader.readexactly(length)) if length else {},
             ))
-            blob = json.dumps(answer["body"]).encode()
+            reply = answers.get(path, answer)
+            blob = json.dumps(reply["body"]).encode()
             writer.write(
-                f"HTTP/1.1 {answer['status']} X\r\nContent-Length: {len(blob)}\r\n"
+                f"HTTP/1.1 {reply['status']} X\r\nContent-Length: {len(blob)}\r\n"
                 f"Connection: close\r\n\r\n".encode("latin-1") + blob
             )
             await writer.drain()
@@ -295,6 +299,184 @@ async def main():
             api_server.close()
             await api_server.wait_closed()
         print("[PASS] Slack and WhatsApp replies posted with the real payload; a refused one is False.")
+
+        # 11. A real Slack, WhatsApp, Feishu or LINE app can point its webhook straight at this
+        # route: the platform's own body is read into the same event, and the platform's own
+        # signature authenticates it. A payload needing no turn is accepted and ignored, because
+        # a platform retries anything it does not see accepted.
+        live = IngressServer(daemon, port=0, token="", slack_secret="slack-secret",
+                             feishu_key="feishu-key", line_secret="line-secret")
+        lbase = f"http://127.0.0.1:{await live.start()}"
+        handled = len(seen)
+
+        raw = json.dumps({"type": "url_verification", "challenge": "chal-1"}).encode()
+        r = await client.post(f"{lbase}/webhook/slack", content=raw, headers=slack_headers(raw))
+        assert r.status_code == 200 and r.json() == {"challenge": "chal-1"}, r.text
+        assert len(seen) == handled, "a handshake must not run a turn"
+
+        # Slack's message event goes through the turn queue, and the reply is addressed to the
+        # channel it came from rather than to its author.
+        queue2 = TurnDispatcher(runner, concurrency=1, max_queued=4)
+        await queue2.start()
+        daemon.dispatcher = queue2
+        try:
+            raw = json.dumps({"type": "event_callback", "event": {
+                "type": "message", "user": "U7", "text": "hello from slack",
+                "ts": "1700000000.0001", "channel": "C42"}}).encode()
+            r = await client.post(f"{lbase}/webhook/slack", content=raw, headers=slack_headers(raw))
+            assert r.status_code == 200 and r.json()["reply"] == "echo:hello from slack", r.text
+            assert seen[-1] == ("hello from slack", "slack", "U7"), seen[-1]
+            job = list(queue2.jobs.values())[-1]
+            assert (job.channel, job.target, job.message_id) == ("slack", "C42", "1700000000.0001"), job
+        finally:
+            daemon.dispatcher = None
+            await queue2.stop()
+
+        # Our own reply arrives as a message event too; acting on it would loop forever.
+        for ignored in ({"type": "message", "bot_id": "B1", "text": "mine"},
+                        {"type": "message", "subtype": "message_changed", "text": "edited"}):
+            raw = json.dumps({"type": "event_callback", "event": ignored}).encode()
+            r = await client.post(f"{lbase}/webhook/slack", content=raw, headers=slack_headers(raw))
+            assert r.status_code == 200 and "ignored" in r.json(), r.text
+        assert len(seen) == handled + 1, seen[handled:]
+
+        raw = json.dumps({"entry": [{"changes": [{"value": {
+            "metadata": {"display_phone_number": "1555"},
+            "contacts": [{"profile": {"name": "Ryan"}, "wa_id": "8490"}],
+            "messages": [{"from": "8490", "id": "wamid.1", "type": "text",
+                          "text": {"body": "hello from whatsapp"}}]}}]}]}).encode()
+        r = await client.post(f"{lbase}/webhook/whatsapp", content=raw)
+        assert r.status_code == 200 and r.json()["reply"] == "echo:hello from whatsapp", r.text
+        assert seen[-1] == ("hello from whatsapp", "whatsapp", "Ryan"), seen[-1]
+
+        # The payload Slack/WhatsApp really send when nothing happened.
+        raw = json.dumps({"entry": [{"changes": [{"value": {"statuses": [{"id": "wamid"}]}}]}]}).encode()
+        r = await client.post(f"{lbase}/webhook/whatsapp", content=raw)
+        assert r.status_code == 200 and "ignored" in r.json(), r.text
+
+        # Feishu's v2 event carries the text as a JSON string inside a JSON body.
+        stamp, nonce = str(int(time.time())), "nonce2"
+
+        def feishu_headers(body: bytes) -> dict:
+            return {"X-Lark-Signature": hashlib.sha256(
+                (stamp + nonce + "feishu-key").encode() + body).hexdigest(),
+                "X-Lark-Request-Timestamp": stamp, "X-Lark-Request-Nonce": nonce}
+
+        raw = json.dumps({"schema": "2.0", "header": {"event_type": "im.message.receive_v1"},
+                          "event": {"sender": {"sender_id": {"open_id": "ou_1"}},
+                                    "message": {"message_id": "om_1", "chat_id": "oc_1",
+                                                "message_type": "text",
+                                                "content": json.dumps({"text": "hello from feishu"})}}
+                          }).encode()
+        r = await client.post(f"{lbase}/webhook/feishu", content=raw, headers=feishu_headers(raw))
+        assert r.status_code == 200 and r.json()["reply"] == "echo:hello from feishu", r.text
+        assert seen[-1] == ("hello from feishu", "feishu", "ou_1"), seen[-1]
+
+        # With an Encrypt Key set, Feishu seals the whole body. The key is already here, so the
+        # event must be opened and answered rather than refused.
+        def feishu_encrypt(payload: dict, key: str = "feishu-key") -> bytes:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+            body = json.dumps(payload).encode()
+            pad = 16 - len(body) % 16
+            iv = os.urandom(16)
+            encryptor = Cipher(algorithms.AES(hashlib.sha256(key.encode()).digest()),
+                               modes.CBC(iv)).encryptor()
+            sealed = encryptor.update(body + bytes([pad]) * pad) + encryptor.finalize()
+            return json.dumps({"encrypt": base64.b64encode(iv + sealed).decode()}).encode()
+
+        raw = feishu_encrypt({"schema": "2.0", "header": {"event_type": "im.message.receive_v1"},
+                              "event": {"sender": {"sender_id": {"open_id": "ou_9"}},
+                                        "message": {"message_id": "om_9", "chat_id": "oc_9",
+                                                    "message_type": "text",
+                                                    "content": json.dumps({"text": "sealed"})}}})
+        r = await client.post(f"{lbase}/webhook/feishu", content=raw, headers=feishu_headers(raw))
+        assert r.status_code == 200 and r.json()["reply"] == "echo:sealed", r.text
+        assert seen[-1] == ("sealed", "feishu", "ou_9"), seen[-1]
+        assert len(seen) == handled + 4, seen[handled:]
+
+        # The endpoint-verification ping arrives sealed too, and is answered without a turn.
+        raw = feishu_encrypt({"type": "url_verification", "challenge": "chal-sealed"})
+        r = await client.post(f"{lbase}/webhook/feishu", content=raw, headers=feishu_headers(raw))
+        assert r.status_code == 200 and r.json() == {"challenge": "chal-sealed"}, r.text
+        assert len(seen) == handled + 4, seen[handled:]
+
+        # A body the key cannot open is an error: a turn answered from garbage is worse than none.
+        raw = json.dumps({"encrypt": base64.b64encode(bytes(16)).decode()}).encode()
+        r = await client.post(f"{lbase}/webhook/feishu", content=raw, headers=feishu_headers(raw))
+        assert r.status_code == 400 and "cannot decrypt" in r.json()["error"], r.text
+        assert len(seen) == handled + 4, seen[handled:]
+
+        # LINE signs with its channel secret, not with the shared token.
+        raw = json.dumps({"destination": "Ubot", "events": [{
+            "type": "message", "replyToken": "rt", "timestamp": 1700000000000,
+            "source": {"type": "user", "userId": "U9"},
+            "message": {"type": "text", "id": "line-1", "text": "hello from line"}}]}).encode()
+
+        def line_headers(body: bytes, secret: str = "line-secret") -> dict:
+            return {"X-Line-Signature": base64.b64encode(
+                hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()}
+
+        r = await client.post(f"{lbase}/webhook/line", content=raw,
+                              headers=line_headers(raw, "wrong-secret"))
+        assert r.status_code == 401 and "LINE" in r.json()["error"], r.text
+        r = await client.post(f"{lbase}/webhook/line", content=raw)
+        assert r.status_code == 401, r.text
+        r = await client.post(f"{lbase}/webhook/line", content=raw, headers=line_headers(raw))
+        assert r.status_code == 200 and r.json()["reply"] == "echo:hello from line", r.text
+        assert seen[-1] == ("hello from line", "line", "U9"), seen[-1]
+
+        # LINE wants the webhook answered fast and the reply pushed, so a LINE turn is acked and
+        # answered through the push API.
+        line_server = await asyncio.start_server(api_sink, "127.0.0.1", 0)
+        line_base = f"http://127.0.0.1:{line_server.sockets[0].getsockname()[1]}"
+        answer.update({"body": {"sentMessages": [{"id": "1"}]}, "status": 200})
+        os.environ.update({"BOOM_LINE_CHANNEL_TOKEN": "line-token", "BOOM_LINE_API_BASE": line_base})
+        try:
+            assert daemon.can_deliver("line") is True
+            assert await daemon.send_to("line", "U9", "pushed to line") is True
+            assert posts[-1] == ("/v2/bot/message/push", "Bearer line-token",
+                                 {"to": "U9", "messages": [{"type": "text",
+                                                            "text": "pushed to line"}]}), posts[-1]
+            answer["status"] = 400
+            assert await daemon.send_to("line", "U9", "nope") is False
+        finally:
+            for name in ("BOOM_LINE_CHANNEL_TOKEN", "BOOM_LINE_API_BASE"):
+                os.environ.pop(name, None)
+            line_server.close()
+            await line_server.wait_closed()
+
+        # Feishu takes a tenant_access_token it issues itself, and answers HTTP 200 with a
+        # nonzero code when it refused the send: neither may read as delivered.
+        feishu_server = await asyncio.start_server(api_sink, "127.0.0.1", 0)
+        feishu_base = f"http://127.0.0.1:{feishu_server.sockets[0].getsockname()[1]}"
+        answers.clear()
+        answers["/open-apis/auth/v3/tenant_access_token/internal"] = {
+            "status": 200, "body": {"code": 0, "tenant_access_token": "t-1", "expire": 7200}}
+        answer.update({"body": {"code": 0}, "status": 200})
+        os.environ.update({"BOOM_FEISHU_APP_ID": "cli_1", "BOOM_FEISHU_APP_SECRET": "app-secret",
+                           "BOOM_FEISHU_API_BASE": feishu_base})
+        try:
+            assert daemon.can_deliver("feishu") is True
+            assert await daemon.send_to("feishu", "oc_1", "pushed to feishu") is True
+            assert posts[-2] == ("/open-apis/auth/v3/tenant_access_token/internal", "",
+                                 {"app_id": "cli_1", "app_secret": "app-secret"}), posts[-2]
+            assert posts[-1] == ("/open-apis/im/v1/messages?receive_id_type=chat_id", "Bearer t-1",
+                                 {"receive_id": "oc_1", "msg_type": "text",
+                                  "content": json.dumps({"text": "pushed to feishu"})}), posts[-1]
+            # A second send reuses the token: Feishu would rate-limit a fetch per message.
+            before = len(posts)
+            assert await daemon.send_to("feishu", "oc_1", "again") is True
+            assert len(posts) == before + 1, posts[before:]
+            answer["body"] = {"code": 99991663, "msg": "no permission"}
+            assert await daemon.send_to("feishu", "oc_1", "nope") is False
+        finally:
+            for name in ("BOOM_FEISHU_APP_ID", "BOOM_FEISHU_APP_SECRET", "BOOM_FEISHU_API_BASE"):
+                os.environ.pop(name, None)
+            feishu_server.close()
+            await feishu_server.wait_closed()
+        await live.aclose()
+        print("[PASS] Real Slack/WhatsApp/Feishu/LINE bodies read; LINE and Feishu replies pushed.")
 
     await server.aclose()
     print("ALL GATEWAY INGRESS TESTS PASSED.")

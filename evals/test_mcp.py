@@ -85,6 +85,7 @@ for line in sys.stdin:
 HTTP_TOKEN = "fixture-token"
 _SESSIONS = set()
 _INITS = []  # every handshake, so a test can prove a call did not secretly reconnect
+_OAUTH = {"token": "oauth-1", "issued": 0}  # the fixture's token endpoint, and how often it was asked
 
 
 class HTTPFixture(BaseHTTPRequestHandler):
@@ -105,8 +106,15 @@ class HTTPFixture(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_POST(self):
-        msg = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
-        if self.headers.get("authorization") != f"Bearer {HTTP_TOKEN}":
+        raw = self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}"
+        if self.path == "/token":
+            if b"grant_type=client_credentials" not in raw or b"client_secret=s3cret" not in raw:
+                return self._reply(400, {"error": "unsupported_grant"})
+            _OAUTH["issued"] += 1
+            return self._reply(200, {"access_token": _OAUTH["token"], "expires_in": 3600})
+        msg = json.loads(raw)
+        bearer = (self.headers.get("authorization") or "").removeprefix("Bearer ")
+        if bearer not in (HTTP_TOKEN, _OAUTH["token"]):
             return self._reply(401, {"error": "bad token"})
         method, rid = msg.get("method"), msg.get("id")
         if method != "initialize" and self.headers.get("mcp-session-id") not in _SESSIONS:
@@ -170,6 +178,7 @@ async def test_mcp_client():
     http_url = f"http://127.0.0.1:{httpd.server_address[1]}/mcp"
     # The header value is a reference, not the token: a secret in mcp.json is a secret in the repo.
     os.environ["BOOM_TEST_MCP_TOKEN"] = HTTP_TOKEN
+    os.environ["BOOM_TEST_MCP_SECRET"] = "s3cret"
     (work / "mcp.json").write_text(
         json.dumps({
             "mcpServers": {
@@ -178,20 +187,24 @@ async def test_mcp_client():
                 "remote": {"url": http_url,
                            "headers": {"Authorization": "Bearer ${BOOM_TEST_MCP_TOKEN}"}},
                 "remote_bad": {"url": http_url, "headers": {"Authorization": "Bearer wrong"}},
+                # No header: this server issues its own tokens, and the secret is a reference too.
+                "oauth_remote": {"url": http_url, "oauth": {
+                    "token_url": http_url.rsplit("/", 1)[0] + "/token",
+                    "client_id": "boom", "client_secret": "${BOOM_TEST_MCP_SECRET}"}},
             }
         }),
         encoding="utf-8",
     )
 
     configs = load_server_configs(work)
-    assert list(configs) == ["fixture", "remote", "remote_bad"], configs
+    assert list(configs) == ["fixture", "remote", "remote_bad", "oauth_remote"], configs
 
     env = AgentEnvironment(root_dir=root_dir, db_path=work / "state.db", yolo=True)
     try:
         # echo + explode + hang on stdio (paginated) and echo + forget over HTTP; the server
         # whose token does not match never registers at all.
         count = register_mcp_tools(env, work)
-        assert count == 7, count
+        assert count == 11, count
 
         tools = env.get_tools()
         for name in ("mcp__fixture__echo", "mcp__fixture__explode", "mcp__fixture__hang"):
@@ -247,6 +260,18 @@ async def test_mcp_client():
         assert len(_INITS) == handshakes, "a 500 must not be answered by re-handshaking"
         print("[PASS] SSE tool call read from the stream; a 500 raised without reconnecting.")
 
+        # Client credentials: the token comes from the server's own endpoint, holds for later
+        # calls, and is fetched again when the server rotates it away behind the client's back.
+        assert _OAUTH["issued"] == 1, _OAUTH
+        assert await tools["mcp__oauth_remote__echo"]["func"](text="with a token") == "with a token"
+        assert _OAUTH["issued"] == 1, ("a live token must not be re-fetched per call", _OAUTH)
+        _OAUTH["token"] = "oauth-2"
+        handshakes = len(_INITS)
+        assert await tools["mcp__oauth_remote__echo"]["func"](text="after rotation") == "after rotation"
+        assert _OAUTH["issued"] == 2, _OAUTH
+        assert len(_INITS) == handshakes, "a stale token is not a lost session"
+        print("[PASS] MCP OAuth client credentials: token cached, refreshed once on 401.")
+
         # BOOM_MCP_SERVERS overrides the file for one-off runs.
         os.environ["BOOM_MCP_SERVERS"] = json.dumps({"mcpServers": {
             "inline": {"command": [sys.executable, str(server_py)]}}})
@@ -270,6 +295,7 @@ async def test_mcp_client():
         httpd.shutdown()
         httpd.server_close()
         os.environ.pop("BOOM_TEST_MCP_TOKEN", None)
+        os.environ.pop("BOOM_TEST_MCP_SECRET", None)
         for client in env.mcp_clients.values():
             client.close()
         for closer in ("memory_store", "state_db", "delivery_ledger"):

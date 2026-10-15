@@ -10,6 +10,15 @@ A server may be a URL instead (streamable HTTP, JSON or SSE replies):
     {"mcpServers": {"remote": {"url": "https://host/mcp",
                                "headers": {"Authorization": "Bearer ${MY_MCP_TOKEN}"}}}}
 
+A server that issues its own tokens takes an `oauth` block instead of a header; the client
+asks its token endpoint for a client-credentials token and asks again when the server
+answers 401:
+
+    {"mcpServers": {"remote": {"url": "https://host/mcp",
+                               "oauth": {"token_url": "https://host/token",
+                                         "client_id": "${HOST_CLIENT_ID}",
+                                         "client_secret": "${HOST_CLIENT_SECRET}"}}}}
+
 Discovered tools are named `mcp__<server>__<tool>`, which keeps a third-party server from
 shadowing a built-in. They are deliberately absent from the approval gate's SAFE_TOOLS:
 a remote tool is not a read-only local default and must be approved like any other.
@@ -86,6 +95,8 @@ def register_mcp_tools(env: Any, root_dir: Path = None) -> int:
             url=cfg.get("url") or "",
             # A token in mcp.json would be a secret in the repo; `${VAR}` reads it from the env.
             headers=cfg.get("headers") or {},
+            # Client-credentials OAuth, for a server that issues tokens instead of taking one.
+            oauth=cfg.get("oauth") or {},
         )
         try:
             client.start()
