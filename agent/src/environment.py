@@ -32,6 +32,11 @@ from tools.shell import run as shell_run, run_bg, job_status, job_kill
 from tools import gmail_tool as _gmail_tool
 from security.guardrail import SecurityGuardrail
 from security.approval import ApprovalGate
+from security.ratelimit import UserRateLimiter
+from autonomous.codereview import CodeReviewer
+from autonomous.depgraph import build_graph, find_cycles, impact_analysis
+from autonomous.gitops import status as git_status_fn, diff_summary as git_diff_fn, safe_commit as git_commit_fn, branch_guard as git_guard_fn
+from security.secretscan import scan_file as secret_scan_file, scan_dir as secret_scan_dir
 from loop.context_compressor import ContextCompressor
 from loop.prompt_builder import SystemPromptBuilder
 from loop.token_accounting import TokenAccountant
@@ -64,6 +69,9 @@ class AgentEnvironment:
         self.ipc_bridge = IpcBridgeClient(port=ipc_port)
         self.guardrail = SecurityGuardrail(self.root_dir)
         self.approval_gate = ApprovalGate(yolo=yolo)
+        # Overnight hardening: per-user rate limiter (token bucket).
+        # Gateway/loop gọi self.user_limiter.allow_or_raise("channel:user_id") trước tool nguy hiểm.
+        self.user_limiter = UserRateLimiter()
         self.compressor = ContextCompressor(self.root_dir / "scratch")
         self.delegation = DelegationManager()
         self.prompt_builder = SystemPromptBuilder(self.root_dir)
@@ -667,6 +675,84 @@ class AgentEnvironment:
             "schema": _schema(
                 {"job_id": {"type": "string", "description": "Job ID from shell_bg."}},
                 ["job_id"],
+            ),
+        }
+
+        # 13. Overnight hardening: coding + security tools (2026-10-16)
+        _reviewer = CodeReviewer()
+        self._tools["code_review"] = {
+            "name": "code_review",
+            "func": lambda path: _reviewer.to_markdown(_reviewer.review_file(path)),
+            "description": "Static code review of a Python file: complexity, dead code, bare except, TODOs. Returns Markdown report (Vietnamese).",
+            "schema": _schema(
+                {"path": {"type": "string", "description": "Path to Python file."}},
+                ["path"],
+            ),
+        }
+        self._tools["dep_cycles"] = {
+            "name": "dep_cycles",
+            "func": lambda root: find_cycles(build_graph(root)),
+            "description": "Find circular imports under a directory. Returns list of cycles.",
+            "schema": _schema(
+                {"root": {"type": "string", "description": "Root directory to scan."}},
+                ["root"],
+            ),
+        }
+        self._tools["dep_impact"] = {
+            "name": "dep_impact",
+            "func": lambda root, files: impact_analysis(build_graph(root), files if isinstance(files, list) else [files]),
+            "description": "Which modules are affected when given files change (reverse dependency BFS).",
+            "schema": _schema(
+                {"root": {"type": "string", "description": "Root directory."},
+                 "files": {"type": "string", "description": "Changed file(s), comma-separated or single path."}},
+                ["root", "files"],
+            ),
+        }
+        self._tools["git_status"] = {
+            "name": "git_status",
+            "func": lambda repo: git_status_fn(repo or "."),
+            "description": "Git status --porcelain parsed: staged/unstaged changes per file.",
+            "schema": _schema(
+                {"repo": {"type": "string", "description": "Repo path (default cwd)."}},
+                [],
+            ),
+        }
+        self._tools["git_diff_summary"] = {
+            "name": "git_diff_summary",
+            "func": lambda repo: git_diff_fn(repo or "."),
+            "description": "Summarize git diff: files changed, +/- lines, functions touched.",
+            "schema": _schema(
+                {"repo": {"type": "string", "description": "Repo path (default cwd)."}},
+                [],
+            ),
+        }
+        self._tools["git_safe_commit"] = {
+            "name": "git_safe_commit",
+            "func": lambda repo, message: git_commit_fn(repo or ".", message),
+            "description": "Commit staged files ONLY if message non-empty and no secrets detected in staged content. Refuses on protected branch — use git_branch_guard first.",
+            "schema": _schema(
+                {"repo": {"type": "string", "description": "Repo path."},
+                 "message": {"type": "string", "description": "Commit message."}},
+                ["message"],
+            ),
+        }
+        self._tools["git_branch_guard"] = {
+            "name": "git_branch_guard",
+            "func": lambda repo: {"protected": git_guard_fn(repo or ".")},
+            "description": "True if current branch is protected (main/master) — agent must create a feature branch instead of committing directly.",
+            "schema": _schema(
+                {"repo": {"type": "string", "description": "Repo path."}},
+                [],
+            ),
+        }
+        self._tools["secret_scan"] = {
+            "name": "secret_scan",
+            "func": lambda target, recursive=False: secret_scan_dir(target) if recursive else secret_scan_file(target),
+            "description": "Scan file or directory for leaked secrets (API keys, tokens, private keys). Previews are masked.",
+            "schema": _schema(
+                {"target": {"type": "string", "description": "File or directory path."},
+                 "recursive": {"type": "boolean", "description": "Scan directory recursively."}},
+                ["target"],
             ),
         }
 

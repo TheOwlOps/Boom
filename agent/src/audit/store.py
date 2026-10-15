@@ -18,6 +18,13 @@ from typing import List, Optional, Union
 
 from audit.models import AuditEvent
 
+# Che secret trong details trước khi ghi audit (fail-open: lỗi thì ghi gốc).
+try:
+    from security.redact import redact_dict as _redact_dict
+except Exception:
+    def _redact_dict(d):
+        return d
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
@@ -78,6 +85,12 @@ class AuditStore:
             event.id = _gen_id()
         if not event.ts:
             event.ts = _now_iso()
+        # Che secret trong details trước khi persist (overnight hardening).
+        try:
+            if isinstance(event.details, dict):
+                event.details = _redact_dict(event.details)
+        except Exception:
+            pass
         with self._lock:
             cur = self._conn.execute("SELECT 1 FROM audit_events WHERE id = ?", (event.id,))
             if cur.fetchone() is not None:
