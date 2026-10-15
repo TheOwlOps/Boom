@@ -364,6 +364,8 @@ class AgentEnvironment:
             ("goals.tools", False),
             ("digest.tools", False),
             ("tools.research_tool", False),
+            ("research.deepsearch", False),
+            ("research.deepthink", False),
             ("tools.scraper", False),
             ("people.tools", True),
             ("tasks.tools", True),

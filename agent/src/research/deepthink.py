@@ -222,3 +222,37 @@ class DeepThink:
         else:
             s3 = "Không có nguồn để đánh giá độ tin cậy."
         return " ".join([s1, s2, s3])
+
+
+def build_tools(env=None):
+    """Factory cho environment.py — đăng ký deep_think tool."""
+    from research.deepthink import DeepThink
+
+    def deep_think(topic: str, sources: list = None) -> dict:
+        """Phân tích sâu đa chiều, không né tránh.
+        
+        Args:
+            topic: chủ đề phân tích.
+            sources: list {url, title, text}.
+        """
+        try:
+            dt = DeepThink()
+            return {"ok": True, "result": dt.analyze(topic, sources or [])}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    return {
+        "deep_think": {
+            "name": "deep_think",
+            "func": deep_think,
+            "description": "Phân tích sâu đa góc nhìn, đánh giá độ tin cậy nguồn.",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Chủ đề."},
+                    "sources": {"type": "array", "description": "List sources.", "default": []},
+                },
+                "required": ["topic"],
+            },
+        }
+    }

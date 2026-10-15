@@ -242,3 +242,37 @@ class DeepSearch:
             "entities": entities,
             "hops_used": hops_used,
         }
+
+
+def build_tools(env=None):
+    """Factory cho environment.py — đăng ký deep_search tool."""
+    from research.deepsearch import DeepSearch
+
+    def deep_search(query: str, max_hops: int = 3) -> dict:
+        """Nghiên cứu đa hop: search → fetch → entities → follow-up.
+        
+        Args:
+            query: câu hỏi/chủ đề nghiên cứu.
+            max_hops: số hop tối đa (1-5).
+        """
+        try:
+            ds = DeepSearch()
+            return {"ok": True, "result": ds.research(query, max_hops=max_hops)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    return {
+        "deep_search": {
+            "name": "deep_search",
+            "func": deep_search,
+            "description": "Nghiên cứu sâu đa hop với cross-source verification.",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Câu hỏi/chủ đề."},
+                    "max_hops": {"type": "integer", "description": "Số hop (1-5).", "default": 3},
+                },
+                "required": ["query"],
+            },
+        }
+    }
