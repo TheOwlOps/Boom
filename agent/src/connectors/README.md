@@ -17,6 +17,10 @@ reports `connected: false` and its tools return `{"error": ...}`.
 | Spotify | `BOOM_SPOTIFY_ACCESS_TOKEN` | `spotify_search`, `spotify_now_playing`, `spotify_play`, `spotify_pause` |
 | Weather | none (Open-Meteo, free) | `weather_now`, `weather_daily` |
 | News | none (VnExpress RSS, free) | `news_headlines`, `news_search` |
+| Shopee | none (scraping-based, may be blocked) | `shopee_search`, `shopee_product` |
+| Tiki | none (public API v2) | `tiki_search`, `tiki_product` |
+| Lazada | none (scraping-based, may be blocked) | `lazada_search` |
+| Captcha | `BOOM_2CAPTCHA_KEY` (paid service) | `captcha_solve_image`, `captcha_balance` |
 
 ## Getting a token
 
