@@ -74,6 +74,39 @@ class GatewayDaemon:
         """Delete a bot-sent channel message."""
         return await self.registry.delete_message(channel, target, message_id)
 
+    async def kick_member(self, channel: str, target: str,
+                          user_id: str) -> Dict[str, Any]:
+        """Remove a member from a group chat (they can rejoin). Admin-only:
+        call only on the user's explicit request. Honest {"error": ...} when
+        the platform has no such API or the bot lacks the permission."""
+        return await self.registry.kick_member(channel, target, user_id)
+
+    async def ban_member(self, channel: str, target: str,
+                         user_id: str) -> Dict[str, Any]:
+        """Ban a member permanently. Same admin-only rule as kick_member."""
+        return await self.registry.ban_member(channel, target, user_id)
+
+    async def get_group_info(self, channel: str, target: str) -> Dict[str, Any]:
+        """Fetch group/chat metadata: {id, name, member_count, type}.
+
+        Honest {"error": ...} when the platform exposes no bot-accessible
+        group API, or when the bot is not a member of that group."""
+        return await self.registry.get_group_info(channel, target)
+
+    async def get_member_info(self, channel: str, target: str,
+                              user_id: str) -> Dict[str, Any]:
+        """Fetch one member's info inside a group.
+
+        Only members the bot can actually see — a stranger returns an honest
+        error, never fabricated data."""
+        return await self.registry.get_member_info(channel, target, user_id)
+
+    async def send_sticker(self, channel: str, target: str,
+                           sticker: str) -> Dict[str, Any]:
+        """Send a sticker on a channel. Honest {"error": ...} when the
+        platform has no sticker API."""
+        return await self.registry.send_sticker(channel, target, sticker)
+
     async def handle_incoming_message(
         self,
         channel: str,

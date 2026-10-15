@@ -106,6 +106,115 @@ class DiscordChannel(ChannelAdapter):
             return {"ok": True}
         return {"error": f"discord delete refused: HTTP {resp.status_code}"}
 
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """POST /channels/{id}/messages with sticker_ids. A bot may only send
+        stickers from guilds it belongs to — a sticker it cannot use is
+        refused by Discord and reported here honestly, never faked."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.api_base}/channels/{target}/messages",
+                headers=self.headers,
+                json={"sticker_ids": [str(sticker)]},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code in (200, 201):
+            return {"ok": True}
+        return {"error": f"discord send sticker refused: HTTP {resp.status_code}: "
+                         f"{body or 'no body'}"}
+
+    @staticmethod
+    def _refused(action: str, status: int) -> Dict[str, Any]:
+        # Discord answers 403 when the bot lacks the Kick/Ban Members
+        # permission (or its role sits below the target's). Never retried.
+        if status == 403:
+            return {"error": "bot lacks admin permission"}
+        return {"error": f"discord {action} refused: HTTP {status}"}
+
+    async def kick_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """DELETE /guilds/{guild_id}/members/{user_id} -> 204. Needs the Kick
+        Members permission. `target` is the guild id. The user can rejoin with
+        a fresh invite. Admin-only: call only on the user's explicit request."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.delete(
+                f"{self.api_base}/guilds/{target}/members/{user_id}",
+                headers=self.headers,
+            )
+        if resp.status_code in (200, 201, 204):
+            return {"ok": True}
+        return self._refused("kick", resp.status_code)
+
+    async def ban_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """PUT /guilds/{guild_id}/bans/{user_id} -> 204. Needs the Ban Members
+        permission. `target` is the guild id. Admin-only: call only on the
+        user's explicit request."""
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.put(
+                f"{self.api_base}/guilds/{target}/bans/{user_id}",
+                headers=self.headers,
+            )
+        if resp.status_code in (200, 201, 204):
+            return {"ok": True}
+        return self._refused("ban", resp.status_code)
+
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """GET /guilds/{guild_id}?with_counts=true -> {id, name, member_count, type}.
+
+        Only guilds the bot is in — otherwise Discord answers 403/404, which
+        is reported honestly.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(
+                f"{self.api_base}/guilds/{target}?with_counts=true",
+                headers=self.headers,
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code >= 300:
+            return {"error": f"discord guild lookup refused (bot not in guild?): "
+                             f"HTTP {resp.status_code}"}
+        return {
+            "id": str(body.get("id", target)),
+            "name": body.get("name", ""),
+            "member_count": body.get("approximate_member_count"),
+            "type": "server",
+        }
+
+    async def get_member_info(self, target: str, user_id: str) -> Dict[str, Any]:
+        """GET /guilds/{guild_id}/members/{user_id} -> {id, name, role, joined_at}.
+
+        HONESTY: only members of guilds the bot belongs to. A stranger the
+        bot never shared a server with answers 404 — reported as an error,
+        never fabricated. `role` carries the raw role id list; resolving ids
+        to names needs a further roles call and is left to the caller.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(
+                f"{self.api_base}/guilds/{target}/members/{user_id}",
+                headers=self.headers,
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code == 404:
+            return {"error": f"discord: user {user_id} not visible to the bot "
+                             f"in guild {target} (not a member?)"}
+        if resp.status_code >= 300:
+            return {"error": f"discord member lookup refused: HTTP {resp.status_code}"}
+        user = body.get("user") or {}
+        return {
+            "id": str(user.get("id", user_id)),
+            "name": body.get("nick") or user.get("username") or "",
+            "role": body.get("roles") or [],
+            "joined_at": body.get("joined_at"),
+            "is_bot": bool(user.get("bot")),
+        }
+
     # ------------------------------------------------------------------ REST/WS
 
     async def gateway_url(self) -> str:

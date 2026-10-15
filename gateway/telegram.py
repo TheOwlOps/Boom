@@ -103,6 +103,141 @@ class TelegramAdapter(ChannelAdapter):
         return {"error": f"telegram deleteMessage refused: "
                          f"HTTP {resp.status_code}: {body or 'no body'}"}
 
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """POST /sendSticker. `sticker` is a file_id from a previous sticker,
+        an http(s) URL to a .webp/.tgs/.webm sticker, or an uploaded file_id."""
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{self._api()}/sendSticker",
+                json={"chat_id": target, "sticker": sticker},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code < 300 and body.get("ok"):
+            return {"ok": True}
+        return {"error": f"telegram sendSticker refused: "
+                         f"HTTP {resp.status_code}: {body or 'no body'}"}
+
+    @staticmethod
+    def _refused(method: str, status: int, body: Dict[str, Any]) -> Dict[str, Any]:
+        # Telegram signals missing admin rights as HTTP 403 or error_code 403
+        # inside a 200 body; anything else is a plain refusal. Never retried.
+        if status == 403 or body.get("error_code") == 403:
+            return {"error": "bot lacks admin permission"}
+        return {"error": f"telegram {method} refused: "
+                         f"HTTP {status}: {body or 'no body'}"}
+
+    async def kick_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """Kick = banChatMember then unbanChatMember immediately, so the user
+        is removed but can rejoin (a plain ban would block re-entry).
+        Admin-only: call only on the user's explicit request."""
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            ban = await client.post(
+                f"{self._api()}/banChatMember",
+                json={"chat_id": target, "user_id": user_id},
+            )
+            try:
+                ban_body = ban.json() or {}
+            except ValueError:
+                ban_body = {}
+            if not (ban.status_code < 300 and ban_body.get("ok")):
+                return self._refused("banChatMember", ban.status_code, ban_body)
+            unban = await client.post(
+                f"{self._api()}/unbanChatMember",
+                json={"chat_id": target, "user_id": user_id},
+            )
+            try:
+                unban_body = unban.json() or {}
+            except ValueError:
+                unban_body = {}
+            if not (unban.status_code < 300 and unban_body.get("ok")):
+                return self._refused("unbanChatMember", unban.status_code, unban_body)
+        return {"ok": True}
+
+    async def ban_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """banChatMember: the user is removed and cannot rejoin until unbanned.
+        Admin-only: call only on the user's explicit request."""
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{self._api()}/banChatMember",
+                json={"chat_id": target, "user_id": user_id},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if resp.status_code < 300 and body.get("ok"):
+            return {"ok": True}
+        return self._refused("banChatMember", resp.status_code, body)
+
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """getChat (+ best-effort getChatMemberCount) -> {id, name, member_count, type}.
+
+        Only chats the bot is a member of. getChatMemberCount is a separate
+        call: when it fails (e.g. a private chat), member_count stays None but
+        the rest of the info still returns.
+        """
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(f"{self._api()}/getChat",
+                                     json={"chat_id": target})
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if not (resp.status_code < 300 and body.get("ok")):
+            return {"error": f"telegram getChat refused (bot not in chat?): "
+                             f"HTTP {resp.status_code}: {body or 'no body'}"}
+        chat = body.get("result") or {}
+        info: Dict[str, Any] = {
+            "id": str(chat.get("id", target)),
+            "name": chat.get("title") or chat.get("username") or chat.get("first_name") or "",
+            "type": chat.get("type", ""),
+            "member_count": None,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                cresp = await client.post(f"{self._api()}/getChatMemberCount",
+                                          json={"chat_id": target})
+            cbody = cresp.json() or {}
+            if cresp.status_code < 300 and cbody.get("ok"):
+                info["member_count"] = cbody.get("result")
+        except Exception:
+            pass
+        return info
+
+    async def get_member_info(self, target: str, user_id: str) -> Dict[str, Any]:
+        """getChatMember -> {id, name, role, is_bot}.
+
+        HONESTY: a bot only sees members of groups it belongs to. Querying a
+        stranger — or a chat the bot is not in — makes Telegram answer
+        400/403, which is reported as an error, never fabricated.
+        """
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(
+                f"{self._api()}/getChatMember",
+                json={"chat_id": target, "user_id": user_id},
+            )
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            body = {}
+        if not (resp.status_code < 300 and body.get("ok")):
+            return {"error": f"telegram getChatMember refused (user not visible "
+                             f"to bot?): HTTP {resp.status_code}: {body or 'no body'}"}
+        member = body.get("result") or {}
+        user = member.get("user") or {}
+        name = user.get("username") or " ".join(
+            part for part in (user.get("first_name"), user.get("last_name")) if part
+        )
+        return {
+            "id": str(user.get("id", user_id)),
+            "name": name,
+            "role": member.get("status", ""),
+            "is_bot": bool(user.get("is_bot")),
+        }
+
     # -- ingress path -------------------------------------------------------
 
     def _secret(self) -> str:

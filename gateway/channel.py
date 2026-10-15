@@ -3,8 +3,8 @@
 Every chat platform Boom speaks gets one thin adapter instead of a branch in a
 giant if/else: `send_text`/`can_deliver` for the reply path, `verify_request` /
 `handshake` / `normalize` for the ingress path, and optional message actions
-(`react`, `edit_message`, `delete_message`) where the platform's API really has
-them.
+(`react`, `edit_message`, `delete_message`) plus member moderation
+(`kick_member`, `ban_member`) where the platform's API really has them.
 
 An action a platform does not offer is never faked: the base implementation
 answers `{"error": "... not supported"}` and the adapter simply does not
@@ -48,6 +48,41 @@ class ChannelAdapter:
     async def delete_message(self, target: str, message_id: str) -> Dict[str, Any]:
         """Delete a message the bot sent."""
         return {"error": f"{self.name}: deleting messages not supported by this platform"}
+
+    async def send_sticker(self, target: str, sticker: str) -> Dict[str, Any]:
+        """Send a sticker to a chat. `sticker` is platform-native: a file_id or
+        URL (Telegram), a sticker id (Discord, Zalo), "packageId:stickerId"
+        (LINE), or a media id / URL (WhatsApp)."""
+        return {"error": f"{self.name}: stickers not supported by this platform"}
+
+    async def kick_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """Remove a member from a group chat (they can rejoin afterwards).
+        `target` is the group/channel, `user_id` the platform's id for the member.
+        Admin-only on every platform that offers it: only call this on the
+        user's explicit request. Platforms without the API keep the honest
+        {"error": ...} below — never faked."""
+        return {"error": f"{self.name}: kicking members not supported by this platform"}
+
+    async def ban_member(self, target: str, user_id: str) -> Dict[str, Any]:
+        """Ban a member permanently. Same admin-only rule as kick_member."""
+        return {"error": f"{self.name}: banning members not supported by this platform"}
+
+    async def get_group_info(self, target: str) -> Dict[str, Any]:
+        """Fetch group/chat metadata: {id, name, member_count, type}.
+
+        `target` is the platform's chat/group/channel id. Only override when
+        the platform documents a bot-accessible endpoint — a group the bot is
+        not a member of must surface the API's refusal, never a guess."""
+        return {"error": f"{self.name}: group info not supported by this platform"}
+
+    async def get_member_info(self, target: str, user_id: str) -> Dict[str, Any]:
+        """Fetch one member's info inside a group: {id, name, role, ...}.
+
+        HONESTY CONTRACT: a bot only sees members of groups it belongs to.
+        A stranger the bot never interacted with is NOT lookable up on any
+        platform — Telegram/Discord/Slack/LINE all answer 404/forbidden, and
+        that refusal is reported as {"error": ...}, never fabricated."""
+        return {"error": f"{self.name}: member info not supported by this platform"}
 
     # --------------------------------------------------------------- ingress path
 
@@ -129,6 +164,40 @@ class ChannelRegistry:
         if adapter is None:
             return {"error": f"unknown channel {channel!r}"}
         return await adapter.delete_message(target, message_id)
+
+    async def send_sticker(self, channel: str, target: str,
+                           sticker: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.send_sticker(target, sticker)
+
+    async def kick_member(self, channel: str, target: str,
+                          user_id: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.kick_member(target, user_id)
+
+    async def ban_member(self, channel: str, target: str,
+                         user_id: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.ban_member(target, user_id)
+
+    async def get_group_info(self, channel: str, target: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.get_group_info(target)
+
+    async def get_member_info(self, channel: str, target: str,
+                              user_id: str) -> Dict[str, Any]:
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            return {"error": f"unknown channel {channel!r}"}
+        return await adapter.get_member_info(target, user_id)
 
     # -- ingress path -------------------------------------------------------
 
