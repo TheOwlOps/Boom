@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 import httpx
 
-from connectors.base import Connector, _schema
+from connectors.base import Connector, _schema, sync_bearer_request
 from connectors.credentials import get_token_for
 
 API_BASE = "https://gmail.googleapis.com/gmail/v1"
@@ -138,22 +138,6 @@ def _extract_body(payload: Dict[str, Any]) -> tuple:
     return "", ""
 
 
-def _api_error(resp: httpx.Response) -> str:
-    """Human-readable error from a failed Gmail API response."""
-    try:
-        body = resp.json()
-    except ValueError:
-        body = None
-    detail = ""
-    if isinstance(body, dict):
-        err = body.get("error", {})
-        if isinstance(err, dict):
-            detail = str(err.get("message", "") or "")
-    if not detail:
-        detail = (resp.text or "").strip()[:300]
-    return f"Gmail API error {resp.status_code}: {detail or 'no detail'}"
-
-
 # ------------------------------------------------------------------ connector
 
 
@@ -161,6 +145,28 @@ class GmailConnector(Connector):
     """Gmail over the REST API, Bearer token from BOOM_GMAIL_ACCESS_TOKEN."""
 
     name = "gmail"
+
+    # Shared sync Bearer envelope (connectors.base.sync_bearer_request) reads these.
+    TOKEN_ENV = "BOOM_GMAIL_ACCESS_TOKEN"
+    SERVICE = "Gmail"
+    TOKEN_HINT = "export a user OAuth 2.0 access token to use Gmail."
+    EXTRA_HEADERS: Dict[str, str] = {}
+    STRICT_DICT_RESPONSE = True
+
+    def _api_error(self, resp: httpx.Response) -> str:
+        """Human-readable error from a failed Gmail API response."""
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        detail = ""
+        if isinstance(body, dict):
+            err = body.get("error", {})
+            if isinstance(err, dict):
+                detail = str(err.get("message", "") or "")
+        if not detail:
+            detail = (resp.text or "").strip()[:300]
+        return f"Gmail API error {resp.status_code}: {detail or 'no detail'}"
 
     def __init__(
         self,
@@ -217,30 +223,7 @@ class GmailConnector(Connector):
         json_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """One Gmail API call. Parsed JSON on success, {"error": ...} otherwise."""
-        token = self._token()
-        if not token:
-            return {
-                "error": (
-                    "BOOM_GMAIL_ACCESS_TOKEN is not set: export a user OAuth 2.0 "
-                    "access token to use Gmail."
-                )
-            }
-        url = f"{self._api_base}{path}"
-        headers = {"Authorization": f"Bearer {token}"}
-        try:
-            with self._session() as client:
-                resp = client.request(
-                    method, url, params=params, json=json_body, headers=headers
-                )
-        except httpx.RequestError as exc:
-            return {"error": f"Gmail request failed: {type(exc).__name__}: {exc}"}
-        if resp.status_code >= 400:
-            return {"error": _api_error(resp)}
-        try:
-            data = resp.json()
-        except ValueError:
-            return {"error": f"Gmail returned non-JSON (HTTP {resp.status_code})."}
-        return data if isinstance(data, dict) else {"error": "Gmail returned unexpected data."}
+        return sync_bearer_request(self, method, path, params, json_body)
 
     # -- tools -------------------------------------------------------
 

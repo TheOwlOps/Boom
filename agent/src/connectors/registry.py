@@ -98,6 +98,28 @@ class ConnectorRegistry:
                 origin[tool_name] = name
         return merged
 
+    def build_status_tool(self) -> Dict[str, Dict[str, Any]]:
+        """A `connector_status` tool: which connectors are connected, with hints.
+
+        Config check only — no network, no credentials needed. Lets the agent
+        answer "why isn't gmail working?" without trying every tool.
+        """
+        def _status() -> Dict[str, Dict[str, Any]]:
+            return self.status_all()
+
+        return {
+            "connector_status": {
+                "name": "connector_status",
+                "func": _status,
+                "description": (
+                    "Which service connectors are currently connected and which "
+                    "are not, with setup hints for the disconnected ones. "
+                    "Config check only; makes no network calls."
+                ),
+                "schema": {"type": "object", "properties": {}, "required": []},
+            }
+        }
+
 
 def load_default_registry(
     module_names: Tuple[str, ...] = DEFAULT_CONNECTOR_MODULES,

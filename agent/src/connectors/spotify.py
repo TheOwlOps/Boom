@@ -13,15 +13,12 @@ The token needs the user scopes the tools touch: `user-read-playback-state`
 for now-playing/search, `user-modify-playback-state` for play/pause.
 """
 
-import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 
-from connectors.base import Connector, _schema
+from connectors.base import AsyncBearerConnector, _schema
 
-TOKEN_ENV = "BOOM_SPOTIFY_ACCESS_TOKEN"
-API_BASE = "https://api.spotify.com/v1"
 
 _SEARCH_TYPES = ("track", "artist", "album")
 
@@ -76,23 +73,23 @@ def _api_error_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}: unexpected response"
 
 
-class SpotifyConnector(Connector):
+class SpotifyConnector(AsyncBearerConnector):
     """Spotify Web API over httpx. `transport` is injectable so tests never touch the network."""
 
     name = "spotify"
 
-    def __init__(self, token: Optional[str] = None, transport: Optional[httpx.BaseTransport] = None):
-        self.token = token if token is not None else os.environ.get(TOKEN_ENV, "")
-        self._transport = transport
+    TOKEN_ENV = "BOOM_SPOTIFY_ACCESS_TOKEN"
+    API_BASE = "https://api.spotify.com/v1"
+    SERVICE = "Spotify"
 
     # ------------------------------------------------------------------ contract
 
     def status(self) -> Dict[str, Any]:
         if self.token:
             return {"connected": True,
-                    "detail": f"Bearer token present (env {TOKEN_ENV})"}
+                    "detail": f"Bearer token present (env {self.TOKEN_ENV})"}
         return {"connected": False,
-                "detail": f"missing env {TOKEN_ENV}: export a Spotify user OAuth access token "
+                "detail": f"missing env {self.TOKEN_ENV}: export a Spotify user OAuth access token "
                           f"(scopes user-read-playback-state, user-modify-playback-state)"}
 
     def build_tools(self) -> Dict[str, Dict[str, Any]]:
@@ -146,26 +143,9 @@ class SpotifyConnector(Connector):
             },
         }
 
-    # ------------------------------------------------------------------ http
-
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=API_BASE,
-            headers={"Authorization": f"Bearer {self.token}"},
-            transport=self._transport,
-            timeout=30.0,
-        )
-
-    def _guard(self) -> Optional[Dict[str, str]]:
-        if not self.token:
-            return {"error": f"not connected: set env {TOKEN_ENV}"}
-        return None
 
     async def _search(self, query: str, type: str = "track",
                       limit: int = 10) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
         if not (query or "").strip():
             return {"error": "query is required"}
         kind = (type or "track").strip().lower()
@@ -175,16 +155,12 @@ class SpotifyConnector(Connector):
             limit = max(1, min(int(limit), 50))
         except (TypeError, ValueError):
             return {"error": "limit must be an integer"}
-        try:
-            async with self._client() as client:
-                resp = await client.get(
-                    "/search",
-                    params={"q": query.strip(), "type": kind, "limit": limit},
-                )
-        except httpx.RequestError as e:
-            return {"error": f"network error: {e.__class__.__name__}: {e}"}
-        except Exception as e:  # never let a transport surprise escape as a raise
-            return {"error": f"request failed: {e.__class__.__name__}: {e}"}
+        resp = await self._arequest(
+            "GET", "/search",
+            params={"q": query.strip(), "type": kind, "limit": limit},
+        )
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code != 200:
             return {"error": _api_error_message(resp)}
         try:
@@ -197,16 +173,9 @@ class SpotifyConnector(Connector):
                 "total": len(results)}
 
     async def _now_playing(self) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
-        try:
-            async with self._client() as client:
-                resp = await client.get("/me/player/currently-playing")
-        except httpx.RequestError as e:
-            return {"error": f"network error: {e.__class__.__name__}: {e}"}
-        except Exception as e:
-            return {"error": f"request failed: {e.__class__.__name__}: {e}"}
+        resp = await self._arequest("GET", "/me/player/currently-playing")
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code == 204:
             # 204 has no body: nothing is playing right now.
             return {"playing": False}
@@ -225,34 +194,20 @@ class SpotifyConnector(Connector):
         }
 
     async def _play(self, uri: str) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
         uri = (uri or "").strip()
         if not uri:
             return {"error": "uri is required, e.g. 'spotify:track:...'"}
-        try:
-            async with self._client() as client:
-                resp = await client.put("/me/player/play", json={"uris": [uri]})
-        except httpx.RequestError as e:
-            return {"error": f"network error: {e.__class__.__name__}: {e}"}
-        except Exception as e:
-            return {"error": f"request failed: {e.__class__.__name__}: {e}"}
+        resp = await self._arequest("PUT", "/me/player/play", json_body={"uris": [uri]})
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code != 204:
             return {"error": _api_error_message(resp)}
         return {"ok": True, "uri": uri}
 
     async def _pause(self) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
-        try:
-            async with self._client() as client:
-                resp = await client.put("/me/player/pause")
-        except httpx.RequestError as e:
-            return {"error": f"network error: {e.__class__.__name__}: {e}"}
-        except Exception as e:
-            return {"error": f"request failed: {e.__class__.__name__}: {e}"}
+        resp = await self._arequest("PUT", "/me/player/pause")
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code != 204:
             return {"error": _api_error_message(resp)}
         return {"ok": True}

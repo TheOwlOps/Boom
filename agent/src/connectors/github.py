@@ -14,14 +14,12 @@ actually confirmed it.
 
 import base64
 import binascii
-import contextlib
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import quote
 
 import httpx
 
-from connectors.base import Connector, _schema
-from connectors.credentials import get_token_for
+from connectors.base import SyncBearerConnector, _schema
 
 API_BASE = "https://api.github.com"
 API_VERSION = "2022-11-28"
@@ -40,19 +38,6 @@ def _labels(item: Dict[str, Any]) -> List[str]:
         else:
             out.append(str(label))
     return [name for name in out if name]
-
-
-def _api_error(resp: httpx.Response) -> str:
-    """Best-effort human message out of a GitHub API error body."""
-    try:
-        body = resp.json()
-    except ValueError:
-        text = (resp.text or "").strip()
-        return f"GitHub HTTP {resp.status_code}" + (f": {text[:200]}" if text else "")
-    message = body.get("message") if isinstance(body, dict) else None
-    if message:
-        return f"GitHub HTTP {resp.status_code}: {message}"
-    return f"GitHub HTTP {resp.status_code}: unexpected response"
 
 
 def _decode_content(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,32 +61,34 @@ def _decode_content(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"text": text, "truncated": truncated}
 
 
-class GithubConnector(Connector):
+class GithubConnector(SyncBearerConnector):
     """GitHub REST API over httpx. `client` is injectable so tests never touch the network."""
 
     name = "github"
 
-    def __init__(
-        self,
-        token: Optional[str] = None,
-        client: Optional[httpx.Client] = None,
-        api_base: str = API_BASE,
-        timeout: float = 30.0,
-    ) -> None:
-        # token=None means "read BOOM_GITHUB_TOKEN lazily at call time",
-        # so an env change after import is still picked up. A non-None value
-        # is an explicit override (used by tests with a fake transport).
-        self._token_override = token
-        self._injected_client = client
-        self._api_base = (api_base or API_BASE).rstrip("/")
-        self._timeout = timeout
+    TOKEN_ENV = "BOOM_GITHUB_TOKEN"
+    API_BASE = API_BASE
+    SERVICE = "GitHub"
+    CRED_SERVICE = "github"
+    CRED_KEY = "token"
+    TOKEN_HINT = "export a personal access token to use GitHub."
+    EXTRA_HEADERS = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": API_VERSION,
+    }
+    STRICT_DICT_RESPONSE = False  # /issues returns a list
 
-    # -- config ------------------------------------------------------
-
-    def _token(self) -> str:
-        if self._token_override is not None:
-            return self._token_override.strip()
-        return get_token_for("github", "token")
+    def _api_error(self, resp: httpx.Response) -> str:
+        """Best-effort human message out of a GitHub API error body."""
+        try:
+            body = resp.json()
+        except ValueError:
+            text = (resp.text or "").strip()
+            return f"GitHub HTTP {resp.status_code}" + (f": {text[:200]}" if text else "")
+        message = body.get("message") if isinstance(body, dict) else None
+        if message:
+            return f"GitHub HTTP {resp.status_code}: {message}"
+        return f"GitHub HTTP {resp.status_code}: unexpected response"
 
     def status(self) -> Dict[str, Any]:
         if self._token():
@@ -117,51 +104,6 @@ class GithubConnector(Connector):
                 "read access) to enable GitHub."
             ),
         }
-
-    # -- HTTP --------------------------------------------------------
-
-    @contextlib.contextmanager
-    def _session(self) -> Iterator[httpx.Client]:
-        """Yield a client; an injected one is never closed by us."""
-        if self._injected_client is not None:
-            yield self._injected_client
-        else:
-            with httpx.Client(timeout=self._timeout) as client:
-                yield client
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """One GitHub API call. Parsed JSON on success, {"error": ...} otherwise."""
-        token = self._token()
-        if not token:
-            return {
-                "error": (
-                    "BOOM_GITHUB_TOKEN is not set: export a personal access token "
-                    "to use GitHub."
-                )
-            }
-        url = f"{self._api_base}{path}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": API_VERSION,
-        }
-        try:
-            with self._session() as client:
-                resp = client.request(method, url, params=params, headers=headers)
-        except httpx.RequestError as exc:
-            return {"error": f"GitHub request failed: {type(exc).__name__}: {exc}"}
-        if resp.status_code >= 400:
-            return {"error": _api_error(resp)}
-        try:
-            data = resp.json()
-        except ValueError:
-            return {"error": f"GitHub returned non-JSON (HTTP {resp.status_code})."}
-        return data
 
     # -- tools -------------------------------------------------------
 

@@ -336,21 +336,16 @@ class AgentEnvironment:
             ),
         }
 
-        # 5e. Web, cron and browser tools. Each module builds its own tool dicts, so this is
-        #     the only line that has to know about them. Imported lazily and guarded: an
-        #     optional subsystem that cannot load must not take the whole environment down.
-        for module_name in ("tools.web_tools", "tools.cronjob_tool", "tools.browser_tool"):
-            try:
-                factory = getattr(import_module(module_name), "build_tools", None)
-                if factory is not None:
-                    self._tools.update(factory(self))
-            except Exception as e:
-                print(f"[tools] {module_name} unavailable: {e}")
-
-        # 5f. New capability modules (artifacts, goals, people, digest, research).
-        #     Same lazy-guarded pattern as 5e: an optional subsystem that cannot
-        #     load must not take the whole environment down.
+        # 5e. Optional tool modules (web, cron, browser, artifacts, goals,
+        #     people, digest, research). Each module builds its own tool dicts,
+        #     so this is the only place that has to know about them. Imported
+        #     lazily and guarded: a subsystem that cannot load must not take
+        #     the whole environment down. people.tools takes root_dir instead
+        #     of the env; everything else takes the env.
         for module_name, use_root_dir in (
+            ("tools.web_tools", False),
+            ("tools.cronjob_tool", False),
+            ("tools.browser_tool", False),
             ("artifacts.tools", False),
             ("goals.tools", False),
             ("digest.tools", False),
@@ -368,9 +363,12 @@ class AgentEnvironment:
         # 5g. Service connectors (Gmail, Calendar, Drive, generic HTTP API).
         #     Merged through the connector registry; a missing credential only
         #     marks that connector disconnected, it never breaks the env.
+        #     connector_status lets the agent report which connectors are live.
         try:
             from connectors.registry import load_default_registry
-            self._tools.update(load_default_registry().build_tools())
+            registry = load_default_registry()
+            self._tools.update(registry.build_tools())
+            self._tools.update(registry.build_status_tool())
         except Exception as e:
             print(f"[tools] connectors unavailable: {e}")
 

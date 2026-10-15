@@ -33,7 +33,12 @@ Boot wiring (see :mod:`connectors.registry`)::
     tools.update(registry.build_tools())        # merge into the agent's tool dicts
 """
 
-from connectors.base import Connector
+from connectors.base import (
+    AsyncBearerConnector,
+    Connector,
+    SyncBearerConnector,
+    sync_bearer_request,
+)
 from connectors.credentials import (
     connector_env,
     get_token,
@@ -49,14 +54,17 @@ from connectors.registry import (
 )
 
 __all__ = [
+    "AsyncBearerConnector",
     "Connector",
     "ConnectorRegistry",
     "DuplicateToolError",
     "DEFAULT_CONNECTOR_MODULES",
+    "SyncBearerConnector",
     "connector_env",
     "get_token",
     "get_token_for",
     "load_default_registry",
     "require_token",
     "require_token_for",
+    "sync_bearer_request",
 ]

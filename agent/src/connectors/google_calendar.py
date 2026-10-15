@@ -10,15 +10,12 @@ Import root is agent/src, so this lives at agent/src/connectors/google_calendar.
 and is imported as `from connectors.google_calendar import GoogleCalendarConnector`.
 """
 
-import os
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from connectors.base import Connector, _schema
+from connectors.base import AsyncBearerConnector, _schema
 
-TOKEN_ENV = "BOOM_GOOGLE_CALENDAR_ACCESS_TOKEN"
-API_BASE = "https://www.googleapis.com/calendar/v3"
 DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh"
 
 
@@ -51,23 +48,23 @@ def _api_error_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}: unexpected response"
 
 
-class GoogleCalendarConnector(Connector):
+class GoogleCalendarConnector(AsyncBearerConnector):
     """Calendar API v3 over httpx. `transport` is injectable so tests never touch the network."""
 
     name = "google_calendar"
 
-    def __init__(self, token: Optional[str] = None, transport: Optional[httpx.BaseTransport] = None):
-        self.token = token if token is not None else os.environ.get(TOKEN_ENV, "")
-        self._transport = transport
+    TOKEN_ENV = "BOOM_GOOGLE_CALENDAR_ACCESS_TOKEN"
+    API_BASE = "https://www.googleapis.com/calendar/v3"
+    SERVICE = "Calendar"
 
     # ------------------------------------------------------------------ contract
 
     def status(self) -> Dict[str, Any]:
         if self.token:
             return {"connected": True,
-                    "detail": f"Bearer token present (env {TOKEN_ENV})"}
+                    "detail": f"Bearer token present (env {self.TOKEN_ENV})"}
         return {"connected": False,
-                "detail": f"missing env {TOKEN_ENV}"}
+                "detail": f"missing env {self.TOKEN_ENV}"}
 
     def build_tools(self) -> Dict[str, Dict[str, Any]]:
         return {
@@ -123,47 +120,23 @@ class GoogleCalendarConnector(Connector):
             },
         }
 
-    # ------------------------------------------------------------------ http
-
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=API_BASE,
-            headers={"Authorization": f"Bearer {self.token}"},
-            transport=self._transport,
-            timeout=30.0,
-        )
-
-    def _guard(self) -> Optional[Dict[str, str]]:
-        if not self.token:
-            return {"error": f"not connected: set env {TOKEN_ENV}"}
-        return None
 
     async def _list(self, time_min: str, time_max: str, max_results: int = 20) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
         if not (time_min or "").strip() or not (time_max or "").strip():
             return {"error": "time_min and time_max are required"}
         try:
             max_results = max(1, min(int(max_results), 250))
         except (TypeError, ValueError):
             return {"error": "max_results must be an integer"}
-        try:
-            async with self._client() as client:
-                resp = await client.get(
-                    "/calendars/primary/events",
-                    params={
+        resp = await self._arequest("GET", "/calendars/primary/events", params={
                         "timeMin": time_min,
                         "timeMax": time_max,
                         "maxResults": max_results,
                         "singleEvents": "true",
                         "orderBy": "startTime",
-                    },
-                )
-        except httpx.RequestError as e:
-            return {"error": f"network error: {type(e).__name__}: {e}"}
-        except Exception as e:  # never let a transport surprise escape as a raise
-            return {"error": f"request failed: {type(e).__name__}: {e}"}
+                    })
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code != 200:
             return {"error": _api_error_message(resp)}
         try:
@@ -175,9 +148,6 @@ class GoogleCalendarConnector(Connector):
 
     async def _create(self, summary: str, start: str, end: str,
                       description: str = "", timezone: str = DEFAULT_TIMEZONE) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
         if not (summary or "").strip():
             return {"error": "summary is required"}
         if not (start or "").strip() or not (end or "").strip():
@@ -188,13 +158,9 @@ class GoogleCalendarConnector(Connector):
             "start": {"dateTime": start, "timeZone": timezone or DEFAULT_TIMEZONE},
             "end": {"dateTime": end, "timeZone": timezone or DEFAULT_TIMEZONE},
         }
-        try:
-            async with self._client() as client:
-                resp = await client.post("/calendars/primary/events", json=body)
-        except httpx.RequestError as e:
-            return {"error": f"network error: {type(e).__name__}: {e}"}
-        except Exception as e:
-            return {"error": f"request failed: {type(e).__name__}: {e}"}
+        resp = await self._arequest("POST", "/calendars/primary/events", json_body=body)
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code not in (200, 201):
             return {"error": _api_error_message(resp)}
         try:
@@ -205,18 +171,11 @@ class GoogleCalendarConnector(Connector):
         return created
 
     async def _delete(self, event_id: str) -> Dict[str, Any]:
-        err = self._guard()
-        if err:
-            return err
         if not (event_id or "").strip():
             return {"error": "event_id is required"}
-        try:
-            async with self._client() as client:
-                resp = await client.delete(f"/calendars/primary/events/{event_id.strip()}")
-        except httpx.RequestError as e:
-            return {"error": f"network error: {type(e).__name__}: {e}"}
-        except Exception as e:
-            return {"error": f"request failed: {type(e).__name__}: {e}"}
+        resp = await self._arequest("DELETE", f"/calendars/primary/events/{event_id.strip()}")
+        if isinstance(resp, dict):
+            return resp
         if resp.status_code == 204:
             return {"deleted": event_id.strip()}
         return {"error": _api_error_message(resp)}
