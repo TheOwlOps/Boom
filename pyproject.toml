@@ -1,0 +1,34 @@
+[project]
+name = "boom"
+version = "0.1.0"
+description = "Multi-channel bot with agent tools"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+# Browser automation tools (playwright) — only needed for browser_use tools
+browser = ["playwright>=1.40"]
+# Everything else (Telegram, Discord, Zalo, Messenger, gateway) uses
+# httpx + stdlib only — no extra dependencies required.
+
+[project.scripts]
+boom = "agent.src.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/TheOwlOps/Boom"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent/src", "gateway"]
+
+[tool.pytest.ini_options]
+testpaths = ["evals"]
+python_files = ["test_*.py"]

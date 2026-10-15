@@ -555,7 +555,16 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    parser = argparse.ArgumentParser(description="Boom Agent Harness")
+    # `boom setup` — interactive wizard (handled before argparse so it
+    # doesn't conflict with the existing --gateway / --serve-rpc flags).
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        from agent.src.setup import run_setup
+        sys.exit(run_setup(sys.argv[2:]))
+
+    parser = argparse.ArgumentParser(
+        description="Boom Agent Harness",
+        epilog="Run 'boom setup' for an interactive configuration wizard.",
+    )
     parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve mutating tool actions without prompting")
     parser.add_argument("--model", "-m", type=str, help="LLM model name")
     parser.add_argument("--gateway", "-g", action="store_true", help="Run as multi-channel gateway daemon")
