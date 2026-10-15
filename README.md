@@ -4,7 +4,17 @@ Boom is a multi-channel autonomous AI agent: chat via Telegram/Discord/Slack/Zal
 
 ## Quick Start
 
-### Option 1: Local (recommended for dev)
+### Option 1: Devbox (recommended — reproducible, Nix-powered)
+
+```bash
+# Install devbox: https://www.jetify.com/docs/devbox/installing-devbox/
+git clone https://github.com/TheOwlOps/Boom.git
+cd Boom
+devbox shell   # exact same environment on every machine
+./start.sh all
+```
+
+### Option 2: Local
 
 ```bash
 # 1. Clone
@@ -31,7 +41,7 @@ Open:
 
 Stop: `./stop.sh`
 
-### Option 2: Docker
+### Option 3: Docker (for deployment)
 
 ```bash
 docker compose up --build
