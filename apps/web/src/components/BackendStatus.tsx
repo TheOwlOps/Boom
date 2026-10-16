@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Play, RotateCw } from "lucide-react";
-import { API_BASE } from "../lib/api";
+import { API_BASE, getBackendHelpText } from "../lib/api";
 import { isTauriEnvironment } from "../lib/appVersion";
 
 /** Poll the Python backend health endpoint every 5 seconds. */
@@ -152,14 +152,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
           Backend chưa chạy
         </h2>
         <p className="mt-1 text-sm text-neutral-400">
-          The Python backend is not reachable. Some features (chat, tools,
-          skills) need it to be running.
-        </p>
-        <p className="mt-2 text-sm text-neutral-400">
-          Start it manually with:{" "}
-          <code className="rounded bg-neutral-900 px-1.5 py-0.5 font-mono text-xs text-amber-200">
-            python3 gateway/api.py --port 18080
-          </code>
+          {getBackendHelpText()}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
