@@ -217,6 +217,14 @@ def _providers_manager():
     code at load time)."""
     from providers.manager import ProviderManager
     return ProviderManager()
+
+
+def _marketplace_backend():
+    """Builds the marketplace MarketplaceBackend. Import is lazy on purpose
+    (same reason as _bots_manager: importing this module must never import
+    agent code at load time)."""
+    from agent.src.marketplace import MarketplaceBackend
+    return MarketplaceBackend()
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
@@ -536,6 +544,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_bots_list()
         elif path == "/api/providers":
             self._handle_providers_list()
+        elif path == "/api/marketplace":
+            self._handle_marketplace_catalog()
+        elif path == "/api/marketplace/installed":
+            self._handle_marketplace_installed()
         else:
             self._error(404, "not found")
 
@@ -557,6 +569,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_providers_config()
         elif path == "/api/providers/test":
             self._handle_providers_test()
+        elif path == "/api/marketplace/install":
+            self._handle_marketplace_install()
+        elif path == "/api/marketplace/uninstall":
+            self._handle_marketplace_uninstall()
         else:
             self._error(404, "not found")
 
@@ -861,6 +877,66 @@ class _Handler(BaseHTTPRequestHandler):
             api_log(f"/api/providers/test error: {e}")
             return self._error(500, "failed to test provider connection")
         self._send_json(200, {"ok": ok, "message": message})
+
+    def _handle_marketplace_catalog(self):
+        """GET /api/marketplace — installable-items catalog."""
+        try:
+            backend = _marketplace_backend()
+            items = backend.get_catalog()
+        except Exception as e:
+            api_log(f"/api/marketplace error: {e}")
+            return self._error(500, "failed to build marketplace catalog")
+        self._send_json(200, {"items": items, "count": len(items)})
+
+    def _handle_marketplace_installed(self):
+        """GET /api/marketplace/installed — installed plugin/tool ids."""
+        try:
+            backend = _marketplace_backend()
+            installed = backend.get_installed()
+        except Exception as e:
+            api_log(f"/api/marketplace/installed error: {e}")
+            return self._error(500, "failed to list installed items")
+        self._send_json(200, {"installed": installed})
+
+    def _handle_marketplace_install(self):
+        """POST /api/marketplace/install — body: {"id": "<kind>:<name>" / bare name}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        item_id = data.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            return self._error(400, "id is required")
+        try:
+            from agent.src.marketplace import MarketplaceError
+            backend = _marketplace_backend()
+            result = backend.install_item(item_id.strip())
+        except MarketplaceError as e:
+            return self._error(e.status, str(e))
+        except Exception as e:
+            api_log(f"/api/marketplace/install error: {e}")
+            return self._error(500, "install failed")
+        self._send_json(200, result)
+
+    def _handle_marketplace_uninstall(self):
+        """POST /api/marketplace/uninstall — body: {"id": "<kind>:<name>" / bare name}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        item_id = data.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            return self._error(400, "id is required")
+        try:
+            from agent.src.marketplace import MarketplaceError
+            backend = _marketplace_backend()
+            result = backend.uninstall_item(item_id.strip())
+        except MarketplaceError as e:
+            return self._error(e.status, str(e))
+        except Exception as e:
+            api_log(f"/api/marketplace/uninstall error: {e}")
+            return self._error(500, "uninstall failed")
+        self._send_json(200, result)
 
     def _resolve_bot_context(self, bot_id):
         """Resolve (system_prompt, tool_names) for a bot id.

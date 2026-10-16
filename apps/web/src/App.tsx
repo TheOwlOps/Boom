@@ -28,6 +28,23 @@ import { ActivityFeed } from "./components/ActivityFeed";
 import BotManager from "./components/BotManager";
 import SettingsPage from "./components/SettingsPage";
 import UpdateChecker from "./components/UpdateChecker";
+// Marketplace modal (types re-exported for consumers by the component itself).
+import Marketplace, {
+  type BotSummary,
+  type MarketplaceItem,
+} from "./components/Marketplace";
+import { Toast } from "./components/Toast";
+import {
+  getMarketplace,
+  getMarketplaceInstalled,
+  installMarketplaceItem,
+  listBots,
+  setActiveBot,
+} from "./lib/api";
+import {
+  MARKETPLACE_CATEGORIES,
+  MARKETPLACE_ITEMS,
+} from "./data/marketplace";
 
 /**
  * Top-level dashboard views rendered in the center column.
@@ -127,9 +144,11 @@ const TABS: Array<{
 function MainNav({
   tab,
   onTab,
+  onOpenMarketplace,
 }: {
   tab: MainTab;
   onTab(t: MainTab): void;
+  onOpenMarketplace(): void;
 }) {
   const renderButton = ({ id, label, icon: TabIcon }: (typeof TABS)[number]) => (
     <button
@@ -167,6 +186,17 @@ function MainNav({
         aria-hidden="true"
       />
       {TABS.filter((t) => t.group === "ops").map(renderButton)}
+      {/* Marketplace opens a modal, not a tab — pinned to the right end. */}
+      <button
+        type="button"
+        onClick={onOpenMarketplace}
+        title="Marketplace"
+        aria-label="Open marketplace"
+        className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--text)]"
+      >
+        <span aria-hidden="true">🏪</span>
+        Marketplace
+      </button>
     </nav>
   );
 }
@@ -195,9 +225,87 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
+  // Marketplace modal state.
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [marketplaceItems, setMarketplaceItems] =
+    useState<MarketplaceItem[]>(MARKETPLACE_ITEMS);
+  const [installedIds, setInstalledIds] = useState<string[]>([]);
+  const [marketBots, setMarketBots] = useState<BotSummary[]>([]);
+  const [toast, setToast] = useState<{
+    id: number;
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" = "success") =>
+    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, message, type }));
+
+  /**
+   * Open the Marketplace modal and (re)load its data.
+   * The gateway has no marketplace endpoints yet, so each fetch falls back
+   * to local data instead of failing the modal.
+   */
+  const openMarketplace = () => {
+    setMarketplaceOpen(true);
+    void (async () => {
+      try {
+        setMarketplaceItems(await getMarketplace());
+      } catch {
+        setMarketplaceItems(MARKETPLACE_ITEMS);
+      }
+      try {
+        setInstalledIds(await getMarketplaceInstalled());
+      } catch {
+        setInstalledIds([]);
+      }
+      try {
+        const bots = await listBots();
+        setMarketBots(
+          bots.map((b) => ({
+            id: b.id,
+            name: b.name,
+            icon: b.avatar_emoji || "🤖",
+            description: b.description || b.name,
+          })),
+        );
+      } catch {
+        setMarketBots([]);
+      }
+    })();
+  };
+
+  const handleMarketplaceAdd = async (item: MarketplaceItem) => {
+    try {
+      await installMarketplaceItem(item.id);
+      setInstalledIds((ids) =>
+        ids.includes(item.id) ? ids : [...ids, item.id],
+      );
+      showToast(`Added ${item.name} ✓`, "success");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : `Failed to add ${item.name}`,
+        "error",
+      );
+    }
+  };
+
+  const handleUseBot = async (id: string) => {
+    try {
+      await setActiveBot(id);
+      setMarketplaceOpen(false);
+      showToast("Active bot updated ✓", "success");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to set active bot",
+        "error",
+      );
+    }
+  };
+
   const closeOverlays = () => {
     setMobileNavOpen(false);
     setSettingsOpen(false);
+    setMarketplaceOpen(false);
   };
 
   // Escape closes any overlay (settings, mobile sidebar drawer).
@@ -242,7 +350,11 @@ export default function App() {
       {/* Center column — status bar, main nav, active view */}
       <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
         <StatusBar />
-        <MainNav tab={mainTab} onTab={setMainTab} />
+        <MainNav
+          tab={mainTab}
+          onTab={setMainTab}
+          onOpenMarketplace={openMarketplace}
+        />
         {/* Independent scroll region: each view scrolls here (ChatView
             manages its own inner scroll via .chat-messages). */}
         <div
@@ -297,6 +409,21 @@ export default function App() {
       )}
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* Marketplace modal + toast notifications */}
+      <Marketplace
+        open={marketplaceOpen}
+        onClose={() => setMarketplaceOpen(false)}
+        onAdd={handleMarketplaceAdd}
+        onUseBot={handleUseBot}
+        installedIds={installedIds}
+        items={marketplaceItems}
+        categories={MARKETPLACE_CATEGORIES}
+        bots={marketBots}
+      />
+      {toast !== null && (
+        <Toast key={toast.id} message={toast.message} type={toast.type} />
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@
 import type {
   Bot, BotDraft, ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
 } from './types';
+import type { MarketplaceItem } from '../data/marketplace';
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:18080';
 const CHAT_TIMEOUT_MS = 120_000;
@@ -188,6 +189,59 @@ export function deleteBot(id: string): Promise<void> {
 
 export function setActiveBot(id: string): Promise<void> {
   return sendJson('POST', '/api/bots/active', () => undefined, { bot_id: id });
+}
+
+/* ---------------- Marketplace ------------------------------------------- */
+
+function parseMarketplaceKind(v: unknown): MarketplaceItem['kind'] {
+  if (v === 'plugin' || v === 'tool' || v === 'bot') return v;
+  throw new Error('malformed response: marketplace item.kind must be "plugin", "tool" or "bot"');
+}
+
+function parseMarketplaceItem(v: unknown): MarketplaceItem {
+  if (!isRecord(v)) throw new Error('malformed response: marketplace item entry');
+  return {
+    id: reqString(v.id, 'marketplace item.id'),
+    name: reqString(v.name, 'marketplace item.name'),
+    icon: reqString(v.icon, 'marketplace item.icon'),
+    description: reqString(v.description, 'marketplace item.description'),
+    category: reqString(v.category, 'marketplace item.category'),
+    featured: v.featured === true ? true : undefined,
+    kind: parseMarketplaceKind(v.kind),
+  };
+}
+
+/** Parse `GET /api/marketplace` -> `{items: MarketplaceItem[]}`. */
+function parseMarketplace(v: unknown): MarketplaceItem[] {
+  if (!isRecord(v) || !Array.isArray(v.items)) throw new Error('malformed response: /api/marketplace');
+  return v.items.map(parseMarketplaceItem);
+}
+
+/**
+ * Parse `GET /api/marketplace/installed`.
+ * Accepts `{installed: string[]}` (primary) or `{ids: string[]}`.
+ */
+function parseMarketplaceInstalled(v: unknown): string[] {
+  if (!isRecord(v)) throw new Error('malformed response: /api/marketplace/installed');
+  if (isStringArray(v.installed)) return v.installed;
+  if (isStringArray(v.ids)) return v.ids;
+  throw new Error('malformed response: /api/marketplace/installed must carry an installed/ids string[]');
+}
+
+export function getMarketplace(): Promise<MarketplaceItem[]> {
+  return getJson('/api/marketplace', parseMarketplace);
+}
+
+export function getMarketplaceInstalled(): Promise<string[]> {
+  return getJson('/api/marketplace/installed', parseMarketplaceInstalled);
+}
+
+export function installMarketplaceItem(id: string): Promise<void> {
+  return sendJson('POST', '/api/marketplace/install', () => undefined, { id });
+}
+
+export function uninstallMarketplaceItem(id: string): Promise<void> {
+  return sendJson('POST', '/api/marketplace/uninstall', () => undefined, { id });
 }
 
 interface SseState { text: string | null; sessionId: string; strategy: string; errors: Record<string, string> }
