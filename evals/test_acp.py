@@ -165,7 +165,7 @@ def test_full_stdio_roundtrip():
 
 def test_no_external_deps():
     src = (HERE.parent / "acp" / "acp" / "server.py").read_text(encoding="utf-8")
-    for banned in ("hermes", "import acp\n", "from acp "):
+    for banned in ("boom", "import acp\n", "from acp "):
         check(f"no {banned.strip()} reference", banned not in src)
     main_src = (HERE.parent / "acp" / "acp" / "__main__.py").read_text(encoding="utf-8")
     check("__main__ wires BoomCLI seam",

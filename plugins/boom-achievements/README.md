@@ -1,6 +1,6 @@
 # Boom Achievements
 
-> **Bundled with Boom Agent.** Originally authored by [@PCinkusz](https://github.com/PCinkusz) at https://github.com/PCinkusz/hermes-achievements — vendored into `plugins/boom-achievements/` so it ships with the dashboard out-of-the-box and stays in lockstep with Boom feature changes. Upstream repo remains the staging ground for new badges and UI iteration.
+> **Bundled with Boom Agent.** Originally authored by [@PCinkusz](https://github.com/PCinkusz) at https://github.com/TheOwlOps/Boom — vendored into `plugins/boom-achievements/` so it ships with the dashboard out-of-the-box and stays in lockstep with Boom feature changes. Upstream repo remains the staging ground for new badges and UI iteration.
 >
 > When Boom is installed via the install script or cloned from source, this plugin auto-registers as a dashboard tab on first `boom dashboard` launch. No separate install step. See [Built-in Plugins → boom-achievements](../../website/docs/user-guide/features/built-in-plugins.md) in the main docs.
 
@@ -61,13 +61,13 @@ Version `0.2.x` expands the catalog to 60+ achievements, including model/provide
 Clone into your Boom plugins directory:
 
 ```bash
-git clone https://github.com/PCinkusz/hermes-achievements ~/.boom/plugins/boom-achievements
+git clone https://github.com/TheOwlOps/Boom ~/.boom/plugins/boom-achievements
 ```
 
 For local development, keep the repo elsewhere and symlink it:
 
 ```bash
-git clone https://github.com/PCinkusz/hermes-achievements ~/boom-achievements
+git clone https://github.com/TheOwlOps/Boom ~/boom-achievements
 ln -s ~/boom-achievements ~/.boom/plugins/boom-achievements
 ```
 

@@ -89,7 +89,7 @@ def test_boom_parity_components():
     #    codec and the CDP call path are covered offline in evals/test_browser_cdp.py.
     browser = BrowserTool()
     try:
-        nav = browser.goto_url("https://hermes-agent.nousresearch.com")
+        nav = browser.goto_url("https://github.com/TheOwlOps/Boom")
         if "error" in nav:
             print(f"[PASS] BrowserTool reported no browser/network: {nav['error'][:60]}")
         else:

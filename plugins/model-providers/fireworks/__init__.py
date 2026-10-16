@@ -34,7 +34,7 @@ fireworks = FireworksProfile(
     # Attribution headers (canonical Boom set); via default_headers so they
     # survive switch_model and credential rotation.
     default_headers={
-        "HTTP-Referer": "https://hermes-agent.nousresearch.com",
+        "HTTP-Referer": "https://github.com/TheOwlOps/Boom",
         "X-Title": "Boom Agent",
         "User-Agent": f"BoomAgent/{get_version_info().base_version}",
     },
