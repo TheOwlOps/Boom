@@ -35,13 +35,23 @@ async function probeHealth(): Promise<boolean> {
  * Asks the Tauri shell to start the bundled Python backend.
  * The frontend always runs inside Tauri, so no environment guard needed.
  */
-async function startBackendNative(): Promise<void> {
+async function startBackendNative(): Promise<string> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("start_backend");
+    return await invoke<string>("start_backend");
   } catch (err) {
     console.error("[BackendStatus] start_backend invoke failed:", err);
     throw err;
+  }
+}
+
+/** Fetch the backend's recent stderr for diagnostics. */
+async function getBackendError(): Promise<string> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<string>("get_backend_error");
+  } catch {
+    return "";
   }
 }
 
@@ -56,6 +66,7 @@ async function startBackendNative(): Promise<void> {
 export default function BackendStatus({ compact = false }: BackendStatusProps) {
   const [state, setState] = useState<BackendState>("starting");
   const [startingNative, setStartingNative] = useState(false);
+  const [backendError, setBackendError] = useState<string>("");
   const mountedRef = useRef(true);
 
   const check = useCallback(async () => {
@@ -82,8 +93,20 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
   const handleStart = useCallback(async () => {
     setStartingNative(true);
     setState("starting");
+    setBackendError("");
     try {
-      await startBackendNative();
+      const result = await startBackendNative();
+      // If the backend didn't come up, fetch the detailed error.
+      setTimeout(async () => {
+        if (!mountedRef.current) return;
+        const ok = await probeHealth();
+        if (!ok) {
+          const errDetail = await getBackendError();
+          if (mountedRef.current) {
+            setBackendError(errDetail || result);
+          }
+        }
+      }, 3000);
     } catch {
       // Error already logged; surface failure as disconnected.
       setStartingNative(false);
@@ -148,6 +171,16 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
         <p className="mt-1 text-sm text-neutral-400">
           {getBackendHelpText()}
         </p>
+        {backendError && (
+          <details className="mt-2 rounded-lg bg-black/30 p-3">
+            <summary className="cursor-pointer text-xs font-medium text-red-400">
+              Chi tiết lỗi (bấm để xem)
+            </summary>
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-neutral-300">
+              {backendError}
+            </pre>
+          </details>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"

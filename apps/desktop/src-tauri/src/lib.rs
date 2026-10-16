@@ -362,7 +362,11 @@ fn spawn_python_fallback(stderr: &StderrBuffer) -> Result<Child, String> {
 /// manually), it is adopted as `External` instead of spawning a second copy
 /// that would die on "address already in use". If the port is squatted by an
 /// unrelated process, a clear error is returned instead of a cryptic crash.
-fn spawn_backend_process(app: &AppHandle, state: &State<BackendProcess>) -> Result<(), String> {
+fn spawn_backend_process(
+    app: &AppHandle,
+    state: &State<BackendProcess>,
+    stderr_state: &State<StderrBuffer>,
+) -> Result<(), String> {
     let mut guard = match state.0.lock() {
         Ok(g) => g,
         Err(e) => return Err(format!("backend state lock poisoned: {}", e)),
@@ -391,7 +395,7 @@ fn spawn_backend_process(app: &AppHandle, state: &State<BackendProcess>) -> Resu
         ));
     }
 
-    let stderr = StderrBuffer::default();
+    let stderr = stderr_state.inner().clone();
     match spawn_sidecar(app, &stderr) {
         Ok(mut child) => {
             // Verify the sidecar actually came up: spawn success alone does
@@ -530,14 +534,25 @@ fn get_backend_status(state: State<BackendProcess>) -> String {
 /// Manually start the backend (no-op if already running).
 /// Returns a human-readable success/error message.
 #[tauri::command]
-fn start_backend(app: AppHandle, state: State<BackendProcess>) -> String {
-    match spawn_backend_process(&app, &state) {
+fn start_backend(
+    app: AppHandle,
+    state: State<BackendProcess>,
+    stderr: State<StderrBuffer>,
+) -> String {
+    match spawn_backend_process(&app, &state, &stderr) {
         Ok(()) => format!("backend started on port {}", BACKEND_PORT),
         Err(e) => {
             eprintln!("[backend] start_backend failed: {}", e);
             format!("failed to start backend: {}", e)
         }
     }
+}
+
+/// Return the backend's recent stderr output for diagnostics.
+/// Used by the UI to show *why* the backend failed to start.
+#[tauri::command]
+fn get_backend_error(stderr: State<StderrBuffer>) -> String {
+    stderr.tail()
 }
 
 // ---------------------------------------------------------------------------
@@ -654,6 +669,7 @@ pub fn run() {
             )?;
             // Track the backend child process in Tauri state.
             app.manage(BackendProcess(Mutex::new(None)));
+            app.manage(StderrBuffer::default());
             // Auto-start the backend on launch: the sidecar binary is spawned
             // immediately here inside the setup hook (no user action
             // required), falling back to the python3 dev fallback when the
@@ -665,7 +681,8 @@ pub fn run() {
             );
             let app_handle = app.handle().clone();
             let state: State<BackendProcess> = app.state();
-            match spawn_backend_process(&app_handle, &state) {
+            let stderr: State<StderrBuffer> = app.state();
+            match spawn_backend_process(&app_handle, &state, &stderr) {
                 Ok(()) => {
                     log::info!("[backend] auto-start succeeded on port {}", BACKEND_PORT)
                 }
@@ -695,7 +712,8 @@ pub fn run() {
             send_agent_message,
             list_toolsets,
             get_backend_status,
-            start_backend
+            start_backend,
+            get_backend_error
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
