@@ -62,6 +62,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     // Material icons (Icons.Filled.*) are not bundled with material3.
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
     // Material Components for Android: provides the Theme.Material3.* XML
     // parents used by res/values/themes.xml.
     implementation("com.google.android.material:material:1.12.0")
