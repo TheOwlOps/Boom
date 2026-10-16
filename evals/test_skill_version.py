@@ -9,9 +9,11 @@ import tempfile
 from pathlib import Path
 
 # Import các module patch cùng thư mục
-sys.path.insert(0, str(Path(__file__).parent))
-from skill_loader import SkillLoader, extract_skill_version  # noqa: E402
-from skills_hub import (  # noqa: E402
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from extensibility.skill_loader import SkillLoader, extract_skill_version  # noqa: E402
+from extensibility.skills_hub import (  # noqa: E402
     SkillsHub,
     _compare_versions,
     _parse_version,

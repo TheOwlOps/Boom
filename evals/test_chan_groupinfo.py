@@ -109,6 +109,11 @@ _stub("agent")
 _stub("agent.src")
 _stub("agent.src.security")
 _stub("agent.src.security.system_one_gate", SystemOneGate=object)
+# gateway/discord.py does `from agent.src.tools.ws_client import WebSocket`
+# (repo-root import style, like daemon.py); stub it too, otherwise the
+# stubbed non-package `agent.src` module breaks that import.
+_stub("agent.src.tools")
+_stub("agent.src.tools.ws_client", WebSocket=object)
 _stub("gateway.delivery_ledger", DeliveryLedger=object)
 _stub("gateway.dispatcher", TurnDispatcher=object, new_job=lambda *a, **k: None)
 

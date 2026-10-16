@@ -4,13 +4,16 @@ import io
 import json
 import os
 import sys
+from pathlib import Path
 import tempfile
 import types
 import unittest
 import wave
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
 from voice import stt
 
@@ -94,7 +97,7 @@ class TestTranscribeNoBackend(unittest.TestCase):
             with self.assertRaises(NotImplementedError) as ctx:
                 stt.transcribe(b"fake-audio")
             msg = str(ctx.exception)
-            self.assertIn("Không có backend", msg)
+            self.assertIn("No Speech-to-Text backend available", msg)
             self.assertIn("OPENAI_API_KEY", msg)
             self.assertIn("vosk", msg)
 
@@ -105,7 +108,7 @@ class TestTranscribeNoBackend(unittest.TestCase):
     def test_unknown_backend_raises_value_error(self):
         with self.assertRaises(ValueError) as ctx:
             stt.transcribe(b"x", backend="khong-ton-tai")
-        self.assertIn("không hỗ trợ", str(ctx.exception))
+        self.assertIn("Unsupported STT backend", str(ctx.exception))
 
 
 class TestTranscribeOpenAI(unittest.TestCase):

@@ -108,8 +108,22 @@ def test_tts_tool():
 
 def test_vision_tool():
     print("Testing Vision Tool...")
-    res = vision_analyze("D:/Boom/Cargo.toml", "Kiểm tra file cấu hình")
-    assert res["status"] == "success"
+    # The old fixture was a machine-specific Windows path ("D:/Boom/Cargo.toml")
+    # pointing at a file that is neither present nor an image, so vision_analyze
+    # could never return success for it. Generate a real image with known text
+    # and verify the OCR-backed tool end to end.
+    from PIL import Image, ImageDraw
+    tmp = tempfile.mkdtemp(prefix="boom_vision_")
+    try:
+        img_path = str(Path(tmp) / "hello.png")
+        img = Image.new("RGB", (400, 120), "white")
+        ImageDraw.Draw(img).text((20, 40), "hello boom vision", fill="black")
+        img.save(img_path)
+        res = vision_analyze(img_path, "read the text in this image")
+        assert res["status"] == "success", res
+        assert "hello" in res["ocr_text"].lower(), res["ocr_text"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     print("[PASS] Vision Tool verified.")
 
 def test_kanban_tool():

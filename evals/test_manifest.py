@@ -3,8 +3,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from manifest import (
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from extensibility.manifest import (
     PluginManifest,
     load,
     satisfies,

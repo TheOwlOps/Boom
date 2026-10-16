@@ -11,10 +11,13 @@ Kèm test topic nhạy cảm: vẫn trả đủ perspectives, không bỏ sót/k
 
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from deepthink import DeepThink
+from research.deepthink import DeepThink
 
 PASS = 0
 FAIL = 0

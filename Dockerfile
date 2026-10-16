@@ -4,15 +4,15 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng \
     curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Python deps
+# Python deps (must match pyproject.toml [project] dependencies)
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir httpx pydantic
+RUN pip install --no-cache-dir httpx "pydantic>=2" pyyaml
 
 # App code
 COPY boom.py ./
@@ -22,9 +22,9 @@ COPY acp/ ./acp/
 COPY skills/ ./skills/
 COPY start.sh stop.sh ./
 
-# Web UI build
-COPY apps/web/package.json apps/web/pnpm-lock.yaml ./apps/web/
-RUN cd apps/web && npm install --no-audit --no-fund
+# Web UI build (npm, using the npm lockfile for reproducible installs)
+COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
+RUN cd apps/web && npm ci --no-audit --no-fund
 COPY apps/web/ ./apps/web/
 RUN cd apps/web && npm run build
 
@@ -34,5 +34,8 @@ ENV PYTHONPATH=/app:/app/agent/src
 ENV BOOM_API_PORT=18080
 
 EXPOSE 18080 5173 8788
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:18080/api/health || exit 1
 
 CMD ["./start.sh", "all"]

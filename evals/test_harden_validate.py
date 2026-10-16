@@ -11,9 +11,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from validate import (  # noqa: E402
+from lifecycle.validate import (  # noqa: E402
     CheckResult,
     StartupError,
     ValidationReport,

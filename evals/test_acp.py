@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # makes `import acp.server` work
+# The importable `acp` package lives one level down: <root>/acp/acp/
+# (the outer <root>/acp/ dir is just a container, not a package).
+sys.path.insert(0, str(HERE.parent / "acp"))  # makes `import acp.server` work
 
 from acp.server import AcpServer, PROTOCOL_VERSION
 
@@ -162,10 +164,10 @@ def test_full_stdio_roundtrip():
 
 
 def test_no_external_deps():
-    src = (HERE.parent / "acp" / "server.py").read_text(encoding="utf-8")
+    src = (HERE.parent / "acp" / "acp" / "server.py").read_text(encoding="utf-8")
     for banned in ("hermes", "import acp\n", "from acp "):
         check(f"no {banned.strip()} reference", banned not in src)
-    main_src = (HERE.parent / "acp" / "__main__.py").read_text(encoding="utf-8")
+    main_src = (HERE.parent / "acp" / "acp" / "__main__.py").read_text(encoding="utf-8")
     check("__main__ wires BoomCLI seam",
           "BoomCLI" in main_src and "loop.step" in main_src and "load_session" in main_src)
 

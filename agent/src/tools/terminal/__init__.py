@@ -3,7 +3,7 @@
 Re-exported from .shell (run/bg/status/kill) and .process (ledger list/kill).
 """
 
-from agent.src.tools.terminal.process import (
+from .process import (
     ProcessManager,
     configure,
     get_manager,
@@ -12,7 +12,7 @@ from agent.src.tools.terminal.process import (
     poll_process,
     start_process,
 )
-from agent.src.tools.terminal.shell import (
+from .shell import (
     DEFAULT_TIMEOUT,
     RunOptions,
     bg,

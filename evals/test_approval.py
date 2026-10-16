@@ -8,18 +8,21 @@ Stdlib only. Test timeout dùng timeout_minutes rất nhỏ + sleep thật.
 import os
 import re
 import sys
+from pathlib import Path
 import time
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from approval import ApprovalFlow, APPROVE_PREFIX, DENY_PREFIX
+from business.approval import ApprovalFlow, APPROVE_PREFIX, DENY_PREFIX
 
 # Thử nạp module approval_telegram của repo để kiểm tra tương thích
 # callback_data thật (không bắt buộc: skip nếu không có).
 _TG = None
 try:
-    sys.path.insert(0, "/tmp/boom_git/gateway")
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "gateway"))
     import approval_telegram as _TG
 except Exception:  # noqa: BLE001
     _TG = None
@@ -284,7 +287,7 @@ class TestTelegram(unittest.TestCase):
         btn_ok, btn_no = kb[0]
         self.assertEqual(btn_ok["callback_data"], f"{APPROVE_PREFIX}{rid}")
         self.assertEqual(btn_no["callback_data"], f"{DENY_PREFIX}{rid}")
-        self.assertIn("Đồng ý", btn_ok["text"])
+        self.assertIn("Approve", btn_ok["text"])
         # Chấp nhận cả record dict thay vì request_id.
         msg2 = flow.format_telegram_message(flow.get_status(rid))
         self.assertEqual(msg2["reply_markup"], msg["reply_markup"])

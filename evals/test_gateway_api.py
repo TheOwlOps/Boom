@@ -137,7 +137,10 @@ def test_health():
     check("health/ct", headers.get("Content-Type") == "application/json",
           str(headers.get("Content-Type")))
     check("health/shape",
-          d == {"status": "ok", "version": "0.1.0", "model": "fake-model"}, str(d))
+          d["status"] == "ok" and d["version"] == "0.1.0" and d["model"] == "fake-model"
+          and isinstance(d.get("uptime_sec"), int) and d["uptime_sec"] >= 0
+          and isinstance(d.get("tools_count"), int)
+          and isinstance(d.get("skills_count"), int), str(d))
 
 
 def test_chat_json(brain, loop):

@@ -24,21 +24,21 @@ CORS allows `http://localhost:5173` (Vite) and `http://localhost:1420` (Tauri).
 **2. Frontend** — from `apps/web`:
 
 ```bash
-pnpm install
-pnpm dev        # http://localhost:5173
+npm install
+npm run dev     # http://localhost:5173
 ```
 
 The UI talks to the gateway at `VITE_API_BASE` (default
 `http://localhost:18080`):
 
 ```bash
-VITE_API_BASE=http://127.0.0.1:18080 pnpm dev
+VITE_API_BASE=http://127.0.0.1:18080 npm run dev
 ```
 
 Production build:
 
 ```bash
-pnpm build      # tsc --noEmit && vite build -> dist/
+npm run build   # tsc && vite build -> dist/
 ```
 
 ## Architecture

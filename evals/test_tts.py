@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
 from voice import tts
 
@@ -92,7 +94,7 @@ class TestSpeakNoBackend(unittest.TestCase):
             with self.assertRaises(NotImplementedError) as ctx:
                 tts.speak("xin chào")
             msg = str(ctx.exception)
-            self.assertIn("Không có backend", msg)
+            self.assertIn("No Text-to-Speech backend available", msg)
             self.assertIn("edge-tts", msg)
 
     def test_empty_text_raises_value_error(self):
@@ -102,7 +104,7 @@ class TestSpeakNoBackend(unittest.TestCase):
     def test_unknown_backend_raises_value_error(self):
         with self.assertRaises(ValueError) as ctx:
             tts.speak("hi", backend="khong-ton-tai")
-        self.assertIn("không hỗ trợ", str(ctx.exception))
+        self.assertIn("Unsupported TTS backend", str(ctx.exception))
 
 
 class TestSpeakEdgeTTS(unittest.TestCase):

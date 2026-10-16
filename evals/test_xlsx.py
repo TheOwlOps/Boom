@@ -6,7 +6,11 @@ from unittest import mock
 
 import pytest
 
-import xlsx as xlsx_mod
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "agent" / "src"))
+from documents import xlsx as xlsx_mod
+_sys.modules.setdefault("xlsx", xlsx_mod)
 from xlsx import XlsxBuilder
 
 

@@ -11,10 +11,13 @@ Moi role trong ROLE_DEFS chi duoc dung tool nam trong list nay.
 import os
 import re
 import sys
+from pathlib import Path
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from roles import ROLE_DEFS, get_role, list_roles  # noqa: E402
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from orchestration.roles import ROLE_DEFS, get_role, list_roles  # noqa: E402
 
 # Danh sach 131 tools that tu AgentEnvironment.get_tools() (verify 2026-10-16).
 REAL_TOOLS = {

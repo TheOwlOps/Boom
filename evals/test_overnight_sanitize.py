@@ -237,7 +237,7 @@ class TestCheckToolArgs(unittest.TestCase):
         r = check_tool_args("note", {"text": "x" * 50}, max_str_len=20)
         self.assertTrue(r["ok"])
         self.assertTrue(r["sanitized_args"]["text"].endswith("[cắt bớt]"))
-        self.assertTrue(any("cat do dai" in w for w in r["warnings"]))
+        self.assertTrue(any("truncated for length" in w for w in r["warnings"]))
 
     def test_control_chars_bi_strip(self):
         r = check_tool_args("echo", {"msg": "a\x07b"})

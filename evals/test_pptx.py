@@ -17,7 +17,8 @@ HERE = Path(__file__).parent
 
 def load_builder(mod_name="pptx_builder_mod"):
     """Load pptx.py theo đường dẫn file, tránh đụng tên package 'pptx'."""
-    spec = importlib.util.spec_from_file_location(mod_name, HERE / "pptx.py")
+    spec = importlib.util.spec_from_file_location(
+        mod_name, HERE.parent / "agent" / "src" / "documents" / "pptx.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = mod
     spec.loader.exec_module(mod)

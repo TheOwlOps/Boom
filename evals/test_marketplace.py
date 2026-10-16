@@ -195,13 +195,13 @@ def main() -> None:
             mp.install_from_registry("ghost-plugin", "9.9.9", registry, plugins_dir)
             check(False, "install plugin không tồn tại phải ném lỗi")
         except ValueError as e:
-            check("không tìm thấy" in str(e),
+            check("not found in the registry" in str(e),
                   f"install plugin lạ ném ValueError: {e}")
         try:
             mp.install_from_registry("weather-vn", "9.9.9", registry, plugins_dir)
             check(False, "install version không tồn tại phải ném lỗi")
         except ValueError as e:
-            check("không tìm thấy" in str(e),
+            check("not found in the registry" in str(e),
                   f"install version lạ ném ValueError: {e}")
         # min_boom_version không thỏa
         make_plugin(src, name="future-plugin", version="1.0.0")
@@ -216,7 +216,7 @@ def main() -> None:
                                      registry, plugins_dir, boom_version="0.1.0")
             check(False, "min_boom_version không thỏa phải ném lỗi")
         except ValueError as e:
-            check("tối thiểu" in str(e),
+            check("minimum" in str(e),
                   f"min_boom_version không thỏa ném ValueError: {e}")
 
     print(f"\nTẤT CẢ {PASS} ASSERTIONS PASS ✔")

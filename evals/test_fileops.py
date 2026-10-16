@@ -5,8 +5,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fileops import edit_file, append_file, file_info
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from tools.fileops import edit_file, append_file, file_info
 
 PASS = 0
 FAIL = 0

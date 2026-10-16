@@ -4,15 +4,28 @@ Run:  python3 test_web.py   (or: python3 -m unittest test_web -v)
 """
 
 import sys
+from pathlib import Path
 import os
 import unittest
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
 import httpx  # noqa: E402
 
-import web  # noqa: E402
+# The test targets the tools/web.py MODULE (web_search/web_fetch/web_extract
+# with the _BREAKER circuit breaker). Note agent/src/tools/ also contains a
+# newer tools/web/ *package* which shadows the module on a plain
+# `from tools import web`, so load the module by file path and register it
+# as "web" (the mock.patch("web.httpx.Client") targets below need that name).
+import importlib.util as _ilu
+_web_spec = _ilu.spec_from_file_location(
+    "web", Path(__file__).resolve().parent.parent / "agent" / "src" / "tools" / "web.py")
+web = _ilu.module_from_spec(_web_spec)
+sys.modules["web"] = web
+_web_spec.loader.exec_module(web)
 
 # ---------------------------------------------------------------------------
 # Fake httpx plumbing

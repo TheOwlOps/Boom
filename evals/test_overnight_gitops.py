@@ -76,7 +76,7 @@ def main():
     check(st[0]["staged"] is True and st[0]["kind"] == "added",
           "sau git add: staged=True, kind=added")
     r = safe_commit(repo, "  ")  # message rỗng
-    check(r["ok"] is False and "rỗng" in r["error"],
+    check(r["ok"] is False and "empty commit message" in r["error"],
           "message rỗng -> từ chối commit")
     r = safe_commit(repo, "commit đầu tiên")
     check(r["ok"] is True, "safe_commit thành công")
@@ -143,7 +143,7 @@ def main():
     check(branch_guard(repo) is False,
           "sang branch feature -> branch_guard False")
     r = create_branch(repo, "Bad Name!")
-    check(r["ok"] is False and "không hợp lệ" in r["error"],
+    check(r["ok"] is False and "invalid branch name" in r["error"],
           "tên branch có ký tự lạ -> từ chối")
     r = create_branch(repo, "")
     check(r["ok"] is False, "tên branch rỗng -> từ chối")
@@ -186,8 +186,8 @@ def main():
         last_commit_info(empty)
         raise AssertionError("FAIL: không raise trên repo chưa có commit")
     except GitOpsError as exc:
-        check("chưa có commit" in str(exc),
-              "repo chưa có commit -> GitOpsError tiếng Việt")
+        check("no commits yet" in str(exc),
+              "repo chưa có commit -> GitOpsError")
 
     print("\nTỔNG: %d assertions PASS" % PASSED[0])
 

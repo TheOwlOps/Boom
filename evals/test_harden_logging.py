@@ -9,13 +9,16 @@ import io
 import json
 import logging
 import sys
+from pathlib import Path
 import traceback
 
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from log import (  # noqa: E402
+from lifecycle.log import (  # noqa: E402
     bind,
     get_logger,
     reset_bind,
@@ -38,7 +41,7 @@ def check(name, cond, detail=""):
 
 def fresh_setup(json_output=True):
     """Reset root logger + setup lại để mỗi test bắt đầu sạch."""
-    import log as logmod
+    from lifecycle import log as logmod
 
     logmod._configured = False
     root = logging.getLogger()
@@ -206,7 +209,7 @@ def test_text_mode():
 
 # --- Test 6: setup_logging gọi 2 lần không nhân đôi handler ---
 def test_idempotent_setup():
-    import log as logmod
+    from lifecycle import log as logmod
 
     logmod._configured = False
     root = logging.getLogger()

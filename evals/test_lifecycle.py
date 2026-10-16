@@ -5,8 +5,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lifecycle import PluginManager, topo_sort, validate_manifest  # noqa: E402
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from extensibility.lifecycle import PluginManager, topo_sort, validate_manifest  # noqa: E402
 
 passed = 0
 failed = 0
@@ -65,7 +67,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # --- install trùng tên ---
     r = mgr.install(a)
-    check(r["installed"] is False and "đã được cài đặt" in r["error"], "install trùng tên bị từ chối")
+    check(r["installed"] is False and "already installed" in r["error"], "install trùng tên bị từ chối")
 
     # --- install thiếu dependency ---
     d_src = make_plugin(src, "D", deps=["Z-missing"])
@@ -123,7 +125,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(not (plugins_dir / "A").exists(), "thư mục A biến mất")
     check("A" not in {p["name"] for p in mgr.list()}, "list() không còn A")
     r = mgr.uninstall("A")
-    check(r["uninstalled"] is False and "chưa được cài đặt" in r["error"],
+    check(r["uninstalled"] is False and "not installed" in r["error"],
           "uninstall plugin không tồn tại báo lỗi")
 
     # --- circular dependency: X dep Y, Y dep X ---
@@ -137,8 +139,8 @@ with tempfile.TemporaryDirectory() as tmp:
     y2_manifest.write_text(json.dumps(m), encoding="utf-8")
     mgr.refresh()
     r = mgr.enable("X")
-    check(r["enabled"] is False and "vòng tròn" in r["error"],
-          "circular dependency X<->Y2 báo lỗi tiếng Việt")
+    check(r["enabled"] is False and "circular dependency" in r["error"],
+          "circular dependency X<->Y2 báo lỗi")
 
     # --- topo_sort đơn vị ---
     check(topo_sort({"a": [], "b": ["a"], "c": ["b"]}) == ["a", "b", "c"],
@@ -147,7 +149,7 @@ with tempfile.TemporaryDirectory() as tmp:
         topo_sort({"x": ["y"], "y": ["x"]})
         check(False, "topo_sort phát hiện cycle")
     except ValueError as e:
-        check("vòng tròn" in str(e), "topo_sort raise lỗi vòng tròn tiếng Việt")
+        check("circular dependency" in str(e), "topo_sort raise lỗi vòng tròn")
 
     # --- validate_manifest đơn vị ---
     try:

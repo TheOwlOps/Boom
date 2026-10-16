@@ -5,12 +5,15 @@ Chạy:  python3 test_harden_ratelimit.py
 
 import os
 import sys
+from pathlib import Path
 import threading
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from ratelimit import RateLimiter, rate_limit_middleware, RateLimitMixin
+from lifecycle.ratelimit import RateLimiter, rate_limit_middleware, RateLimitMixin
 
 
 def check(name, cond):

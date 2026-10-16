@@ -1,6 +1,11 @@
+import sys
+from pathlib import Path
 """Test cho TemporalReasoner (dữ liệu giả, stdlib only)."""
 
-from temporal import TemporalReasoner
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from vision.temporal import TemporalReasoner
 
 
 def _mk(idx, ts, text):

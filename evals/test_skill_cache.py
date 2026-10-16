@@ -9,8 +9,10 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from skill_loader import SkillLoader
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from extensibility.skill_loader import SkillLoader
 
 
 def make_skill(base: Path, name: str, description: str) -> Path:
@@ -150,7 +152,7 @@ def test6_api_compatibility():
         assert loader.cache_ttl == 60.0
         skills = loader.list_skills()
         assert isinstance(skills, list) and all(
-            set(s.keys()) == {"name", "description"} for s in skills
+            set(s.keys()) == {"name", "description", "version"} for s in skills
         )
         v = loader.view_skill("gamma")
         assert v["name"] == "gamma" and "Body v1" in v["content"]

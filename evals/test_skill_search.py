@@ -1,3 +1,4 @@
+import sys
 """Tests for the upgraded SkillsHub.search_catalog() scoring search.
 
 Builds a temporary 5-skill catalog:
@@ -14,7 +15,10 @@ Run:  python3 test_skill_search.py
 import tempfile
 from pathlib import Path
 
-from skills_hub import SkillsHub
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from extensibility.skills_hub import SkillsHub
 
 
 def make_catalog(base: Path) -> Path:

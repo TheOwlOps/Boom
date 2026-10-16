@@ -15,12 +15,10 @@ from pathlib import Path
 
 import pytest
 
-# Cho phép import video.py trực tiếp từ thư mục chứa nó.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-# Cho phép "tools.ocr_tool" của Boom resolve trong test OCR thật.
-sys.path.insert(0, "/tmp/boom_git/agent/src")
+# VideoProcessor lives at agent/src/vision/video.py (import root is agent/src).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from video import ERR_NO_BACKEND, VideoProcessor  # noqa: E402
+from vision.video import ERR_NO_BACKEND, VideoProcessor  # noqa: E402
 
 FFMPEG = shutil.which("ffmpeg")
 TESSERACT = shutil.which("tesseract")

@@ -13,8 +13,12 @@ def test_skills_loader():
     loader = SkillLoader(skills_dir)
     skills = loader.list_skills()
     assert len(skills) >= 1, "Should discover at least 1 skill"
-    assert skills[0]["name"] == "ast-refactor"
-    assert "AST-based" in skills[0]["description"]
+    # find ast-refactor by name: list order follows the filesystem and is not
+    # a contract (previously this asserted skills[0], which broke as soon as
+    # another skill sorted earlier).
+    by_name = {s["name"]: s for s in skills}
+    assert "ast-refactor" in by_name, f"ast-refactor not discovered: {sorted(by_name)}"
+    assert "AST-based" in by_name["ast-refactor"]["description"]
     
     res = loader.view_skill("ast-refactor")
     assert res is not None

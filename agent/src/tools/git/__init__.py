@@ -1,6 +1,6 @@
 """tools.git — safe git tools for Boom (wraps autonomous/gitops.py)."""
 
-from agent.src.tools.git.gitops import (
+from .gitops import (
     git_branch_guard,
     git_diff,
     git_log,

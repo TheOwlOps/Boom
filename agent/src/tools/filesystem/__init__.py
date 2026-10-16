@@ -1,10 +1,10 @@
 """tools.filesystem — safe file/dir operations for Boom.
 
 Re-exported from .ops for backward-compat: tools use
-`from agent.src.tools.filesystem import read, write, ...`
+`from tools.filesystem import read, write, ...`
 """
 
-from agent.src.tools.filesystem.ops import (
+from .ops import (
     append,
     delete,
     edit,

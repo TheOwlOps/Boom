@@ -5,13 +5,16 @@ Chạy:  python3 test_reasoning.py
 
 import os
 import sys
+from pathlib import Path
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from cot import ChainOfThought
-from self_consistency import vote, extract_answer
-from verify import verify_answer
+from reasoning.cot import ChainOfThought
+from reasoning.self_consistency import vote, extract_answer
+from reasoning.verify import verify_answer
 
 PROBLEM = "Nếu A>B và B>C thì A so với C như thế nào?"
 

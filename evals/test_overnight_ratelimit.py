@@ -5,7 +5,6 @@ import threading
 import time
 from unittest import mock
 
-sys.path.insert(0, "agent/src/security")
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _sys_src = os.path.join(_REPO, "agent", "src")
 if _sys_src not in sys.path:
@@ -76,7 +75,7 @@ try:
     check(False, "allow_or_raise phải ném RateLimitError")
 except RateLimitError as e:
     check(True, "allow_or_raise ném RateLimitError")
-    check("thử lại sau" in str(e), "message tiếng Việt")
+    check("try again in" in str(e), "message is English")
     check(e.retry_after > 0, "retry_after > 0 trong exception")
     check(e.key == "u3", "exception giữ key")
 # allow_or_raise khi còn token thì không ném

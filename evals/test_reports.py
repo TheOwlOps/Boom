@@ -8,13 +8,16 @@ rồi verify summary đúng số liệu.
 import csv
 import os
 import sys
+from pathlib import Path
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from reports import (
+from business.reports import (
     ReportGenerator,
     cron_daily_job,
     cron_weekly_job,

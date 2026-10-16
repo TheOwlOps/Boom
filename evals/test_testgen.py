@@ -5,9 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from testgen import TestGenerator, run_generated_tests
+from autonomous.testgen import TestGenerator, run_generated_tests
 
 SAMPLE = Path(__file__).parent / "sample_module.py"
 

@@ -23,7 +23,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PLUGIN_SRC = HERE / "examples" / "hello-plugin"
-INIT_SRC = HERE / "__init__.py"
+# The unified plugin package under test is agent/src/extensibility: its
+# __init__ re-exports PluginManager/PluginManifest/PluginSandbox with
+# try/except imports so the package stays importable while components
+# are still being written.
+INIT_SRC = HERE.parent / "agent" / "src" / "extensibility" / "__init__.py"
 
 passed = 0
 failed = 0

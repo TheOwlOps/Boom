@@ -66,7 +66,7 @@ def test_hermes_parity_components():
         proc_json.unlink()
 
     pm = ProcessManager(proc_json)
-    spawn = pm.start_process("sleep-test", ["python", "-c", "import time; time.sleep(1)"])
+    spawn = pm.start_process("sleep-test", [sys.executable, "-c", "import time; time.sleep(1)"])
     assert spawn["status"] == "running"
     
     status = pm.poll_process("sleep-test")

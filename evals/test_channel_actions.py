@@ -141,6 +141,11 @@ _stub("agent")
 _stub("agent.src")
 _stub("agent.src.security")
 _stub("agent.src.security.system_one_gate", SystemOneGate=object)
+# gateway/discord.py does `from agent.src.tools.ws_client import WebSocket`
+# (repo-root import style, like daemon.py); stub it too, otherwise the
+# stubbed non-package `agent.src` module breaks that import.
+_stub("agent.src.tools")
+_stub("agent.src.tools.ws_client", WebSocket=object)
 _stub("gateway.delivery_ledger", DeliveryLedger=object)
 _stub("gateway.dispatcher", TurnDispatcher=object, new_job=lambda *a, **k: None)
 
@@ -284,6 +289,10 @@ def test_actions():
         check("slack delete endpoint", REQUESTS[-1]["url"].endswith("/chat.delete"))
         # refused call -> honest error (Slack answers 200 {"ok": false})
         with patch("httpx.AsyncClient", _RefusingClient):
+            # adapters cache their shared httpx client (_http() is lazy-once):
+            # drop the caches so the patched refusing client is actually used.
+            for _a in reg._adapters.values():
+                _a.__dict__.pop("_client", None)
             r = run(reg.react("slack", "C1", "1", "heart"))
             check("slack refused -> error", r["error"].startswith("slack reactions.add refused"), r)
 

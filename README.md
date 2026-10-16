@@ -40,12 +40,15 @@
 
 ## 🚀 Quick Start
 
+Prerequisites: **Python >= 3.11** and (for the web UI) **Node.js >= 20 + npm**.
+The easiest path is Devbox, which provides both reproducibly.
+
 ### Devbox (recommended)
 
 ```bash
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-devbox shell    # reproducible environment (Nix-powered)
+devbox shell    # reproducible environment (Nix-powered): Python 3.12, Node 22
 ./start.sh all
 ```
 
@@ -54,8 +57,16 @@ devbox shell    # reproducible environment (Nix-powered)
 ```bash
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-pip install httpx pydantic
+pip install httpx "pydantic>=2" pyyaml   # must match pyproject.toml dependencies
 ./start.sh all
+```
+
+`start.sh` checks for Python/Node and installs missing Python packages
+automatically. To talk to a real LLM and enable channels, run the setup
+wizard once — it stores config in `~/.boom/` (override with `BOOM_HOME`):
+
+```bash
+python3 boom.py setup
 ```
 
 ### Docker
@@ -65,6 +76,19 @@ docker compose up --build
 ```
 
 Open **http://127.0.0.1:5173** for the web dashboard.
+
+### Services
+
+`./start.sh [api|web|gateway|all|status]` — `all` (the default) starts
+everything; `./stop.sh` stops it. Ports can be overridden with
+`BOOM_API_PORT` (default 18080), `BOOM_WEB_PORT` (default 5173) and
+`BOOM_INGRESS_PORT` (default 8788):
+
+| Service | What | Default port |
+|---------|------|--------------|
+| API | Python HTTP API for the web UI | 18080 |
+| Web UI | Dashboard, served by `vite preview` | 5173 |
+| Gateway | Multi-channel daemon (Telegram, Discord, …) | 8788 (ingress) |
 
 ## 📖 Documentation
 

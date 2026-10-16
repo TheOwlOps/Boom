@@ -568,13 +568,20 @@ def part_c():
     print("\n=== Part C: environment §5e wire resilience "
           "(replicated pattern, real environment NOT imported) ===")
 
-    # C0: confirm the replicated pattern matches the real §5e source.
-    env_path = INTEGRATION_DIR / "environment.py"
+    # C0: confirm the replicated pattern matches the real source. NOTE
+    # (2026-10-16): environment.py was refactored — the old §5e lazy
+    # getattr(import_module(...), "build_tools", None) pattern no longer
+    # exists. Tools are now wired eagerly: AgentEnvironment._init_tools()
+    # merges the 7 tool-group initializers from agent/src/tool_groups.py.
+    # This check pins the CURRENT wiring contract instead of the removed one.
+    env_path = HERE.parent / "agent" / "src" / "environment.py"
     src = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    check("C: real §5e pattern present in environment.py "
-          "(getattr/import_module/build_tools + 'unavailable')",
-          'getattr(import_module(module_name), "build_tools", None)' in src
-          and "unavailable" in src)
+    check("C: real tool-wiring pattern present in agent/src/environment.py "
+          "(_init_tools merging the tool_groups initializers)",
+          "_init_tools" in src
+          and "tool_groups" in src
+          and "_init_filesystem_tools" in src
+          and "_init_security_tools" in src)
 
     # --- exact replication of the §5e loop (copied logic) ---
     ROOT = object()  # sentinel for root_dir

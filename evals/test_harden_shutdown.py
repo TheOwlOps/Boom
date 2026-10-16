@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from pathlib import Path
 import time
 
 MODDIR = os.path.dirname(os.path.abspath(__file__))
@@ -64,8 +65,9 @@ def test_sigterm_cleanup_runs_and_exit_0():
         "t1",
         f"""
         import sys
-        sys.path.insert(0, {MODDIR!r})
-        from shutdown import install_shutdown_handlers, register_cleanup
+        from pathlib import Path
+        sys.path.insert(0, str(Path({MODDIR!r}).resolve().parent / "agent" / "src"))
+        from lifecycle.shutdown import install_shutdown_handlers, register_cleanup
         import threading
 
         def close_db():
@@ -121,8 +123,9 @@ def test_sigterm_timeout_cuts_slow_cleanup():
         "t2",
         f"""
         import sys, time
-        sys.path.insert(0, {MODDIR!r})
-        from shutdown import install_shutdown_handlers, register_cleanup
+        from pathlib import Path
+        sys.path.insert(0, str(Path({MODDIR!r}).resolve().parent / "agent" / "src"))
+        from lifecycle.shutdown import install_shutdown_handlers, register_cleanup
         import threading
 
         def slow_cleanup():
@@ -182,8 +185,9 @@ def test_sigint_cleanup_runs_and_exit_0():
         "t3",
         f"""
         import sys
-        sys.path.insert(0, {MODDIR!r})
-        from shutdown import install_shutdown_handlers, register_cleanup
+        from pathlib import Path
+        sys.path.insert(0, str(Path({MODDIR!r}).resolve().parent / "agent" / "src"))
+        from lifecycle.shutdown import install_shutdown_handlers, register_cleanup
         import threading
 
         def flush_cache():
@@ -235,8 +239,9 @@ def test_asyncio_loop_sigterm():
         "t4",
         f"""
         import sys, asyncio
-        sys.path.insert(0, {MODDIR!r})
-        from shutdown import install_shutdown_handlers, register_cleanup, is_shutting_down
+        from pathlib import Path
+        sys.path.insert(0, str(Path({MODDIR!r}).resolve().parent / "agent" / "src"))
+        from lifecycle.shutdown import install_shutdown_handlers, register_cleanup, is_shutting_down
 
         async def close_pool():
             await asyncio.sleep(0.1)  # giả lập đóng pool bất đồng bộ

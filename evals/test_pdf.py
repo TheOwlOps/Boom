@@ -14,7 +14,8 @@ HERE = Path(__file__).parent
 
 
 def load_builder(mod_name="pdf_builder_mod"):
-    spec = importlib.util.spec_from_file_location(mod_name, HERE / "pdf.py")
+    spec = importlib.util.spec_from_file_location(
+        mod_name, HERE.parent / "agent" / "src" / "documents" / "pdf.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = mod
     spec.loader.exec_module(mod)

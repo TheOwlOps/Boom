@@ -20,6 +20,44 @@ SCORE_CONTENT_MATCH = 1
 PREVIEW_LENGTH = 120
 
 
+def _parse_version(v) -> Tuple[int, ...]:
+    """Parse a version string into a comparable tuple of ints.
+
+    Tolerates a leading "v" and trailing pre-release suffixes
+    (``_parse_version("v1.2-beta") == (1, 2)``); empty/None -> ``(0,)``.
+    """
+    if not v:
+        return (0,)
+    s = str(v).strip()
+    if s[:1].lower() == "v":
+        s = s[1:]
+    parts = []
+    for piece in s.split("."):
+        num = ""
+        for ch in piece:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        if num:
+            parts.append(int(num))
+        else:
+            break
+    return tuple(parts) or (0,)
+
+
+def _compare_versions(a, b) -> int:
+    """Compare two version strings: -1 if a < b, 0 if equal, 1 if a > b.
+
+    Tuples are zero-padded to equal length, so "1.2" == "1.2.0".
+    """
+    pa, pb = _parse_version(a), _parse_version(b)
+    n = max(len(pa), len(pb))
+    pa = pa + (0,) * (n - len(pa))
+    pb = pb + (0,) * (n - len(pb))
+    return (pa > pb) - (pa < pb)
+
+
 class SkillsHub:
     """Manages skill discovery, local catalog synchronization, and installation."""
 
@@ -128,12 +166,60 @@ class SkillsHub:
     # ------------------------------------------------------------------
     # Install
     # ------------------------------------------------------------------
-    def install_skill(self, skill_name: str, source_dir: Optional[Path] = None) -> Dict[str, Any]:
-        target = self.skills_dir / skill_name
-        if target.exists():
-            return {"installed": False, "error": f"Skill '{skill_name}' already exists"}
+    @staticmethod
+    def _skill_version_of(skill_dir: Path) -> str:
+        """Version declared by a skill directory's SKILL.md ("1.0.0" default)."""
+        try:
+            text = (Path(skill_dir) / "SKILL.md").read_text(encoding="utf-8")
+        except OSError:
+            return "1.0.0"
+        frontmatter, _ = SkillsHub._split_frontmatter(text)
+        return SkillsHub._frontmatter_field(frontmatter, "version") or "1.0.0"
 
-        src = source_dir or (self.hub_catalog_dir / skill_name if self.hub_catalog_dir else None)
+    @staticmethod
+    def _set_installed_name(skill_dir: Path, name: str) -> None:
+        """Point the installed copy's frontmatter ``name:`` at the install name.
+
+        A source directory may declare a different name (e.g. a "skill-a-v2"
+        staging dir installed as "skill-a"); the installed skill is
+        identified by the name it was installed under.
+        """
+        md_path = Path(skill_dir) / "SKILL.md"
+        try:
+            text = md_path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        frontmatter, body = SkillsHub._split_frontmatter(text)
+        if not frontmatter:
+            return
+        lines = []
+        replaced = False
+        for line in frontmatter.splitlines():
+            if ":" in line and line.partition(":")[0].strip().lower() == "name":
+                lines.append(f'name: "{name}"')
+                replaced = True
+            else:
+                lines.append(line)
+        if not replaced:
+            lines.insert(0, f'name: "{name}"')
+        md_path.write_text("---\n" + "\n".join(lines) + "\n---\n" + body,
+                           encoding="utf-8")
+
+    def install_skill(self, skill_name: str, source_dir: Optional[Path] = None,
+                      force: bool = False) -> Dict[str, Any]:
+        """Install a skill, comparing versions on reinstall.
+
+        Fresh install -> ``{"installed": True, "version": ..., "mode": "copied"}``.
+        Reinstall with a source version older than (or equal to) the installed
+        one -> refused with ``{"installed": False, "reason": "already_newer",
+        "current_version": ..., "source_version": ...}`` unless ``force=True``.
+        A newer source version upgrades the installed copy
+        (``upgraded: True``); ``force=True`` also permits downgrades
+        (``forced: True``). With no source available the call reports
+        ``installed: False`` instead of scaffolding a placeholder skill.
+        """
+        src = Path(source_dir) if source_dir else (
+            self.hub_catalog_dir / skill_name if self.hub_catalog_dir else None)
         if not src or not src.exists():
             # No source to copy from. Report that instead of scaffolding a placeholder
             # skill, which would make list_skills advertise instructions nobody wrote.
@@ -145,5 +231,35 @@ class SkillsHub:
                 ),
             }
 
+        source_version = self._skill_version_of(src)
+        target = self.skills_dir / skill_name
+        if target.exists():
+            current_version = self._skill_version_of(target)
+            cmp = _compare_versions(source_version, current_version)
+            if cmp <= 0 and not force:
+                return {
+                    "installed": False,
+                    "reason": "already_newer",
+                    "current_version": current_version,
+                    "source_version": source_version,
+                }
+            shutil.rmtree(target)
+            shutil.copytree(src, target)
+            self._set_installed_name(target, skill_name)
+            result = {
+                "installed": True,
+                "name": skill_name,
+                "version": source_version,
+                "from_version": current_version,
+                "to_version": source_version,
+            }
+            if cmp > 0:
+                result["upgraded"] = True
+            if force:
+                result["forced"] = True
+            return result
+
         shutil.copytree(src, target)
-        return {"installed": True, "name": skill_name, "mode": "copied"}
+        self._set_installed_name(target, skill_name)
+        return {"installed": True, "name": skill_name,
+                "version": source_version, "mode": "copied"}

@@ -56,14 +56,14 @@ async def run_ipc_test():
         print("[PASS] IPC Ping -> Pong verified.")
 
         # 2. Test core.execute via Rust Sandbox
-        res = await client.execute("python", ["-c", "print('hello from rust sandbox')"])
+        res = await client.execute(sys.executable, ["-c", "print('hello from rust sandbox')"])
         assert res["exit_code"] == 0, f"Expected 0, got {res['exit_code']}"
         assert "hello from rust sandbox" in res["stdout"]
         print("[PASS] IPC Sandbox Execution verified:", res["stdout"].strip())
 
         # 3. A failing command must not be reported as success.
         bad = await client.execute(
-            "python", ["-c", "import sys; sys.stderr.write('boom'); sys.exit(3)"]
+            sys.executable, ["-c", "import sys; sys.stderr.write('boom'); sys.exit(3)"]
         )
         assert bad["exit_code"] == 3, f"Expected exit code 3, got {bad}"
         assert bad["success"] is False, bad

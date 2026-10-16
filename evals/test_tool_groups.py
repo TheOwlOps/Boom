@@ -146,8 +146,10 @@ class TestToolGroups(unittest.TestCase):
         assert "DuckDuckGo" in self.groups["_init_web_tools"]["web_search"]["description"]
         # secret_scan legacy (Previews are masked) thắng factory tools.security
         assert "masked" in self.groups["_init_security_tools"]["secret_scan"]["description"]
-        # code_review legacy (Vietnamese) thắng factory tools.code
-        assert "Vietnamese" in self.groups["_init_code_tools"]["code_review"]["description"]
+        # code_review legacy thắng factory tools.code: legacy description ends with
+        # "Returns a Markdown report." while the factory one says
+        # "Returns issues + severity summary."
+        assert "Markdown report" in self.groups["_init_code_tools"]["code_review"]["description"]
 
 
 if __name__ == "__main__":

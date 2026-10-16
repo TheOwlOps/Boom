@@ -15,7 +15,7 @@ from typing import Callable, Dict, List, Optional
 
 import httpx
 
-from websocket_feed import Feed, WebSocketFeed
+from .websocket_feed import Feed, WebSocketFeed  # relative: works however the package is imported
 
 
 # ---------------------------------------------------------------- Binance

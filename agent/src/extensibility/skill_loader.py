@@ -32,6 +32,31 @@ class SkillViewResult(dict):
         return self.get("content", "")
 
 
+def extract_skill_version(skill_md_text: str) -> Optional[str]:
+    """Extract the ``version:`` field from SKILL.md frontmatter.
+
+    Returns the version string (e.g. "2.1.0", "v1.2-beta"), or None when
+    the document has no frontmatter version field. Pure stdlib — does not
+    depend on yaml, so it also works when PyYAML is not installed.
+    """
+    if not skill_md_text:
+        return None
+    text = skill_md_text.strip()
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        if key.strip().lower() == "version":
+            v = value.strip().strip("\"'")
+            return v or None
+    return None
+
+
 class SkillLoader:
     def __init__(self, skills_dir: Path, cache_ttl: float = 60.0):
         self.skills_dir = Path(skills_dir)
@@ -80,12 +105,16 @@ class SkillLoader:
                 })
         return skills
 
-    def get_version(self, name: str) -> str:
-        """Get version of a skill by name."""
+    def get_version(self, name: str) -> Optional[str]:
+        """Get version of a skill by name.
+
+        Returns the skill's version ("1.0.0" when the skill exists but its
+        SKILL.md declares no version), or None when no such skill exists.
+        """
         for s in self.list_skills():
             if s["name"] == name:
                 return s.get("version", "1.0.0")
-        return "1.0.0"
+        return None
 
     def _dir_mtime_ns(self) -> int:
         """Fingerprint of skills_dir: max mtime of the dir and its direct subdirs."""

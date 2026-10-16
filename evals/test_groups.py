@@ -1,10 +1,15 @@
+import sys
+from pathlib import Path
 """Test cho GroupManager. Chạy: python3 test_groups.py"""
 import os
 import sqlite3
 import tempfile
 import threading
 
-from groups import GroupManager
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from business.groups import GroupManager
 
 
 def fresh():

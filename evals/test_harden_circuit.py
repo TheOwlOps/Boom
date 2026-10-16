@@ -5,13 +5,16 @@ Chạy: python3 test_harden_circuit.py
 
 import asyncio
 import sys
+from pathlib import Path
 import threading
 import time
 import traceback
 
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from circuit import CircuitBreaker, CircuitOpenError, CircuitState
+from lifecycle.circuit import CircuitBreaker, CircuitOpenError, CircuitState
 
 
 class FakeClock:

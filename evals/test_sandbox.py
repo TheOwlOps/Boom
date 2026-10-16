@@ -10,9 +10,11 @@ import tempfile
 import traceback
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from sandbox import PluginSandbox  # noqa: E402
+from extensibility.sandbox import PluginSandbox  # noqa: E402
 
 PASSED = 0
 FAILED = 0

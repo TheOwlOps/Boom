@@ -8,9 +8,11 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from dynamic import DynamicOrchestrator, SubAgent, ROLES
+from orchestration.dynamic import DynamicOrchestrator, SubAgent, ROLES
 
 
 class FakeDelegationManager:

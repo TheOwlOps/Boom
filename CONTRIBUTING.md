@@ -18,7 +18,7 @@ devbox shell        # Nix-powered: Python 3.12, Node 22, tesseract
 ```bash
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-pip install httpx pydantic
+pip install httpx "pydantic>=2" pyyaml   # must match pyproject.toml dependencies
 ./start.sh all
 ```
 

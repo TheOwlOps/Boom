@@ -26,9 +26,9 @@ DEFAULT_TTL_SEC = 600  # 10 phut
 def build_keyboard(request_id: str) -> Dict[str, Any]:
     """Inline keyboard 2 nut duyet/tu choi."""
     return {"inline_keyboard": [[
-        {"text": "\u2705 \u0110\u1ed3ng \u00fd",
+        {"text": "\u2705 Approve",
          "callback_data": f"{APPROVE_PREFIX}{request_id}"},
-        {"text": "\u274c T\u1eeb ch\u1ed1i",
+        {"text": "\u274c Reject",
          "callback_data": f"{DENY_PREFIX}{request_id}"},
     ]]}
 

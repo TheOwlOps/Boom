@@ -1,11 +1,14 @@
 """Test cho autonomous/planner.py — chay bang: python3 test_planner.py (stdlib only)."""
 
 import sys
+from pathlib import Path
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from planner import (
+from autonomous.planner import (
     TaskPlanner,
     detect_task_type,
     estimate_complexity,

@@ -10,23 +10,25 @@ import sys
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 # Module test nằm cùng thư mục với 3 module feed.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # tools/ws_client.py của repo Boom (read-only) để test backend thật.
-sys.path.insert(0, "/tmp/boom_git/agent/src")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                        / "agent" / "src"))
 
 from tools.ws_client import (  # noqa: E402
     OP_CLOSE, OP_TEXT, WebSocket, WSError, decode_frame, encode_frame, FrameReader,
 )
-from websocket_feed import (  # noqa: E402
+from feeds.websocket_feed import (  # noqa: E402
     Feed, WebSocketFeed, WebSocketFeedError, _require_backend,
 )
 from feeds import (  # noqa: E402
     BinancePriceFeed, RSSNewsFeed, fetch_rss, parse_rss,
 )
-from feed_manager import FeedManager  # noqa: E402
+from feeds.feed_manager import FeedManager  # noqa: E402
 
 
 def make_pair():
@@ -180,7 +182,7 @@ class WebSocketFeedTest(unittest.TestCase):
 
     def test_no_backend_raises_clear_error(self):
         """Không có backend WS nào -> lỗi rõ ràng, không traceback khó hiểu."""
-        import websocket_feed as wf
+        from feeds import websocket_feed as wf
         with mock.patch.object(wf, "_WS_BACKEND", None), \
              mock.patch.object(wf, "_WS_IMPORT_ERROR",
                                ImportError("No module named 'tools'")):
@@ -296,20 +298,20 @@ class RSSTest(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with mock.patch("feeds.httpx.get", return_value=FakeResp()) as m:
+        with mock.patch("feeds.feeds.httpx.get", return_value=FakeResp()) as m:
             items = fetch_rss("https://fake.example/rss")
         m.assert_called_once()
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0]["title"], "Tin nóng 1")
 
     def test_fetch_rss_network_error_returns_empty(self):
-        with mock.patch("feeds.httpx.get",
+        with mock.patch("feeds.feeds.httpx.get",
                         side_effect=Exception("mock network down")):
             self.assertEqual(fetch_rss("https://fake.example/rss"), [])
 
     def test_rss_feed_dedupe(self):
         """fetch_once lần 2 không trả lại item đã thấy."""
-        with mock.patch("feeds.fetch_rss",
+        with mock.patch("feeds.feeds.fetch_rss",
                         return_value=parse_rss(SAMPLE_RSS, source="u")):
             feed = RSSNewsFeed("https://fake.example/rss")
             first = feed.fetch_once()
@@ -321,7 +323,7 @@ class RSSTest(unittest.TestCase):
         """poll() chạy thread, emit item mới qua on_message."""
         got = threading.Event()
         received = []
-        with mock.patch("feeds.fetch_rss",
+        with mock.patch("feeds.feeds.fetch_rss",
                         return_value=parse_rss(SAMPLE_RSS, source="u")):
             feed = RSSNewsFeed("https://fake.example/rss",
                                on_message=lambda d: (received.append(d),

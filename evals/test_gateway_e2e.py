@@ -22,6 +22,35 @@ sys.path.insert(0, str(root_dir / "agent" / "src"))
 
 import httpx
 
+# Hermetic localhost tests: the code under test builds its own httpx clients
+# (gateway/channel.py, mcp/client.py), and a default httpx client reads the
+# ambient proxy env. This sandbox's no_proxy contains *bracketed* IPv6 entries
+# ([::1], [fd8b:...]); httpx turns those into mount keys like "all://*[::1]"
+# which fail URL parsing at Client construction
+# (httpx.InvalidURL: Invalid port: ':1]'). Unbracket valid IPv6 literals so
+# httpx parses them; the set of bypassed hosts is unchanged.
+def _sanitize_no_proxy():
+    import ipaddress as _ipaddress
+    import os as _os
+
+    def _norm(entry):
+        e = entry.strip()
+        if e.startswith("[") and e.endswith("]"):
+            try:
+                _ipaddress.ip_address(e[1:-1])
+                return e[1:-1]
+            except ValueError:
+                pass
+        return e
+
+    for _var in ("no_proxy", "NO_PROXY"):
+        _val = _os.environ.get(_var)
+        if _val:
+            _os.environ[_var] = ",".join(_norm(p) for p in _val.split(","))
+
+
+_sanitize_no_proxy()
+
 from environment import AgentEnvironment
 from gateway.daemon import GatewayDaemon
 from gateway.delivery_ledger import DeliveryLedger
@@ -111,7 +140,7 @@ async def main():
             payload.update(over)
             return payload
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             r = await client.get(f"{base}/health")
             assert r.status_code == 200 and r.json()["status"] == "ok", r.text
 

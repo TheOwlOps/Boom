@@ -1,7 +1,12 @@
+import sys
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """Test crossref.py — chạy: python3 test_crossref.py (KHÔNG cần internet)."""
 
-from crossref import (
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from research.crossref import (
     cross_reference, split_sentences, normalize_sentence,
     sentences_same_claim, OVERLAP_THRESHOLD,
 )

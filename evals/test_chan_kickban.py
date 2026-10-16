@@ -102,6 +102,9 @@ check("telegram kick: unbanChatMember second (rejoin allowed)",
 
 # ---------------------------------------------------------------- telegram ban
 FakeClient.instances.clear()
+# ChannelAdapter._http() caches the shared client on the adapter ("created
+# lazily on first use"): drop it so this section records on a fresh client.
+tg.__dict__.pop("_client", None)
 res = run(tg.ban_member("-100123", "999"))
 c = last_client()
 check("telegram ban ok", res == {"ok": True}, res)
@@ -140,6 +143,7 @@ check("discord kick: DELETE /guilds/{guild}/members/{user}",
 
 # ---------------------------------------------------------------- discord ban
 FakeClient.instances.clear()
+dc.__dict__.pop("_client", None)  # same shared-client caching as telegram
 res = run(dc.ban_member("111", "222"))
 c = last_client()
 check("discord ban ok", res == {"ok": True}, res)
@@ -150,6 +154,7 @@ check("discord ban: PUT /guilds/{guild}/bans/{user}",
 
 # -------------------------------------------------------- discord 403 -> permission
 FakeClient.instances.clear()
+dc.__dict__.pop("_client", None)  # fresh client so patched __init__ applies
 
 
 def patched_init_403(self, *a, **k):
@@ -159,6 +164,9 @@ def patched_init_403(self, *a, **k):
 
 FakeClient.__init__ = patched_init_403
 res = run(dc.kick_member("111", "222"))
+# kick and ban share the adapter's cached client: reset it so ban_member gets
+# a fresh scripted client too (the patched __init__ only applies to new ones).
+dc.__dict__.pop("_client", None)
 res2 = run(dc.ban_member("111", "222"))
 FakeClient.__init__ = orig_init
 check("discord kick 403 -> bot lacks admin permission",
@@ -178,6 +186,7 @@ check("slack kick: conversations.kick payload",
 
 # ---------------------------------------------------------- slack not_admin
 FakeClient.instances.clear()
+sl.__dict__.pop("_client", None)  # fresh client so patched __init__ applies
 
 
 def patched_init_slack(self, *a, **k):

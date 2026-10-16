@@ -26,6 +26,36 @@ sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "agent" / "src"))
 
 from cryptography import x509
+
+# Hermetic localhost tests: the code under test builds its own httpx clients
+# (gateway/channel.py, mcp/client.py), and a default httpx client reads the
+# ambient proxy env. This sandbox's no_proxy contains *bracketed* IPv6 entries
+# ([::1], [fd8b:...]); httpx turns those into mount keys like "all://*[::1]"
+# which fail URL parsing at Client construction
+# (httpx.InvalidURL: Invalid port: ':1]'). Unbracket valid IPv6 literals so
+# httpx parses them; the set of bypassed hosts is unchanged.
+def _sanitize_no_proxy():
+    import ipaddress as _ipaddress
+    import os as _os
+
+    def _norm(entry):
+        e = entry.strip()
+        if e.startswith("[") and e.endswith("]"):
+            try:
+                _ipaddress.ip_address(e[1:-1])
+                return e[1:-1]
+            except ValueError:
+                pass
+        return e
+
+    for _var in ("no_proxy", "NO_PROXY"):
+        _val = _os.environ.get(_var)
+        if _val:
+            _os.environ[_var] = ",".join(_norm(p) for p in _val.split(","))
+
+
+_sanitize_no_proxy()
+
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
@@ -230,6 +260,10 @@ async def main():
         assert sink.posts == [("/channels/chan-1/messages", {"content": "echo:hi"})], sink.posts
         print("[PASS] Bot's own message ignored; the human's ran the daemon and replied via REST.")
 
+        # Heartbeats go out every heartbeat_interval (100 ms in this fixture);
+        # give the heartbeat task a few intervals so the assertion below is not
+        # a race against the (much faster) reply round-trip above.
+        await asyncio.sleep(0.5)
         assert peer.heartbeats >= 1, peer.heartbeats
         print(f"[PASS] {peer.heartbeats} heartbeat(s) sent, ACKed by the peer.")
 

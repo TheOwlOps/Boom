@@ -8,7 +8,10 @@ import sys
 import time
 import unittest
 
+from pathlib import Path as _Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# gateway_health_patch lives in gateway/ (a peer of agent/ at the repo root).
+sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "gateway"))
 
 import gateway_health_patch as ghp
 

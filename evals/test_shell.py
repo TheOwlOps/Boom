@@ -1,10 +1,13 @@
 """Tests for shell.py — must all PASS with `python3 test_shell.py`."""
 import os
 import sys
+from pathlib import Path
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import shell
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+import tools.shell as shell
 
 
 def t1_run_echo():

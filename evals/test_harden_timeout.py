@@ -6,11 +6,14 @@ Chạy:  python3 test_harden_timeout.py
 import asyncio
 import os
 import sys
+from pathlib import Path
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
 
-from timeout import with_timeout  # noqa: E402
+from lifecycle.timeout import with_timeout  # noqa: E402
 
 PASSED = 0
 FAILED = 0

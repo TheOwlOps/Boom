@@ -1,3 +1,5 @@
+import sys
+from pathlib import Path
 """Test thật cho LongTermMemory: chạy trên SQLite file tạm, không mock DB.
 
 Chạy:  python3 test_longterm.py   (từ thư mục chứa file này)
@@ -9,7 +11,10 @@ import threading
 import time
 import unittest
 
-from longterm import LongTermMemory
+# Import root is agent/src (repo convention); the modules under test live
+# in subpackages there (they previously lived next to this file).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent" / "src"))
+from memory.longterm import LongTermMemory
 
 DAY = 86400
 
