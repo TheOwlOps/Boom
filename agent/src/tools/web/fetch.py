@@ -1,12 +1,12 @@
 """web_fetch / web_extract / web_extract_many.
 
-Gộp điểm mạnh của 2 bản cũ:
-  - từ ``web.py``      : httpx + retry/backoff + circuit breaker + body cap
-                         500 KiB + stream (không đọc ồ ạt vào RAM).
-  - từ ``web_tools.py``: web_extract_many — fetch song song nhiều URL bằng
+Merges the strengths of the 2 old implementations:
+  - from ``web.py``      : httpx + retry/backoff + circuit breaker + 500 KiB
+                         body cap + streaming (no bulk reads into RAM).
+  - from ``web_tools.py``: web_extract_many — parallel multi-URL fetch via a
                          thread pool (stdlib concurrent.futures).
 
-SSRF: mọi URL vào đều qua ``validate_url`` trước khi request.
+SSRF: every incoming URL goes through ``validate_url`` before requesting.
 """
 
 import concurrent.futures
@@ -35,7 +35,7 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36 Boom/1.0"
 )
-_MAX_DOWNLOAD = 500 * 1024          # 500 KiB cap cho body (kế thừa web.py)
+_MAX_DOWNLOAD = 500 * 1024          # 500 KiB body cap (inherited from web.py)
 _MAX_RETRIES = 2
 _BACKOFF = (1.0, 2.0)
 _STREAM_CHUNK = 64 * 1024
@@ -44,27 +44,27 @@ _RETRYABLE = (httpx.TransportError,)
 
 
 class WebFetchError(Exception):
-    """Request thất bại sau khi đã retry hết (hoặc HTTP lỗi không retry)."""
+    """Request failed after all retries (or a non-retryable HTTP error)."""
 
 
 class CircuitOpenError(Exception):
-    """Circuit đang mở: host đã chết nhiều lần liên tiếp, fail-fast."""
+    """Circuit is open: the host died many times in a row, fail-fast."""
 
 
 class FetchResult(BaseModel):
-    """Kết quả chuẩn của web_fetch (pydantic model để agent/tool parse chắc)."""
+    """Standard web_fetch result (pydantic model so agents/tools parse reliably)."""
 
-    url: str = Field(description="URL cuối cùng sau redirect")
+    url: str = Field(description="Final URL after redirects")
     status: int = Field(description="HTTP status code")
     content_type: str = Field(description="Content-Type header")
-    text: str = Field(default="", description="Body đã decode (chỉ với text/*)")
-    title: str = Field(default="", description="Nội dung thẻ <title>")
-    truncated: bool = Field(default=False, description="True nếu body bị cắt ở 500 KiB")
+    text: str = Field(default="", description="Decoded body (text/* only)")
+    title: str = Field(default="", description="Contents of the <title> tag")
+    truncated: bool = Field(default=False, description="True when the body was cut at 500 KiB")
 
 
-# --- circuit breaker gọn (stdlib, thay cho lifecycle.circuit của repo) -----
-# Mục đích: host nào chết 5 lần liên tiếp thì 60s tiếp theo fail-fast, không
-# phí retry vào host đã biết chết. Đơn giản hơn bản repo nhưng đủ dùng.
+# --- compact circuit breaker (stdlib, replaces the repo's lifecycle.circuit) ---
+# Purpose: a host that died 5 times in a row fail-fasts for the next 60s, no
+# retries wasted on a known-dead host. Simpler than the repo's version but enough.
 class _CircuitBreaker:
     def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 60.0):
         self.failure_threshold = failure_threshold
@@ -78,7 +78,7 @@ class _CircuitBreaker:
             count, last = self._failures.get(host, (0, 0.0))
             if count >= self.failure_threshold and now - last < self.recovery_timeout:
                 raise CircuitOpenError(
-                    f"circuit đang mở cho host {host} (fail-fast, thử lại sau)"
+                    f"circuit open for host {host} (fail-fast, retry later)"
                 )
         try:
             return fn()
@@ -96,8 +96,8 @@ _BREAKER = _CircuitBreaker()
 
 
 def _new_client(timeout: float) -> httpx.Client:
-    # trust_env=False: bỏ qua proxy env (tránh lỗi parse no_proxy
-    # IPv6 trong sandbox; SSRF đã validate ở tầng URL).
+    # trust_env=False: ignores proxy env (avoids no_proxy IPv6 parse errors
+    # in sandboxes; SSRF is already validated at the URL layer).
     return httpx.Client(
         trust_env=False,
         timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
@@ -119,7 +119,7 @@ def _with_retry(fn, what: str):
             last_exc = exc
             if attempt < _MAX_RETRIES:
                 _sleep(_BACKOFF[attempt])
-    raise WebFetchError(f"{what} thất bại sau {_MAX_RETRIES + 1} lần thử: {last_exc}")
+    raise WebFetchError(f"{what} failed after {_MAX_RETRIES + 1} attempts: {last_exc}")
 
 
 def _decode(body: bytes, content_type: str) -> str:
@@ -140,13 +140,13 @@ def _extract_title(markup: str) -> str:
 
 
 def web_fetch(url: str, timeout: int = 15) -> FetchResult:
-    """Fetch 1 URL: follow redirect, body cap 500 KiB, retry + circuit breaker.
+    """Fetches 1 URL: follows redirects, 500 KiB body cap, retry + circuit breaker.
 
-    Trả về FetchResult (pydantic). Raise:
-      - ValueError/SSRFError: URL không hợp lệ hoặc bị chặn (chống SSRF).
-      - WebFetchError: network lỗi sau retry. CircuitOpenError: host đang chết.
+    Returns a FetchResult (pydantic). Raises:
+      - ValueError/SSRFError: invalid or blocked URL (SSRF protection).
+      - WebFetchError: network failure after retries. CircuitOpenError: dying host.
     """
-    target = validate_url(url)  # chặn SSRF trước mọi request
+    target = validate_url(url)  # blocks SSRF before every request
 
     def _one() -> Tuple[str, int, str, bytes, bool]:
         with _new_client(float(timeout)) as client:
@@ -182,7 +182,7 @@ def web_fetch(url: str, timeout: int = 15) -> FetchResult:
     )
 
 
-# --- extract visible text (+ selector đơn giản) -----------------------------
+# --- visible text extraction (+ simple selectors) ---------------------------
 _SKIP_TAGS = {"script", "style", "noscript", "template", "nav", "footer"}
 _BLOCK_TAGS = {
     "p", "div", "br", "li", "ul", "ol", "tr", "td", "th", "table",
@@ -192,7 +192,7 @@ _BLOCK_TAGS = {
 
 
 class _TextExtractor(HTMLParser):
-    """Text hiển thị: bỏ script/style/nav/footer, giữ cấu trúc block."""
+    """Visible text: drops script/style/nav/footer, keeps block structure."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -231,7 +231,7 @@ _SELECTOR_RE = re.compile(
 
 
 class _SectionExtractor(HTMLParser):
-    """Lấy text của element ĐẦU TIÊN khớp selector đơn giản."""
+    """Grabs the text of the FIRST element matching a simple selector."""
 
     def __init__(self, tag: Optional[str], id_: Optional[str], class_: Optional[str]):
         super().__init__(convert_charrefs=True)
@@ -286,13 +286,13 @@ class _SectionExtractor(HTMLParser):
 
 
 def web_extract(url: str, selector: Optional[str] = None) -> Dict[str, str]:
-    """Fetch URL rồi trả về text hiển thị chính (bỏ script/style/nav/footer).
+    """Fetches a URL then returns its main visible text (drops script/style/nav/footer).
 
-    selector: CSS đơn giản ("article", ".content", "#main", "div.post") để chỉ
-    lấy 1 section. Selector không khớp gì -> raise ValueError (không trả rỗng
-    im lặng).
+    selector: a simple CSS selector ("article", ".content", "#main", "div.post")
+    to grab just one section. An unmatched selector raises ValueError (never
+    silently returns empty).
     """
-    fetched = web_fetch(url)  # validate_url + SSRF đã nằm trong web_fetch
+    fetched = web_fetch(url)  # validate_url + SSRF live inside web_fetch
     markup = fetched.text
     if selector is None:
         extractor = _TextExtractor()
@@ -300,7 +300,7 @@ def web_extract(url: str, selector: Optional[str] = None) -> Dict[str, str]:
         m = _SELECTOR_RE.match((selector or "").strip())
         if not m or not any(m.groupdict().values()):
             raise ValueError(
-                f"selector không hỗ trợ {selector!r}: dùng tag, .class, #id, tag.class"
+                f"unsupported selector {selector!r}: use tag, .class, #id, tag.class"
             )
         g = m.groupdict()
         extractor = _SectionExtractor(g["tag"], g["id"], g["class"])
@@ -308,16 +308,16 @@ def web_extract(url: str, selector: Optional[str] = None) -> Dict[str, str]:
     extractor.close()
     text = extractor.text()
     if selector is not None and not text:
-        raise ValueError(f"selector {selector!r} không khớp gì tại {url}")
+        raise ValueError(f"selector {selector!r} matched nothing at {url}")
     return {"url": fetched.url, "text": text}
 
 
 def web_extract_many(urls: List[str], max_workers: int = 5) -> Dict[str, Dict[str, Any]]:
-    """Fetch song song nhiều URL (kế thừa từ web_tools.py).
+    """Fetches many URLs in parallel (inherited from web_tools.py).
 
-    Trả về ``{"results": {url: {"url", "text"} hoặc {"error": ...}}}``.
-    1 URL lỗi chỉ lỗi ở slot của nó, không ảnh hưởng URL khác. URL trùng
-    chỉ fetch 1 lần. Lỗi SSRF/validate cũng nằm gọn trong slot {"error"}.
+    Returns ``{"results": {url: {"url", "text"} or {"error": ...}}}``.
+    One failing URL only fails its own slot, never the others. Duplicate
+    URLs are fetched once. SSRF/validation errors land in the slot's {"error"}.
     """
     unique: List[str] = []
     seen = set()
@@ -336,10 +336,10 @@ def web_extract_many(urls: List[str], max_workers: int = 5) -> Dict[str, Dict[st
     def _one(u: str) -> Dict[str, Any]:
         try:
             return web_extract(u)
-        except Exception as exc:  # never-raise dưới thread pool
+        except Exception as exc:  # never-raise under the thread pool
             return {"error": f"{type(exc).__name__}: {exc}"}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for u, res in zip(unique, pool.map(_one, unique)):  # map giữ đúng thứ tự
+        for u, res in zip(unique, pool.map(_one, unique)):  # map preserves order
             results[u] = res
     return {"results": results}

@@ -1,4 +1,4 @@
-"""tools.git — git tools an toàn cho Boom (wrap autonomous/gitops.py)."""
+"""tools.git — safe git tools for Boom (wraps autonomous/gitops.py)."""
 
 from agent.src.tools.git.gitops import (
     git_branch_guard,

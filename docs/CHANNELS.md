@@ -1,12 +1,12 @@
-# Channels — cấu trúc mới (`gateway/channels/`)
+# Channels — new layout (`gateway/channels/`)
 
-> Tài liệu refactor: gom 8 module channel rời rạc dưới `gateway/` thành package
-> `gateway/channels/`, tách code dùng chung vào `base.py`, giữ tương thích ngược
-> bằng shim.
+> Refactor notes: consolidated 8 scattered channel modules under `gateway/` into the
+> `gateway/channels/` package, extracted shared code into `base.py`, and kept
+> backward compatibility via shims.
 
-## 1. Cấu trúc thư mục
+## 1. Directory layout
 
-### Trước (flat, 8 file rời dưới `gateway/`)
+### Before (flat, 8 scattered files under `gateway/`)
 
 ```
 gateway/
@@ -23,12 +23,12 @@ gateway/
 └── ingress.py
 ```
 
-### Sau (package `gateway/channels/` + shim tương thích)
+### After (the `gateway/channels/` package + compatibility shims)
 
 ```
 gateway/
 ├── channels/
-│   ├── __init__.py   # re-export 8 classes + build_default_registry() -> dict
+│   ├── __init__.py   # re-exports 8 classes + build_default_registry() -> dict
 │   ├── base.py       # ChannelAdapter, HmacWebhookMixin, RetryMixin, normalize_message
 │   ├── telegram.py   # class TelegramAdapter(ChannelAdapter, ...)
 │   ├── discord.py    # class DiscordChannel(ChannelAdapter, ...)
@@ -38,8 +38,8 @@ gateway/
 │   ├── whatsapp.py   # class WhatsAppAdapter(ChannelAdapter, ...)
 │   ├── messenger.py  # class MessengerAdapter(ChannelAdapter, ...)
 │   └── feishu.py     # class FeishuAdapter(ChannelAdapter, ...)
-├── telegram.py       # ← shim  (1 dòng: from gateway.channels.telegram import *)
-├── discord.py        # ← shim  (giữ nguyên: from gateway.discord import DiscordChannel)
+├── telegram.py       # ← shim  (one line: from gateway.channels.telegram import *)
+├── discord.py        # ← shim  (unchanged: from gateway.discord import DiscordChannel)
 ├── slack.py          # ← shim
 ├── line.py           # ← shim
 ├── zalo.py           # ← shim
@@ -50,96 +50,96 @@ gateway/
 └── ingress.py
 ```
 
-Cách import sau refactor:
+Import styles after the refactor:
 
 ```python
-from gateway.channels import TelegramAdapter              # mới, nên dùng
-from gateway.channels.telegram import TelegramAdapter     # mới, tường minh
-from gateway.telegram import TelegramAdapter              # cũ, vẫn chạy (qua shim)
+from gateway.channels import TelegramAdapter              # new, preferred
+from gateway.channels.telegram import TelegramAdapter     # new, explicit
+from gateway.telegram import TelegramAdapter              # old, still works (via shim)
 ```
 
-## 2. Thêm channel mới trong 3 bước
+## 2. Adding a new channel in 3 steps
 
-Giả sử thêm channel `shopee`:
+Suppose we're adding a `shopee` channel:
 
-**Bước 1 — Tạo file `gateway/channels/shopee.py`**
+**Step 1 — Create `gateway/channels/shopee.py`**
 
 ```python
 from gateway.channels.base import ChannelAdapter
 
-class ShopeeAdapter(ChannelAdapter):   # tên class tự chọn, nên giữ hậu tố Adapter
+class ShopeeAdapter(ChannelAdapter):   # class name is free, keeping the Adapter suffix is recommended
     name = "shopee"
 
     async def send_text(self, target: str, text: str) -> bool:
-        ...  # chỉ override đúng API nền tảng có
+        ...  # only override what the platform's API actually has
 
     def can_deliver(self) -> bool:
         return bool(self.token)
 ```
 
-Chỉ override method nào nền tảng thật sự có. Method nào không có thì để nguyên
-implementation mặc định của `ChannelAdapter` (trả `{"error": ...}` trung thực,
-không fake).
+Only override methods the platform really has. Leave everything else at
+`ChannelAdapter`'s defaults (they return an honest `{"error": ...}`,
+no faking).
 
-**Bước 2 — Đăng ký vào `gateway/channels/__init__.py`**
+**Step 2 — Register in `gateway/channels/__init__.py`**
 
 ```python
 from gateway.channels.shopee import ShopeeAdapter
-# thêm "ShopeeAdapter" vào __all__
+# add "ShopeeAdapter" to __all__
 ```
 
-**Bước 3 — Thêm vào `build_default_registry()`**
+**Step 3 — Add to `build_default_registry()`**
 
 ```python
 adapters = (..., ShopeeAdapter(), ...)
 ```
 
-Xong — không cần sửa daemon/ingress/dispatcher, vì mọi đường gọi đều đi qua
-registry theo `adapter.name`.
+Done — no need to touch daemon/ingress/dispatcher, since all calls go through
+the registry by `adapter.name`.
 
-## 3. So sánh cũ / mới
+## 3. Old vs. new
 
-Số liệu đo trên code hiện tại (`/tmp/boom_git/gateway/*.py`, đếm bằng script):
+Numbers measured on the actual code (`/tmp/boom_git/gateway/*.py`, counted with a script):
 
-| Chỉ số | Trước | Sau |
+| Metric | Before | After |
 |---|---|---|
-| File chứa logic channel | 8 file flat dưới `gateway/` | 8 file trong `gateway/channels/` + `base.py` + `__init__.py` |
-| Tổng dòng code channel | **1638 dòng** | ~1638 dòng (không tăng code, chỉ sắp xếp lại) |
-| Method định nghĩa lặp lại ở ≥2 file | **20 method** (`send_text`, `can_deliver`, `react`, `verify_request`, `get_group_info`, `send_sticker`, `normalize`, `edit_message`, `delete_message`, `kick_member`, … — mỗi method lặp ở 2–8 file) | **1 lần duy nhất** trong `base.py` (mixin + base class) |
-| Dòng code trùng lặp có thể gom về base | **~766 dòng** (tổng body các bản copy trừ 1 bản chuẩn) | 0 — mỗi logic chung chỉ tồn tại 1 nơi |
-| Thêm 1 channel mới | copy-paste ~100–300 dòng từ channel cũ rồi sửa | tạo 1 file, kế thừa `ChannelAdapter`, override đúng API có thật |
-| Import trong daemon/evals | `from gateway.discord import DiscordChannel` (rải rác, phụ thuộc vị trí file) | `from gateway.channels import DiscordChannel` (1 điểm tập trung) |
+| Files holding channel logic | 8 flat files under `gateway/` | 8 files in `gateway/channels/` + `base.py` + `__init__.py` |
+| Total channel lines of code | **1638 lines** | ~1638 lines (no new code, just rearranged) |
+| Methods defined in ≥2 files | **20 methods** (`send_text`, `can_deliver`, `react`, `verify_request`, `get_group_info`, `send_sticker`, `normalize`, `edit_message`, `delete_message`, `kick_member`, … — each duplicated in 2–8 files) | **exactly once** in `base.py` (mixins + base class) |
+| Duplicated lines foldable into base | **~766 lines** (sum of copy bodies minus one canonical copy) | 0 — each shared logic exists in exactly one place |
+| Adding 1 new channel | copy-paste ~100–300 lines from an old channel, then edit | create 1 file, inherit `ChannelAdapter`, override only APIs that really exist |
+| Imports in daemon/evals | `from gateway.discord import DiscordChannel` (scattered, file-location dependent) | `from gateway.channels import DiscordChannel` (single entry point) |
 
-## 4. Tương thích ngược (shim files)
+## 4. Backward compatibility (shim files)
 
-8 file `gateway/<name>.py` cũ được giữ lại dưới dạng shim 1 dòng:
+The 8 old `gateway/<name>.py` files remain as one-line shims:
 
 ```python
 from gateway.channels.telegram import *  # noqa: F401,F403
 ```
 
-Đảm bảo:
+Guarantees:
 
-- `from gateway.telegram import TelegramAdapter` → **đúng object class** với
-  `gateway.channels.telegram.TelegramAdapter` (đã verify bằng test: `is`).
-- Các hằng số module-level cũng đi qua shim: ví dụ
+- `from gateway.telegram import TelegramAdapter` → the **same class object** as
+  `gateway.channels.telegram.TelegramAdapter` (verified by test: `is`).
+- Module-level constants flow through the shims too: e.g.
   `from gateway.discord import INTENTS, MAX_MESSAGE, DiscordChannel`
-  (dùng trong `evals/test_discord_channel.py`) vẫn chạy.
-- `gateway/__init__.py` (`from gateway.discord import DiscordChannel`) và
-  `gateway/daemon.py` (dòng 12, dòng 14) **không cần sửa**.
-- `import gateway.slack as slack_mod` (kiểu dùng trong `evals/`) vẫn chạy.
+  (used in `evals/test_discord_channel.py`) still works.
+- `gateway/__init__.py` (`from gateway.discord import DiscordChannel`) and
+  `gateway/daemon.py` (lines 12, 14) **need no changes**.
+- `import gateway.slack as slack_mod` (the style used in `evals/`) still works.
 
-Test tương thích: `test_compat.py` dựng cây package giả trong `/tmp`, copy
-**nguyên file** `channels_new/__init__.py` và 8 shim vào, rồi assert 39 checks —
-**tất cả PASS**.
+Compatibility test: `test_compat.py` builds a fake package tree in `/tmp`, copies
+`channels_new/__init__.py` and the 8 shims **verbatim**, then asserts 39 checks —
+**all PASS**.
 
-### Lưu ý khi dọn dẹp sau này
+### Cleanup notes for later
 
-- Shim chỉ nên xóa khi đã grep toàn repo không còn import đường cũ
-  (`from gateway.telegram import ...`, `import gateway.discord`, …).
-- `DiscordChannel` là ngoại lệ duy nhất: constructor cần `(daemon, token)` nên
-  daemon vẫn tự tạo instance live và `registry.register(...)` riêng — entry
-  `discord` trong `build_default_registry()` chỉ là placeholder cho đủ dict.
-- `gateway/channel.py` (số ít) vẫn tồn tại với `ChannelRegistry` cũ; nếu refactor
-  xóa nó thì `daemon.py` dòng 14 (`from gateway.channel import build_default_registry`)
-  phải chuyển sang `from gateway.channels import build_default_registry`.
+- Only delete the shims after grepping the whole repo for the old import paths
+  (`from gateway.telegram import ...`, `import gateway.discord`, …) and finding none.
+- `DiscordChannel` is the sole exception: its constructor needs `(daemon, token)`, so
+  the daemon still creates the live instance and calls `registry.register(...)` itself —
+  the `discord` entry in `build_default_registry()` is only a placeholder to complete the dict.
+- `gateway/channel.py` (singular) still exists with the old `ChannelRegistry`; if a future
+  refactor deletes it, `daemon.py` line 14 (`from gateway.channel import build_default_registry`)
+  must move to `from gateway.channels import build_default_registry`.

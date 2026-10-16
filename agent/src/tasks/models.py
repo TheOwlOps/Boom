@@ -1,4 +1,4 @@
-"""Task models cho durable task engine. Chỉ stdlib, JSON-serializable."""
+"""Task models for the durable task engine. Stdlib only, JSON-serializable."""
 
 from dataclasses import dataclass, field, asdict
 from enum import Enum

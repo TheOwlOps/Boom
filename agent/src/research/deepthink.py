@@ -1,37 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-deepthink.py — DeepThink cho DeepSearch (Boom).
+deepthink.py — DeepThink for DeepSearch (Boom).
 
-Phân tích kết quả cross-reference thành:
-  - perspectives: gom claims thành các góc nhìn (đồng thuận / quan điểm riêng)
-  - gaps:        các thực thể trong topic mà không source nào đề cập (góc khuất)
-  - consensus:   claims đạt ngưỡng đồng thuận (>= ceil(total_sources/2))
-  - disputes:    claims chỉ xuất hiện ở 1 source — GIỮ NGUYÊN, không loại
-  - source_scores: độ tin cậy chéo của từng source, sắp xếp giảm dần
+Analyzes cross-reference results into:
+  - perspectives: groups claims into viewpoints (consensus / individual views)
+  - gaps:        entities in the topic no source mentions (blind spots)
+  - consensus:   claims reaching the agreement threshold (>= ceil(total_sources/2))
+  - disputes:    claims appearing in only 1 source — KEPT AS-IS, never dropped
+  - source_scores: each source's cross-trust score, sorted descending
 
-NGUYÊN TẮC KHÔNG NÉ TRÁNH:
-  - Mọi topic (kể cả chính trị, tôn giáo, chủ đề nhạy cảm) đều được phân tích
-    đầy đủ như nhau. Module KHÔNG có bất kỳ logic lọc/kiểm duyệt nào theo
-    chủ đề — disputes luôn giữ nguyên mọi claim 1-source.
-  - Mỗi perspective ghi rõ nguồn theo dạng "Theo [url], ..." — người đọc tự
-    đánh giá, module không thêm ý kiến chủ quan.
+NO-EVASION PRINCIPLE:
+  - Every topic (including politics, religion, sensitive subjects) is analyzed
+    fully and equally. This module has NO topic-based filtering/censorship
+    logic — disputes always keep every single-source claim.
+  - Each perspective cites its source as "Theo [url], ..." — readers judge for
+    themselves; the module adds no subjective commentary.
 
-Python stdlib only. Deploy vào: agent/src/research/deepthink.py
+Python stdlib only. Deployed at: agent/src/research/deepthink.py
 """
 
 import math
 import re
 
 # ---------------------------------------------------------------------------
-# Stopwords: dùng để trích "thực thể" (entity) từ topic/query.
-# Các từ này xuất hiện ở mọi câu nên không coi là entity.
+# Stopwords: used to extract "entities" from the topic/query.
+# These words appear in every sentence so they don't count as entities.
+# NOTE: the lists below are functional keyword data — kept as-is.
 # ---------------------------------------------------------------------------
 STOPWORDS = {
-    # tiếng Việt
+    # Vietnamese
     "và", "là", "của", "các", "cái", "những", "một", "trong", "được",
     "có", "đã", "sẽ", "với", "cho", "để", "này", "đó", "rất", "tại",
     "về", "như", "khi", "thì", "mà", "hay", "hoặc", "nhưng", "cũng",
-    # tiếng Anh
+    # English
     "the", "is", "a", "an", "and", "of", "to", "in", "it", "that",
     "this", "for", "on", "with", "as", "are", "was", "be", "by",
 }
@@ -42,8 +43,8 @@ _SENTENCE_RE = re.compile(r"[^.!?]+[.!?]+(?:\s+|$)")
 
 def extract_keywords(text):
     """
-    Trích từ khóa có nghĩa từ text: lowercase -> tách từ ->
-    bỏ stopwords và từ 1 ký tự -> giữ thứ tự, loại trùng.
+    Extracts meaningful keywords from text: lowercase -> tokenize ->
+    drop stopwords and 1-char words -> keep order, dedupe.
     """
     seen = set()
     keywords = []
@@ -57,7 +58,7 @@ def extract_keywords(text):
 
 
 def first_sentence(text):
-    """Lấy câu đầu tiên của text (fallback cho mode không có crossref)."""
+    """Takes the first sentence of text (fallback for no-crossref mode)."""
     if not text:
         return ""
     m = _SENTENCE_RE.search(text.strip())
@@ -65,18 +66,18 @@ def first_sentence(text):
 
 
 class DeepThink:
-    """Phân tích sâu kết quả nghiên cứu đa nguồn."""
+    """Deep multi-source research analysis."""
 
-    # -- API chính ------------------------------------------------------
+    # -- main API -------------------------------------------------------
 
     def analyze(self, topic, sources, crossref_result=None):
         """
         Args:
-            topic: chủ đề/query nghiên cứu (str).
-            sources: list dict {url, title, text}.
+            topic: research topic/query (str).
+            sources: list of dicts {url, title, text}.
             crossref_result: dict {claims: [{text, sources, count, agreement}],
-                                   total_sources, ...} từ cross_reference().
-                             None -> chạy logic đơn giản: mỗi source = 1 claim.
+                                   total_sources, ...} from cross_reference().
+                             None -> simple logic: each source = 1 claim.
 
         Returns:
             {topic, summary, perspectives, gaps, consensus, disputes,
@@ -90,19 +91,19 @@ class DeepThink:
             total_sources = len(sources)
         else:
             claims = list(crossref_result.get("claims") or [])
-            # total_sources lấy từ crossref; fallback về số sources truyền vào
-            # nếu crossref không cung cấp hoặc = 0.
+            # total_sources comes from crossref; falls back to the passed-in
+            # source count when crossref doesn't provide it or it's 0.
             total_sources = crossref_result.get("total_sources") or len(sources)
 
         perspectives = self._build_perspectives(claims)
         gaps = self._find_gaps(topic, sources)
 
-        # Ngưỡng đồng thuận: >= nửa số nguồn (làm tròn lên).
+        # Consensus threshold: >= half the sources (rounded up).
         majority = math.ceil(total_sources / 2) if total_sources else 1
         consensus = [c.get("text", "") for c in claims
                      if c.get("count", 0) >= majority]
-        # Disputes = claim chỉ 1 source. KHÔNG loại theo chủ đề nhạy cảm —
-        # nguyên tắc không né tránh: giữ nguyên để người đọc tự đánh giá.
+        # Disputes = single-source claims. NEVER filtered by sensitive topic —
+        # the no-evasion principle: keep them so readers judge for themselves.
         disputes = [c.get("text", "") for c in claims
                     if c.get("count", 0) == 1]
 
@@ -120,12 +121,12 @@ class DeepThink:
             "source_scores": source_scores,
         }
 
-    # -- Builders --------------------------------------------------------
+    # -- builders --------------------------------------------------------
 
     def _simple_claims(self, sources):
         """
-        Fallback khi không có crossref_result: mỗi source đóng góp đúng 1
-        claim lấy từ câu đầu tiên của text, count=1 (chưa được đối chiếu).
+        Fallback without crossref_result: each source contributes exactly 1
+        claim taken from its text's first sentence, count=1 (not cross-checked).
         """
         claims = []
         for src in sources:
@@ -141,10 +142,13 @@ class DeepThink:
 
     def _build_perspectives(self, claims):
         """
-        Mỗi claim -> 1 perspective:
-          - count >= 2 : góc nhìn "đồng thuận" (nhiều nguồn cùng nêu)
-          - count == 1 : "quan điểm riêng" (chỉ 1 nguồn nêu)
-        Mỗi view đều mở đầu bằng "Theo [url], ..." để rõ nguồn.
+        Each claim -> 1 perspective:
+          - count >= 2 : "consensus" view (multiple sources agree)
+          - count == 1 : "individual" view (single source)
+        Every view opens with "Theo [url], ..." to make the source explicit.
+
+        NOTE: the kind values ("dong_thuan"/"rieng") and the "Theo" prefix are
+        pinned by evals/test_deepthink.py — keep them as-is.
         """
         perspectives = []
         for claim in claims:
@@ -169,15 +173,14 @@ class DeepThink:
 
     def _find_gaps(self, topic, sources):
         """
-        Tìm góc khuất: entity nào trong topic/query mà KHÔNG source nào
-        đề cập -> gap.
+        Finds blind spots: topic/query entities that NO source mentions.
 
-        Cách làm đơn giản, không cần NLP nặng:
-          1. Trích từ khóa có nghĩa từ topic (bỏ stopwords).
-          2. Dựng tập hợp toàn bộ từ xuất hiện trong các source.
-          3. Từ khóa topic nào vắng mặt trong tập hợp đó -> gap.
-        So khớp theo từ nguyên (word-set) thay vì substring để tránh
-        false positive kiểu "tin" match trong "tin tức".
+        Simple approach, no heavy NLP:
+          1. Extract meaningful keywords from the topic (drop stopwords).
+          2. Build the set of all words appearing in the sources.
+          3. Topic keywords absent from that set -> gaps.
+        Word-set matching (not substring) avoids false positives like "tin"
+        matching inside "tin tức".
         """
         keywords = extract_keywords(topic)
         if not keywords:
@@ -189,11 +192,11 @@ class DeepThink:
 
     def _score_sources(self, sources, claims):
         """
-        Độ tin cậy chéo của 1 source =
-            (# claims của source được cross-ref, tức count >= 2)
-            / (tổng # claims của source).
-        Source không đóng góp claim nào -> score 0.0 (vẫn liệt kê).
-        Sắp xếp giảm dần theo score; hòa thì theo url cho ổn định.
+        A source's cross-trust score =
+            (# of its claims that got cross-referenced, i.e. count >= 2)
+            / (its total # of claims).
+        A source contributing no claims -> score 0.0 (still listed).
+        Sorted descending by score; ties broken by url for stability.
         """
         scored = []
         for src in sources:
@@ -207,7 +210,7 @@ class DeepThink:
 
     def _summarize(self, topic, total_sources, majority,
                    consensus, disputes, gaps, source_scores):
-        """Tổng hợp 2-3 câu: đồng thuận, góc khuất, nguồn tin cậy nhất."""
+        """2-3 sentence rollup: consensus, blind spots, most trusted source."""
         s1 = ("Tổng hợp chủ đề '%s' từ %d nguồn: %d claim đạt đồng thuận "
               "(xuất hiện ở >= %d nguồn), %d quan điểm chỉ xuất hiện ở 1 nguồn."
               % (topic, total_sources, len(consensus), majority, len(disputes)))
@@ -225,15 +228,15 @@ class DeepThink:
 
 
 def build_tools(env=None):
-    """Factory cho environment.py — đăng ký deep_think tool."""
+    """Factory for environment.py — registers the deep_think tool."""
     from research.deepthink import DeepThink
 
     def deep_think(topic: str, sources: list = None) -> dict:
-        """Phân tích sâu đa chiều, không né tránh.
-        
+        """Deep multi-angle analysis, no topic evasion.
+
         Args:
-            topic: chủ đề phân tích.
-            sources: list {url, title, text}.
+            topic: the topic to analyze.
+            sources: list of {url, title, text}.
         """
         try:
             dt = DeepThink()
@@ -245,12 +248,12 @@ def build_tools(env=None):
         "deep_think": {
             "name": "deep_think",
             "func": deep_think,
-            "description": "Phân tích sâu đa góc nhìn, đánh giá độ tin cậy nguồn.",
+            "description": "Deep multi-perspective analysis with source trust scoring.",
             "schema": {
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string", "description": "Chủ đề."},
-                    "sources": {"type": "array", "description": "List sources.", "default": []},
+                    "topic": {"type": "string", "description": "The topic."},
+                    "sources": {"type": "array", "description": "List of sources.", "default": []},
                 },
                 "required": ["topic"],
             },

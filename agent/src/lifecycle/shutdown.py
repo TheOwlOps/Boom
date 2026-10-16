@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Graceful shutdown cho Boom — stdlib only (signal, asyncio, threading, logging, atexit).
+"""Graceful shutdown for Boom — stdlib only (signal, asyncio, threading, logging, atexit).
 
-Mục đích: khi process nhận SIGTERM (docker stop, systemd, k8s) hoặc SIGINT
-(Ctrl+C), Boom dọn dẹp có trật tự thay vì chết giữa chừng:
-  1. Đánh dấu đang shutdown (``is_shutting_down()`` -> True).
-  2. Thoát khỏi vòng lặp chính với exit code 0 (kể cả đang ở trong
-     ``asyncio.run()`` — các task bị cancel sạch rồi loop mới đóng).
-  3. Chạy các cleanup callback đã đăng ký (đóng DB, flush file...) — có timeout.
-  4. Flush log (``logging.shutdown()``).
+Purpose: when the process receives SIGTERM (docker stop, systemd, k8s) or
+SIGINT (Ctrl+C), Boom cleans up in an orderly way instead of dying mid-flight:
+  1. Marks shutting down (``is_shutting_down()`` -> True).
+  2. Exits the main loop with exit code 0 (even inside ``asyncio.run()`` —
+     tasks are cancelled cleanly before the loop closes).
+  3. Runs registered cleanup callbacks (close DB, flush files...) — with timeout.
+  4. Flushes logs (``logging.shutdown()``).
 
 API:
     install_shutdown_handlers(graceful_timeout=30)
-    register_cleanup(name, fn)      # fn: sync callable hoặc ``async def``
+    register_cleanup(name, fn)      # fn: sync callable or ``async def``
     is_shutting_down() -> bool
-    await_shutdown(timeout=30)       # coroutine -> True/False (xem docstring)
+    await_shutdown(timeout=30)       # coroutine -> True/False (see docstring)
 
-Cách dùng nhanh::
+Quick usage::
 
     from agent.src.lifecycle.shutdown import (
         install_shutdown_handlers, register_cleanup, is_shutting_down,
     )
 
     def main():
-        install_shutdown_handlers()          # dòng đầu main(), trên main thread
+        install_shutdown_handlers()          # first line of main(), on the main thread
         db = open_db()
         register_cleanup("db", db.close)     # sync fn...
-        register_cleanup("pool", pool.aclose)  # ...hoặc async fn, đều được
-        asyncio.run(run_daemon())            # SIGTERM -> cleanup tự chạy, exit 0
+        register_cleanup("pool", pool.aclose)  # ...or async fn, both fine
+        asyncio.run(run_daemon())            # SIGTERM -> cleanup runs, exit 0
 """
 
 from __future__ import annotations
@@ -47,14 +47,14 @@ DEFAULT_GRACEFUL_TIMEOUT = 30.0
 
 
 class _ShutdownState:
-    """State dùng chung, truy cập từ cả signal handler nên phải thread-safe."""
+    """Shared state, accessed from the signal handler too — must be thread-safe."""
 
     def __init__(self) -> None:
-        # threading.Event: set() an toàn ngay cả trong signal handler.
+        # threading.Event: set() is safe even inside a signal handler.
         self.event = threading.Event()
         self.lock = threading.Lock()
-        # (name, fn) — chạy theo thứ tự NGƯỢC lúc đăng ký (LIFO, giống atexit):
-        # tài nguyên mở sau thường phụ thuộc tài nguyên mở trước.
+        # (name, fn) — run in REVERSE registration order (LIFO, like atexit):
+        # resources opened later usually depend on resources opened earlier.
         self.cleanups: list = []
         self.timeout = DEFAULT_GRACEFUL_TIMEOUT
         self.installed = False
@@ -65,40 +65,41 @@ _state = _ShutdownState()
 
 
 def register_cleanup(name: str, fn) -> None:
-    """Đăng ký hàm dọn dẹp chạy khi shutdown (kể cả khi thoát bình thường).
+    """Register a cleanup function to run at shutdown (including normal exit).
 
-    ``fn`` có thể là sync callable hoặc ``async def`` (coroutine function).
-    Mỗi callback được bọc try/except riêng: một callback hỏng không chặn
-    các callback còn lại.
+    ``fn`` can be a sync callable or an ``async def`` (coroutine function).
+    Each callback is wrapped in its own try/except: one failing callback must
+    not block the rest.
     """
     if not callable(fn):
-        raise TypeError(f"cleanup '{name}' phải là callable, nhận {type(fn).__name__}")
+        raise TypeError(f"cleanup '{name}' must be callable, got {type(fn).__name__}")
     with _state.lock:
         _state.cleanups.append((name, fn))
-    log.debug("Đã đăng ký cleanup: %s", name)
+    log.debug("Registered cleanup: %s", name)
 
 
 def is_shutting_down() -> bool:
-    """True nếu process đang shutdown (đã nhận signal hoặc đang thoát)."""
+    """True if the process is shutting down (signal received or exiting)."""
     return _state.event.is_set()
 
 
 async def await_shutdown(timeout: float = 30) -> bool:
-    """Block (async) cho tới khi shutdown được kích hoạt.
+    """Block (async) until shutdown is triggered.
 
-    Trả về True nếu event shutdown được set một cách "êm" (VD: set thủ công
-    trong test), False nếu hết ``timeout`` giây.
+    Returns True if the shutdown event was set "gracefully" (e.g. set manually
+    in tests), False after ``timeout`` seconds.
 
-    LƯU Ý: khi signal THẬT (SIGTERM/SIGINT) tới, handler gọi ``sys.exit(0)``
-    ngay nên coroutine đang await sẽ nhận SystemExit thay vì return True —
-    process đang thoát có trật tự nên không cần giá trị trả về nữa. Pattern
-    khuyên dùng trong daemon loop là poll ``is_shutting_down()``, và đăng ký
-    mọi dọn dẹp qua ``register_cleanup()``.
+    NOTE: when a REAL signal (SIGTERM/SIGINT) arrives, the handler calls
+    ``sys.exit(0)`` immediately, so an awaiting coroutine gets SystemExit
+    instead of returning True — the process is already exiting in an orderly
+    way, so the return value no longer matters. The recommended pattern in a
+    daemon loop is to poll ``is_shutting_down()``, and register all cleanup
+    through ``register_cleanup()``.
     """
     loop = asyncio.get_running_loop()
-    # Poll thay vì run_in_executor: tránh sinh thread non-daemon — thread đó
-    # mà kẹt trong event.wait() thì lúc interpreter shutdown sẽ bị join theo,
-    # làm SIGTERM treo thêm tới `timeout` giây.
+    # Poll instead of run_in_executor: avoids spawning a non-daemon thread — a
+    # thread stuck in event.wait() would be joined during interpreter shutdown,
+    # hanging SIGTERM for up to `timeout` extra seconds.
     deadline = loop.time() + timeout
     while not _state.event.is_set():
         if loop.time() >= deadline:
@@ -108,56 +109,57 @@ async def await_shutdown(timeout: float = 30) -> bool:
 
 
 def install_shutdown_handlers(graceful_timeout: float = DEFAULT_GRACEFUL_TIMEOUT) -> None:
-    """Cài signal handler cho SIGTERM và SIGINT + hook cleanup lúc thoát.
+    """Install signal handlers for SIGTERM and SIGINT + an exit cleanup hook.
 
-    PHẢI gọi từ main thread (``signal.signal`` chỉ cho phép main thread) —
-    thường là dòng đầu tiên trong ``main()``. Gọi nhiều lần cũng an toàn
-    (chỉ cập nhật timeout, không đăng ký atexit trùng).
+    MUST be called from the main thread (``signal.signal`` only allows the
+    main thread) — typically the first line of ``main()``. Calling repeatedly
+    is safe (only updates the timeout, no duplicate atexit registration).
     """
-    # signal.signal() ném ValueError ngoài main thread; check trước để báo
-    # lỗi rõ ràng thay vì traceback khó hiểu.
+    # signal.signal() raises ValueError outside the main thread; check early
+    # for a clear error instead of a confusing traceback.
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError(
-            "install_shutdown_handlers() phải được gọi từ main thread "
-            "(CPython chỉ giao signal cho main thread)"
+            "install_shutdown_handlers() must be called from the main thread "
+            "(CPython only delivers signals to the main thread)"
         )
     _state.timeout = float(graceful_timeout)
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _signal_handler)
     if not _state.installed:
-        # Đăng ký 1 lần duy nhất: cleanup chạy ở đây, SAU KHI stack đã unwind
-        # (task bị cancel, event loop đã đóng) — đúng thứ tự graceful:
-        # dừng việc đang làm trước, rồi mới giải phóng tài nguyên.
-        # atexit chạy cả khi thoát bình thường (không có signal).
+        # Register exactly once: cleanup runs here, AFTER the stack has unwound
+        # (tasks cancelled, event loop closed) — the correct graceful order:
+        # stop the work in progress first, then release resources.
+        # atexit also runs on normal exits (no signal).
         atexit.register(_run_exit_cleanup)
         _state.installed = True
     log.info(
-        "Đã cài graceful shutdown handlers (SIGTERM/SIGINT, timeout=%ss)",
+        "Installed graceful shutdown handlers (SIGTERM/SIGINT, timeout=%ss)",
         graceful_timeout,
     )
 
 
 def _signal_handler(signum, frame):
-    """Chạy ĐỒNG BỘ trên main thread khi signal tới — phải NHANH và an toàn.
+    """Runs SYNCHRONOUSLY on the main thread when a signal arrives — must be FAST and safe.
 
-    CPython chỉ giao signal cho main thread nên handler này có thể chen ngang
-    bất kỳ đâu (kể cả giữa ``loop._run_once()``). Vì vậy nó KHÔNG tự chạy
-    cleanup ở đây mà chỉ:
-      1. set event (đánh dấu shutting down),
-      2. ``sys.exit(0)`` -> SystemExit unwind stack main thread:
-         - sync code (Event.wait, serve_forever): thoát block, chạy finally.
-         - ``asyncio.run(...)``: Runner.__exit__ cancel các task + đóng loop
-           sạch (loop KHÔNG bị stop giữa chừng nên không gặp
+    CPython only delivers signals to the main thread, so this handler can
+    interrupt anywhere (even mid ``loop._run_once()``). That's why it does NOT
+    run cleanup here; it only:
+      1. sets the event (marks shutting down),
+      2. calls ``sys.exit(0)`` -> SystemExit unwinds the main-thread stack:
+         - sync code (Event.wait, serve_forever): unblocks, runs finally.
+         - ``asyncio.run(...)``: Runner.__exit__ cancels tasks + closes the loop
+           cleanly (the loop is NOT stopped mid-flight, so no
            "Event loop stopped before Future completed").
-      3. interpreter chạy atexit -> ``_run_exit_cleanup()`` làm cleanup thật.
+      3. the interpreter runs atexit -> ``_run_exit_cleanup()`` does the real cleanup.
 
-    Cố tình KHÔNG cancel task / stop loop từ trong handler: cancel "main task"
-    mà ``asyncio.run`` đang đợi sẽ làm nó nổ CancelledError (exit 1), còn
-    ``loop.stop()`` khi vẫn còn task pending sẽ làm ``Runner.close()`` nổ
-    RuntimeError. sys.exit(0) là đường duy nhất cho exit 0 trong mọi context.
+    Deliberately does NOT cancel tasks / stop the loop from the handler:
+    cancelling the "main task" that ``asyncio.run`` is awaiting would raise
+    CancelledError (exit 1), and ``loop.stop()`` with pending tasks would make
+    ``Runner.close()`` raise RuntimeError. sys.exit(0) is the only path to
+    exit 0 in every context.
 
-    Signal lần 2 (user sốt ruột Ctrl+C tiếp, hoặc signal tới giữa lúc đang
-    cleanup): thoát cứng luôn bằng os._exit, không cleanup nữa.
+    A second signal (impatient user hitting Ctrl+C again, or a signal arriving
+    mid-cleanup): hard-exit immediately via os._exit, no more cleanup.
     """
     try:
         sig_name = signal.Signals(signum).name
@@ -165,13 +167,13 @@ def _signal_handler(signum, frame):
         sig_name = str(signum)
 
     if _state.event.is_set():
-        log.error("Nhận %s trong lúc đang shutdown — thoát cứng ngay", sig_name)
-        # Quy ước shell: 128 + số signal (130 = SIGINT, 143 = SIGTERM).
+        log.error("Received %s during shutdown — hard exiting now", sig_name)
+        # Shell convention: 128 + signal number (130 = SIGINT, 143 = SIGTERM).
         os._exit(128 + signum)
 
     _state.event.set()
     log.warning(
-        "Nhận %s — bắt đầu graceful shutdown (timeout cleanup %ss)",
+        "Received %s — starting graceful shutdown (cleanup timeout %ss)",
         sig_name,
         _state.timeout,
     )
@@ -179,22 +181,23 @@ def _signal_handler(signum, frame):
 
 
 def _run_exit_cleanup() -> None:
-    """Chạy toàn bộ cleanup đã đăng ký. Được gọi qua atexit (1 lần duy nhất).
+    """Runs all registered cleanups. Invoked via atexit (exactly once).
 
-    Được gọi SAU KHI: stack đã unwind, các asyncio task đã bị cancel, event
-    loop đã đóng — nên đây là lúc an toàn để đóng DB/pool/file. Chạy trên
-    worker thread daemon + join(timeout): callback nào treo quá timeout thì
-    bị bỏ lại, process vẫn thoát đúng hạn.
+    Runs AFTER: the stack has unwound, asyncio tasks were cancelled, the event
+    loop closed — so this is the safe point to close DBs/pools/files. Runs on
+    a daemon worker thread + join(timeout): a callback hanging past the
+    timeout is abandoned, the process still exits on time.
     """
     with _state.lock:
         if _state.cleanup_done:
-            return  # atexit + sys.exit không bao giờ chạy cleanup 2 lần
+            return  # atexit + sys.exit never run cleanup twice
         _state.cleanup_done = True
         cleanups = list(reversed(_state.cleanups))
         timeout = _state.timeout
-    # Set event ở đây nữa: nếu signal tới NGAY GIỮA lúc đang cleanup (VD: thoát
-    # bình thường rồi user Ctrl+C), handler sẽ thấy event đã set -> os._exit
-    # thay vì sys.exit lồng nhau làm rối interpreter shutdown.
+    # Set the event here too: if a signal arrives RIGHT IN THE MIDDLE of
+    # cleanup (e.g. a normal exit interrupted by the user's Ctrl+C), the
+    # handler sees the event set -> os._exit instead of a nested sys.exit
+    # confusing interpreter shutdown.
     _state.event.set()
 
     if not cleanups:
@@ -208,9 +211,10 @@ def _run_exit_cleanup() -> None:
     worker.join(timeout)
     if worker.is_alive():
         log.warning(
-            "Hết timeout %ss — bỏ qua cleanup chưa xong, thoát", timeout
+            "Cleanup timed out after %ss — skipping unfinished cleanups, exiting",
+            timeout,
         )
-    logging.shutdown()  # flush mọi handler (file, stderr...)
+    logging.shutdown()  # flush all handlers (file, stderr...)
 
 
 def _run_all_sync(cleanups: list) -> None:
@@ -218,18 +222,18 @@ def _run_all_sync(cleanups: list) -> None:
         try:
             log.info("Cleanup: %s ...", name)
             if inspect.iscoroutinefunction(fn):
-                # Đang ở worker thread, NGOÀI mọi event loop -> asyncio.run an toàn.
+                # On a worker thread, outside every event loop -> asyncio.run is safe.
                 asyncio.run(fn())
             else:
-                fn()  # sync fn: giả định nhanh, không block (đóng DB, flush file)
+                fn()  # sync fn: assumed quick and non-blocking (close DB, flush file)
             log.info("Cleanup: %s OK", name)
         except Exception:
-            # Một callback hỏng không được chặn các callback còn lại.
-            log.exception("Cleanup %s LỖI (bỏ qua, chạy tiếp)", name)
+            # One failing callback must not block the remaining ones.
+            log.exception("Cleanup %s FAILED (skipped, continuing)", name)
 
 
 def _reset_for_tests() -> None:
-    """Chỉ dùng cho test: xóa state để test độc lập (không dùng trong production)."""
+    """Tests only: reset state so tests are independent (never use in production)."""
     with _state.lock:
         _state.cleanups.clear()
         _state.cleanup_done = False

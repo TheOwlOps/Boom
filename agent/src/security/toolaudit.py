@@ -164,7 +164,7 @@ class ToolAuditLog:
                 redacted = {}
             summary = redact_text(result)
             if len(summary) > RESULT_SUMMARY_MAX_LEN:
-                summary = summary[:RESULT_SUMMARY_MAX_LEN] + "...[cắt bớt]"
+                summary = summary[:RESULT_SUMMARY_MAX_LEN] + "...[truncated]"
             with self._lock:
                 cur = self._conn.execute(
                     "INSERT INTO tool_calls"

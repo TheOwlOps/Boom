@@ -1,23 +1,23 @@
-"""planner_v2 — TaskPlanner hiểu codebase thật (repo-aware).
+"""planner_v2 — a TaskPlanner that actually understands the codebase (repo-aware).
 
-Vấn đề của planner.py v1: chỉ là keyword-template emitter — ví dụ
-plan("Thêm dark mode cho web UI") trả về step titles giống hệt mọi task
-khác, không hề biết codebase có gì.
+The problem with planner.py v1: it was just a keyword-template emitter — e.g.
+plan("Add dark mode to the web UI") returned step titles identical to every
+other task, with no idea what the codebase contains.
 
-planner_v2 khắc phục bằng cách:
-  1. Build dependency graph THẬT của repo bằng agent/src/autonomous/depgraph.py
-  2. Trích keyword từ task: tên file (.py), module, động từ hành động,
-     hint thư mục (endpoint -> gateway, tool -> agent/src/tools, ...)
-  3. Match keyword với file paths thật trong repo
-  4. Mở rộng sang các file bị ảnh hưởng bằng depgraph.impact_analysis
-     (BFS trên reverse graph: ai import file này, trực tiếp/gián tiếp)
-  5. Sắp xếp steps theo thứ tự dependency (dependency đứng trước,
-     dependent đứng sau) — sửa từ gốc lan ra ngọn
+planner_v2 fixes this by:
+  1. Building the repo's REAL dependency graph with agent/src/autonomous/depgraph.py
+  2. Extracting keywords from the task: file names (.py), modules, action verbs,
+     directory hints (endpoint -> gateway, tool -> agent/src/tools, ...)
+  3. Matching keywords against real file paths in the repo
+  4. Expanding to impacted files with depgraph.impact_analysis
+     (BFS over the reverse graph: who imports this file, directly/indirectly)
+  5. Ordering steps by dependency order (dependencies first, dependents later)
+     — fix from the roots outward
 
-Kết quả: 2 task khác nhau -> plan khác nhau, mỗi step giải thích TẠI SAO
-file đó liên quan (reason), không còn byte-identical như v1.
+Result: 2 different tasks -> 2 different plans, each step explaining WHY that
+file is relevant (reason), no more byte-identical plans like v1.
 
-Yêu cầu: stdlib + pydantic. Comment tiếng Việt.
+Requirements: stdlib + pydantic.
 """
 
 import os
@@ -29,32 +29,33 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# Pydantic models cho plan
+# Pydantic models for the plan
 # ---------------------------------------------------------------------------
 
 class PlanStep(BaseModel):
-    """Một bước trong plan: hành động + file + lý do TẠI SAO file liên quan."""
-    action: str = Field(description="Hành động: survey/edit/verify_dependents/test/run_tests")
+    """One plan step: an action + files + the reason WHY the file matters."""
+    action: str = Field(description="Action: survey/edit/verify_dependents/test/run_tests")
     files: List[str] = Field(default_factory=list,
-                             description="Đường dẫn file tương đối từ repo root")
-    reason: str = Field(description="Giải thích TẠI SAO file này liên quan tới task")
+                             description="File paths relative to the repo root")
+    reason: str = Field(description="Explains WHY this file is relevant to the task")
 
 
 class PlanResult(BaseModel):
-    """Kết quả plan: steps + files bị ảnh hưởng + độ phức tạp ước tính."""
+    """Plan result: steps + impacted files + estimated complexity."""
     task: str
     task_type: str = Field(description="feature | bugfix | refactor")
     steps: List[PlanStep]
     files_affected: List[str] = Field(
-        description="File khớp keyword + toàn bộ dependents theo depgraph")
+        description="Keyword-matched files + all dependents per depgraph")
     estimated_complexity: str = Field(description="low | medium | high")
 
 
 # ---------------------------------------------------------------------------
-# Keyword: phân loại task + hint thư mục
+# Keywords: task classification + directory hints
 # ---------------------------------------------------------------------------
 
-# Động từ/keyword phân loại task (Việt + Anh, so sánh trên chữ thường).
+# Verbs/keywords for task classification (Vietnamese + English, lowercased match).
+# NOTE: the Vietnamese entries are functional classification keywords — kept as-is.
 _BUGFIX_KEYWORDS = (
     "lỗi", "loi", "sửa", "sua", "fix", "bug", "error", "crash",
     "không chạy", "khong chay", "broken", "fail", "sai", "khắc phục",
@@ -66,8 +67,9 @@ _REFACTOR_KEYWORDS = (
     "optimize", "gọn", "simplify",
 )
 
-# Keyword trong task -> thư mục trong repo nhiều khả năng liên quan.
-# Mỗi entry: (keyword, [thư mục tương đối từ repo root]).
+# Task keyword -> likely-relevant repo directory.
+# Each entry: (keyword, [directories relative to repo root]).
+# NOTE: the Vietnamese entries are functional keyword hints — kept as-is.
 _DIR_HINTS: Tuple[Tuple[str, List[str]], ...] = (
     ("endpoint", ["gateway"]),
     ("api", ["gateway"]),
@@ -135,7 +137,7 @@ _DIR_HINTS: Tuple[Tuple[str, List[str]], ...] = (
 
 
 def detect_task_type(task: str) -> str:
-    """Phân loại task: bugfix > refactor > feature (mặc định)."""
+    """Classify a task: bugfix > refactor > feature (default)."""
     text = (task or "").lower()
     for kw in _BUGFIX_KEYWORDS:
         if kw in text:
@@ -147,15 +149,15 @@ def detect_task_type(task: str) -> str:
 
 
 def _extract_keywords(task: str) -> Tuple[List[str], List[str], List[str]]:
-    """Trích keyword từ task.
+    """Extract keywords from the task.
 
-    Trả về (name_keywords, dir_hints, file_mentions):
-      - name_keywords: token chữ/số có thể là tên module/file (vd "api", "users")
-      - dir_hints: thư mục gợi ý từ _DIR_HINTS
-      - file_mentions: tên file .py được nhắc đích danh (vd "api.py")
+    Returns (name_keywords, dir_hints, file_mentions):
+      - name_keywords: alphanumeric tokens that may be module/file names (e.g. "api", "users")
+      - dir_hints: suggested directories from _DIR_HINTS
+      - file_mentions: .py files named explicitly (e.g. "api.py")
     """
     text = (task or "").lower()
-    # Token giữ lại chữ Unicode, số, dấu . - / (để bắt "/api/users", "api.py")
+    # Keep Unicode letters, digits, and . - / (to catch "/api/users", "api.py")
     tokens = re.findall(r"[\w.\-/]+", text, re.UNICODE)
 
     name_keywords: List[str] = []
@@ -184,7 +186,7 @@ def _extract_keywords(task: str) -> Tuple[List[str], List[str], List[str]]:
                 if d not in dir_hints:
                     dir_hints.append(d)
 
-    # Bỏ trùng, giữ thứ tự
+    # Dedupe, keep order
     seen: Set[str] = set()
     uniq: List[str] = []
     for k in name_keywords:
@@ -199,24 +201,24 @@ def _extract_keywords(task: str) -> Tuple[List[str], List[str], List[str]]:
 # ---------------------------------------------------------------------------
 
 class RepoAwarePlanner:
-    """Planner hiểu codebase thật: match keyword với file thật + depgraph."""
+    """Planner that understands the real codebase: keyword matching + depgraph."""
 
     def __init__(self, repo_root: str):
-        """repo_root: đường dẫn tới root của repo Boom (read-only, chỉ đọc)."""
+        """repo_root: path to the Boom repo root (read-only, reads only)."""
         self.repo_root = os.path.abspath(repo_root)
 
-        # Nạp depgraph.py từ chính repo (không copy code, dùng module gốc).
+        # Load depgraph.py from the repo itself (no code copy, use the original module).
         src_dir = os.path.join(self.repo_root, "agent", "src")
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
         from autonomous import depgraph as _depgraph
         self._depgraph = _depgraph
 
-        # Build dependency graph cho toàn bộ file .py trong repo.
+        # Build the dependency graph over every .py file in the repo.
         self.graph: Dict[str, List[str]] = _depgraph.build_graph(self.repo_root)
 
-        # Map module dotted -> đường dẫn file tương đối (để map ngược
-        # kết quả impact_analysis về file).
+        # Map dotted module -> relative file path (to map impact_analysis
+        # results back to files).
         self.mod_to_path: Dict[str, str] = {}
         self.all_files: List[str] = []
         for dirpath, dirnames, filenames in os.walk(self.repo_root):
@@ -230,8 +232,9 @@ class RepoAwarePlanner:
                 self.mod_to_path[mod] = rel
                 self.all_files.append(rel)
 
-        # Thứ tự topo: dependency đứng trước dependent. Nếu graph có cycle
-        # (không topo được) thì fallback: file ít dependency đứng trước.
+        # Topological order: dependencies before dependents. If the graph has
+        # cycles (not topologically sortable), fall back: fewer dependencies
+        # first.
         try:
             self._topo: List[str] = _depgraph.topological_order(self.graph)
         except ValueError:
@@ -239,21 +242,21 @@ class RepoAwarePlanner:
                                 key=lambda m: (len(self.graph.get(m, [])), m))
         self._topo_index = {m: i for i, m in enumerate(self._topo)}
 
-    # -- match keyword với file -------------------------------------------
+    # -- match keywords to files ------------------------------------------
 
     def _match_files(self, keywords: List[str], dir_hints: List[str],
                      file_mentions: List[str]
                      ) -> List[Tuple[str, float, List[str]]]:
-        """Chấm điểm từng file theo keyword.
+        """Score each file against the keywords.
 
-        Trả về [(rel_path, score, matched_keywords)] đã sắp xếp giảm dần.
-        Điểm: basename khớp chính xác +3, basename chứa keyword +2,
-        đường dẫn chứa keyword +1, nằm trong thư mục hint +1.5,
-        được nhắc đích danh (.py) +4.
+        Returns [(rel_path, score, matched_keywords)] sorted descending.
+        Scoring: exact basename match +3, basename contains keyword +2,
+        path contains keyword +1, inside a hinted directory +1.5,
+        named explicitly (.py) +4.
         """
         scored: List[Tuple[str, float, List[str]]] = []
         for rel in self.all_files:
-            base = rel.rsplit("/", 1)[-1][:-3].lower()  # basename bỏ .py
+            base = rel.rsplit("/", 1)[-1][:-3].lower()  # basename minus .py
             low_rel = rel.lower()
             score = 0.0
             matched: List[str] = []
@@ -283,19 +286,19 @@ class RepoAwarePlanner:
         return scored
 
     def _module_of(self, rel_path: str) -> str:
-        """Đổi đường dẫn tương đối thành tên module dotted (giống depgraph)."""
+        """Convert a relative path to a dotted module name (like depgraph)."""
         return rel_path[:-3].replace("/", ".")
 
     def _direct_dependents_count(self, rel_path: str) -> int:
-        """Số module import TRỰC TIẾP file này (theo depgraph)."""
+        """Number of modules DIRECTLY importing this file (per depgraph)."""
         mod = self._module_of(rel_path)
         return len(self._depgraph.dependents(self.graph, mod))
 
     def _impact_files(self, primary_files: List[str]) -> List[str]:
-        """Mở rộng primary files sang toàn bộ file bị ảnh hưởng.
+        """Expand primary files to the full set of impacted files.
 
-        Dùng depgraph.impact_analysis: BFS trên reverse graph từ module bị
-        sửa -> tất cả module (trực tiếp/gián tiếp) import nó.
+        Uses depgraph.impact_analysis: BFS over the reverse graph from the
+        edited modules -> every module (direct/indirect) importing them.
         """
         mods = [self._module_of(f) for f in primary_files
                 if self._module_of(f) in self.graph]
@@ -305,14 +308,14 @@ class RepoAwarePlanner:
             path = self.mod_to_path.get(m)
             if path and path not in files:
                 files.append(path)
-        # Đảm bảo primary files luôn có mặt (kể cả khi module không parse được)
+        # Primary files always included (even if their module failed to parse)
         for f in primary_files:
             if f not in files:
                 files.append(f)
         return sorted(files)
 
     def _find_test_files(self, primary_files: List[str]) -> List[str]:
-        """Tìm file test trong evals/ liên quan tới primary files (heuristic)."""
+        """Find test files under evals/ related to the primary files (heuristic)."""
         tests: List[str] = []
         for rel in self.all_files:
             if "/test" not in rel and not rel.rsplit("/", 1)[-1].startswith("test"):
@@ -326,91 +329,92 @@ class RepoAwarePlanner:
         return sorted(tests)[:8]
 
     def _order_by_dependency(self, files: List[str]) -> List[str]:
-        """Sắp xếp file: dependency đứng trước dependent (sửa từ gốc ra ngọn)."""
+        """Sort files: dependencies before dependents (fix roots first)."""
         def rank(rel: str) -> Tuple[int, str]:
             mod = self._module_of(rel)
             return (self._topo_index.get(mod, len(self._topo)), rel)
         return sorted(files, key=rank)
 
-    # -- API chính ----------------------------------------------------------
+    # -- main API -----------------------------------------------------------
 
     def plan(self, task: str) -> Dict:
-        """Tạo plan repo-aware cho task.
+        """Build a repo-aware plan for the task.
 
-        Trả về dict {task, task_type, steps, files_affected,
-        estimated_complexity}. Mỗi step có {action, files, reason}.
+        Returns {task, task_type, steps, files_affected,
+        estimated_complexity}. Each step has {action, files, reason}.
         """
         task = (task or "").strip()
         task_type = detect_task_type(task)
         keywords, dir_hints, file_mentions = _extract_keywords(task)
 
-        # 1. File khớp keyword (primary)
+        # 1. Keyword-matched (primary) files
         scored = self._match_files(keywords, dir_hints, file_mentions)
         primary = [rel for rel, score, _ in scored if score >= 2.0][:12]
         if not primary and scored:
-            # Fallback: lấy top match dù điểm thấp (vẫn tốt hơn plan rỗng)
+            # Fallback: take the top match even with a low score (better than empty)
             primary = [scored[0][0]]
         matched_kw = {rel: kws for rel, _, kws in scored if rel in primary}
         primary_ordered = self._order_by_dependency(primary)
 
-        # 2. Mở rộng sang dependents qua depgraph
+        # 2. Expand to dependents via depgraph
         files_affected = self._impact_files(primary)
 
-        # 3. Dựng steps
+        # 3. Build steps
         steps: List[PlanStep] = []
 
-        # Step 1: khảo sát — đọc file khớp keyword trước khi sửa
+        # Step 1: survey — read the keyword-matched files before editing
         survey_files = primary_ordered[:6]
         steps.append(PlanStep(
             action="survey",
             files=survey_files,
-            reason=("Đọc %d file khớp keyword của task để hiểu cấu trúc hiện có "
-                    "trước khi sửa — tránh sửa mù." % len(survey_files))
+            reason=("Read the %d files matching the task's keywords to understand "
+                    "the existing structure before editing — no blind edits."
+                    % len(survey_files))
             if survey_files else
-            "Không match được file cụ thể nào — khảo sát cấu trúc repo trước.",
+            "No specific file matched — survey the repo structure first.",
         ))
 
-        # Steps sửa từng file theo thứ tự dependency (gốc trước, ngọn sau)
+        # Edit steps per file, in dependency order (roots first)
         for rel in primary_ordered:
             kws = matched_kw.get(rel, [])
             n_dep = self._direct_dependents_count(rel)
-            kw_txt = ", ".join("'%s'" % k for k in kws[:3]) if kws else "thư mục hint"
+            kw_txt = ", ".join("'%s'" % k for k in kws[:3]) if kws else "directory hint"
             steps.append(PlanStep(
                 action="edit",
                 files=[rel],
-                reason=("Sửa trực tiếp vì khớp keyword %s trong task. "
-                        "Có %d module import trực tiếp file này (theo depgraph) "
-                        "nên khi sửa phải giữ API/hành vi ổn định."
+                reason=("Edit directly because it matches keyword %s in the task. "
+                        "%d modules import this file directly (per depgraph), "
+                        "so keep its API/behavior stable while editing."
                         % (kw_txt, n_dep)),
             ))
 
-        # Step kiểm tra các file bị ảnh hưởng gián tiếp
+        # Step verifying indirectly impacted files
         dependents_only = [f for f in files_affected if f not in set(primary)]
         if dependents_only:
             steps.append(PlanStep(
                 action="verify_dependents",
                 files=dependents_only[:10],
-                reason=("Các file này import (trực tiếp/gián tiếp) những file đã sửa, "
-                        "theo depgraph.impact_analysis — cần kiểm tra lại để chắc "
-                        "không vỡ sau khi sửa."),
+                reason=("These files (directly/indirectly) import the edited files, "
+                        "per depgraph.impact_analysis — re-check them to make sure "
+                        "nothing breaks after the edit."),
             ))
 
-        # Step test
+        # Test step
         test_files = self._find_test_files(primary)
         steps.append(PlanStep(
             action="test",
             files=test_files if test_files else ["evals/"],
-            reason=("Viết/bổ sung test cho hành vi thay đổi%s."
-                    % (" (đã tìm thấy %d file test liên quan)" % len(test_files)
-                       if test_files else " trong evals/")),
+            reason=("Write/extend tests for the changed behavior%s."
+                    % (" (%d related test file(s) found)" % len(test_files)
+                       if test_files else " under evals/")),
         ))
         steps.append(PlanStep(
             action="run_tests",
             files=[],
-            reason="Chạy test liên quan để xác minh bản sửa không gây hồi quy.",
+            reason="Run the related tests to verify the fix introduces no regressions.",
         ))
 
-        # 4. Ước tính độ phức tạp theo số file bị ảnh hưởng
+        # 4. Estimate complexity from the number of impacted files
         n = len(files_affected)
         if n <= 3:
             complexity = "low"
@@ -430,5 +434,5 @@ class RepoAwarePlanner:
 
 
 def plan_task(task: str, repo_root: str) -> Dict:
-    """Hàm tiện ích: plan nhanh 1 task với repo root cho trước."""
+    """Convenience: quickly plan one task for the given repo root."""
     return RepoAwarePlanner(repo_root).plan(task)

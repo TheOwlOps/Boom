@@ -1,6 +1,6 @@
 ---
 name: log-analyzer
-description: Phân tích file log, đếm lỗi và tìm pattern chậm.
+description: Analyze log files, count errors, and find slow patterns.
 version: 1.0.0
 author: boom-overnight
 license: MIT
@@ -11,14 +11,14 @@ category: devops
 
 # Log Analyzer
 
-Phân tích file log (app, server, worker) để trích xuất tín hiệu quan trọng:
+Analyze log files (app, server, worker) to extract the important signals:
 
-- Đếm `errors` / `warnings` theo mức độ.
-- Gom nhóm message lỗi lặp lại (`top_errors`).
-- Phát hiện stack trace Python/JS.
-- Phát hiện operation chậm (`slow_ops`) theo ngưỡng thời gian.
+- Count `errors` / `warnings` by severity.
+- Group repeated error messages (`top_errors`).
+- Detect Python/JS stack traces.
+- Detect slow operations (`slow_ops`) against a time threshold.
 
-## Cách dùng
+## Usage
 
 ```python
 from analyzer import analyze_log
@@ -27,8 +27,8 @@ result = analyze_log("/var/log/app.log", slow_threshold_ms=1000)
 print(result["total_lines"], result["errors"], result["warnings"])
 ```
 
-Dùng `terminal` để mở file log và `read_file` để xem đoạn log quanh lỗi
-lớn nhất. Kết quả trả về là dict:
+Use `terminal` to open the log file and `read_file` to view the log around the
+biggest error. The result is a dict:
 
 ```python
 {
@@ -41,9 +41,9 @@ lớn nhất. Kết quả trả về là dict:
 }
 ```
 
-## Quy ước nhận diện
+## Detection conventions
 
-- Mức độ: từ khóa `ERROR`, `WARN`/`WARNING`, `CRITICAL`, `EXCEPTION` (không phân biệt hoa/thường).
-- Slow op: dòng chứa `duration`/`elapsed`/`took`/`in`/`after` + số + đơn vị vượt `slow_threshold_ms`.
-- Message được chuẩn hoá trước khi gom nhóm: bỏ timestamp, PID, số request-id
-  để các bản sao của cùng một lỗi gom vào một bucket.
+- Severity: keywords `ERROR`, `WARN`/`WARNING`, `CRITICAL`, `EXCEPTION` (case-insensitive).
+- Slow op: a line containing `duration`/`elapsed`/`took`/`in`/`after` + a number + a unit exceeding `slow_threshold_ms`.
+- Messages are normalized before grouping: timestamps, PIDs, request-id numbers
+  are stripped so copies of the same error land in one bucket.

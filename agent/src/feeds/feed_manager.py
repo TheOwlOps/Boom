@@ -1,6 +1,6 @@
-"""Quản lý nhiều feed: thêm/bớt, start/stop hàng loạt, fan-out message.
+"""Manages many feeds: add/remove, bulk start/stop, message fan-out.
 
-Fan-out: 1 message từ feed tên X -> gọi TẤT CẢ callback đã đăng ký qua on(X, cb).
+Fan-out: 1 message from feed named X -> calls EVERY callback registered via on(X, cb).
 """
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from typing import Callable, Dict, List, Optional
 
 
 class FeedManager:
-    """Quản lý tập feed theo tên.
+    """Manages a named set of feeds.
 
-    Cách dùng:
+    Usage:
         mgr = FeedManager()
         mgr.add_feed("btc", BinancePriceFeed())
         mgr.on("btc", lambda m: print("A:", m))
-        mgr.on("btc", lambda m: print("B:", m))   # fan-out: cả A và B đều nhận
+        mgr.on("btc", lambda m: print("B:", m))   # fan-out: both A and B receive
         mgr.start_all()
         ...
         mgr.stop_all()
@@ -26,40 +26,40 @@ class FeedManager:
         self._callbacks: Dict[str, List[Callable]] = {}
         self._lock = threading.Lock()
 
-    # -- Quản lý feed ---------------------------------------------------
+    # -- feed management ------------------------------------------------
     def add_feed(self, name: str, feed) -> None:
-        """Thêm feed. Tự bọc on_message của feed để fan-out về các callback đã đăng ký."""
+        """Adds a feed. Wraps the feed's on_message for fan-out to registered callbacks."""
         with self._lock:
             if name in self._feeds:
-                raise ValueError(f"feed {name!r} đã tồn tại (dùng remove_feed trước)")
+                raise ValueError(f"feed {name!r} already exists (remove_feed first)")
             original = getattr(feed, "on_message", None)
 
             def _dispatch(msg, _name=name, _orig=original):
-                # 1. callback gốc của feed (nếu có lúc add) vẫn được gọi
+                # 1. the feed's original callback (if set at add time) still runs
                 if _orig is not None:
                     try:
                         _orig(msg)
                     except Exception:
                         pass
-                # 2. fan-out tới mọi callback đăng ký qua on(name, cb)
+                # 2. fan-out to every callback registered via on(name, cb)
                 for cb in list(self._callbacks.get(_name, [])):
                     try:
                         cb(msg)
                     except Exception:
-                        pass  # 1 callback lỗi không chặn các callback khác
+                        pass  # one bad callback doesn't block the others
 
             try:
                 feed.on_message = _dispatch
             except AttributeError:
                 raise TypeError(
-                    f"feed {name!r} không có thuộc tính on_message gán được "
-                    "(feed phải kế thừa Feed từ websocket_feed.py)"
+                    f"feed {name!r} has no assignable on_message attribute "
+                    "(feeds must subclass Feed from websocket_feed.py)"
                 )
             self._feeds[name] = feed
             self._callbacks.setdefault(name, [])
 
     def remove_feed(self, name: str) -> None:
-        """Gỡ feed: stop feed rồi xóa khỏi manager."""
+        """Removes a feed: stops the feed, then drops it from the manager."""
         with self._lock:
             feed = self._feeds.pop(name, None)
             self._callbacks.pop(name, None)
@@ -70,14 +70,14 @@ class FeedManager:
                 pass
 
     def on(self, name: str, callback: Callable) -> None:
-        """Đăng ký callback nhận mọi message từ feed `name` (fan-out)."""
+        """Registers a callback receiving every message from feed `name` (fan-out)."""
         with self._lock:
             if name not in self._feeds:
-                raise KeyError(f"chưa có feed {name!r} (add_feed trước)")
+                raise KeyError(f"no feed {name!r} yet (add_feed first)")
             self._callbacks[name].append(callback)
 
     def off(self, name: str, callback: Callable) -> bool:
-        """Hủy 1 callback. Trả True nếu tìm thấy và xóa."""
+        """Unregisters one callback. Returns True when found and removed."""
         with self._lock:
             cbs = self._callbacks.get(name, [])
             if callback in cbs:
@@ -85,9 +85,9 @@ class FeedManager:
                 return True
             return False
 
-    # -- Điều khiển hàng loạt -------------------------------------------
+    # -- bulk control -----------------------------------------------------
     def start_all(self) -> None:
-        """Start tất cả feed. Feed nào lỗi start thì bỏ qua, các feed khác vẫn chạy."""
+        """Starts every feed. A feed that fails to start is skipped, others still run."""
         for name, feed in list(self._feeds.items()):
             try:
                 feed.start()
@@ -95,16 +95,16 @@ class FeedManager:
                 pass
 
     def stop_all(self) -> None:
-        """Stop tất cả feed."""
+        """Stops every feed."""
         for name, feed in list(self._feeds.items()):
             try:
                 feed.close()
             except Exception:
                 pass
 
-    # -- Trạng thái -------------------------------------------------------
+    # -- status -----------------------------------------------------------
     def get_status(self) -> Dict[str, str]:
-        """{tên_feed: 'running' | 'stopped'} cho từng feed."""
+        """{feed_name: 'running' | 'stopped'} for each feed."""
         status = {}
         for name, feed in self._feeds.items():
             try:

@@ -1,6 +1,6 @@
-"""tools.terminal — chạy lệnh shell + quản lý tiến trình nền cho Boom.
+"""tools.terminal — shell command execution + background process management for Boom.
 
-Re-export từ .shell (run/bg/status/kill) và .process (list/kill tiến trình ledger).
+Re-exported from .shell (run/bg/status/kill) and .process (ledger list/kill).
 """
 
 from agent.src.tools.terminal.process import (

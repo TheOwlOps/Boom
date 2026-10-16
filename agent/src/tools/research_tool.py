@@ -89,7 +89,7 @@ def research_brief(topic: str, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary = " ".join(digest)
     rest = len(cleaned) - SUMMARY_SOURCES
     if rest > 0:
-        summary += f" (+{rest} nguồn nữa, xem danh sách bên dưới.)"
+        summary += f" (+{rest} more sources, see the list below.)"
 
     key_points = []
     for i, src in enumerate(cleaned, 1):
@@ -132,7 +132,7 @@ def build_tools(env: Any = None) -> Dict[str, Dict[str, Any]]:
                 "properties": {
                     "topic": {
                         "type": "string",
-                        "description": "Research topic, e.g. 'pin mặt trời perovskite 2026'.",
+                        "description": "Research topic, e.g. 'perovskite solar cells 2026'.",
                     },
                     "sources": {
                         "type": "array",

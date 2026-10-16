@@ -15,8 +15,8 @@ from gateway.channel import build_default_registry
 
 logger = logging.getLogger("boom.gateway")
 
-FAILED_TEXT = "Xử lý thất bại. Chi tiết đã ghi trong log của daemon."
-QUEUED_ACK = "Yêu cầu đang được xử lý, kết quả sẽ được gửi sau."
+FAILED_TEXT = "Processing failed. Details are in the daemon log."
+QUEUED_ACK = "Request is being processed; the result will be sent later."
 
 
 class GatewayDaemon:
@@ -138,11 +138,11 @@ class GatewayDaemon:
         # 2. System 1 Reflex Gate & Owner Guard
         route, meta = SystemOneGate.evaluate(text, user_identity=sender_name)
         if route == "owner_guard_blocked":
-            reply = meta.get("response", "Xin lỗi, thông tin kiến trúc và cấu hình hệ thống được bảo mật tuyệt đối.")
+            reply = meta.get("response", "Sorry, system architecture and configuration details are strictly confidential.")
             self.ledger.fulfill(obligation_key)
             return reply
         elif route == "blocked":
-            reply = "Yêu cầu bị từ chối do vi phạm quy tắc bảo mật an toàn."
+            reply = "Request denied for violating the safety and security rules."
             self.ledger.fulfill(obligation_key)
             return reply
 
@@ -173,13 +173,13 @@ class GatewayDaemon:
         )
         self.ledger.fulfill(obligation_key)
         if outcome["status"] == "rejected":
-            return f"Hệ thống đang bận ({outcome['error']})."
+            return f"System is busy ({outcome['error']})."
         if outcome["status"] == "queued":
             return QUEUED_ACK
         if outcome["status"] == "failed":
             return FAILED_TEXT
         if outcome["status"] == "cancelled":
-            return "Yêu cầu đã bị huỷ."
+            return "Request was cancelled."
         return outcome["reply"]
 
     async def _recover_delivery(self, job: Any, reply: str):

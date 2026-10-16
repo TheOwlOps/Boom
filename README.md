@@ -1,7 +1,7 @@
 # Boom 🦉
 
 <p align="center">
-  <strong>The agent harness that powers Muse.</strong><br/>
+  <strong>The multi-channel AI agent harness that powers Muse.</strong><br/>
   Prompt in → guardrailed ReAct loops → tools dispatched across 8 channels.
 </p>
 
@@ -17,9 +17,9 @@
   <img src="docs/boom_harness.gif" width="100%" alt="Boom harness orchestrating Muse agent loops"/>
 </p>
 
-**Boom** is an autonomous multi-channel AI agent harness. Chat with it via Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the web dashboard. It plans, codes, researches, and manages your business groups autonomously.
+**Boom** is an autonomous, multi-channel AI agent harness. Chat with it through Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the web dashboard. It plans, codes, researches, and runs your business operations on its own, with a human in the approval loop for anything risky.
 
-> **Harness, not a model.** Boom orchestrates frontier LLMs (OpenAI, Anthropic, etc.) — like OpenClaw, but built for multi-channel business operations.
+> **Harness, not a model.** Boom orchestrates frontier LLMs (OpenAI, Anthropic, and others) — think OpenClaw, rebuilt for multi-channel business operations.
 
 ## ✨ Features
 
@@ -29,14 +29,14 @@
 | 💬 **Channels** | 8 platforms: Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, Messenger |
 | 🔍 **DeepSearch** | Multi-hop research with cross-source verification |
 | 🤔 **DeepThink** | Multi-perspective analysis, no topic avoidance |
-| 🤖 **Dynamic Agents** | Auto spawn/retire subagents by context (Coder, Researcher, Data Scientist...) |
+| 🤖 **Dynamic Agents** | Auto-spawn/retire subagents by context (Coder, Researcher, Data Scientist…) |
 | 💻 **Autonomous Coding** | Plan → execute → verify → debug loop with AST refactoring |
 | 🏢 **Business** | Multi-group management, RBAC, approval flows, auto reports |
 | 🎤 **Voice** | STT + TTS voice conversations |
 | 🖼️ **Media** | Image generation, OCR (Vietnamese + English), video analysis |
 | 📊 **Documents** | Native XLSX (formulas/charts), PPTX, PDF generation |
-| 🔌 **Plugins** | Manifest-based with lifecycle, sandboxing, dependency resolution |
-| 🛡️ **Production** | Circuit breaker, rate limiting, structured logging, graceful shutdown |
+| 🔌 **Plugins** | Manifest-based, with lifecycle, sandboxing, and dependency resolution |
+| 🛡️ **Production** | Circuit breakers, rate limiting, structured logging, graceful shutdown |
 
 ## 🚀 Quick Start
 
@@ -77,7 +77,7 @@ Open **http://127.0.0.1:5173** for the web dashboard.
 
 ## 🏗️ Architecture
 
-```
+```text
 ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
 │  Channels   │────▶│    Brain     │────▶│    Tools    │
 │ (8 platforms)│     │ (ReAct+DAG+  │     │ (131 tools) │
@@ -111,7 +111,7 @@ python3 -m pytest evals/ -q
 3. Commit your changes
 4. Push and open a Pull Request
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## 📄 License
 

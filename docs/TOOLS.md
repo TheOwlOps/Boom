@@ -1,12 +1,12 @@
-# Boom — Tài liệu Tools
+# Boom — Tools Reference
 
-Tài liệu toàn bộ tools được đăng ký trong `agent/src/environment.py` (`AgentEnvironment._init_tools()`), gồm tool đăng ký trực tiếp + tool nạp từ các module `build_tools()` (web, cron, browser, artifacts, goals, people, digest, research, tasks, verify, triggers, OCR, authz, audit, broadcast, các package refactored `tools.web`/`tools.code`/`tools.security`/`tools.db`, connector registry và plugin registry).
+The complete tool catalog registered in `agent/src/environment.py` (`AgentEnvironment._init_tools()`), covering directly registered tools plus tools loaded from `build_tools()` modules (web, cron, browser, artifacts, goals, people, digest, research, tasks, verify, triggers, OCR, authz, audit, broadcast, the refactored `tools.web` / `tools.code` / `tools.security` / `tools.db` packages, the connector registry, and the plugin registry).
 
-> **Nguồn xác thực:** đếm trực tiếp bằng Python — `AgentEnvironment(root_dir=..., yolo=True).get_tools()` trên `main` (commit `f4ed006`).
-> **Tổng số: 158 tools.**
+> **Verification source:** counted directly in Python — `AgentEnvironment(root_dir=..., yolo=True).get_tools()` on `main` (commit `f4ed006`).
+> **Total: 158 tools.**
 
-| Nhóm | Số tools |
-|------|----------|
+| Group | Tool count |
+|-------|-----------|
 | filesystem | 13 |
 | terminal | 13 |
 | git | 11 |
@@ -14,295 +14,295 @@ Tài liệu toàn bộ tools được đăng ký trong `agent/src/environment.py
 | code | 11 |
 | security | 12 |
 | db | 3 |
-| legacy & mở rộng | 67 |
+| legacy & extended | 67 |
 
 ---
 
 ## 1. filesystem (13)
 
-Thao tác file an toàn (safe path resolution, chặn path traversal). Bộ `fs_*` là bản refactored mới; bộ cũ (`read_file`, `write_file`, `patch_file`, `edit_file`, `append_file`, `file_info`) giữ để tương thích ngược.
+Safe file operations (safe path resolution, path traversal blocked). The `fs_*` set is the new refactored version; the older set (`read_file`, `write_file`, `patch_file`, `edit_file`, `append_file`, `file_info`) is kept for backward compatibility.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `fs_read` | Đọc file, trả về dòng đánh số; file nhị phân chỉ báo loại, không dump. Chặn path traversal. |
-| `fs_write` | Ghi toàn bộ nội dung mới vào file (ghi đè). |
-| `fs_edit` | Sửa file bằng thay thế chính xác (exact-match). |
-| `fs_append` | Nối text vào cuối file. |
-| `fs_delete` | Xóa file vĩnh viễn, không hoàn tác. |
-| `fs_list` | Liệt kê nội dung thư mục, hỗ trợ recursive. |
-| `fs_info` | Metadata file: size, mtime, số dòng. |
-| `read_file` | (legacy) Đọc file, trả về dòng đánh số, hỗ trợ phân trang offset/limit. |
-| `write_file` | (legacy) Ghi toàn bộ nội dung mới vào file (ghi đè). |
-| `patch_file` | (legacy) Thay thế chuỗi chính xác trong file — dùng cho sửa nhỏ. |
-| `edit_file` | (legacy) Sửa file bằng exact-match; tạo backup `.bak`; fail nếu 0 hoặc >1 match. |
-| `append_file` | (legacy) Nối text vào cuối file. |
-| `file_info` | (legacy) Metadata file: size, mtime, số dòng. |
+| Tool name | Description |
+|-----------|-------------|
+| `fs_read` | Read a file; returns numbered lines. Binary files report their type instead of being dumped. Blocks path traversal. |
+| `fs_write` | Write new content to a file in full (overwrite). |
+| `fs_edit` | Edit a file via exact-match replacement. |
+| `fs_append` | Append text to the end of a file. |
+| `fs_delete` | Permanently delete a file; not undoable. |
+| `fs_list` | List directory contents; supports recursion. |
+| `fs_info` | File metadata: size, mtime, line count. |
+| `read_file` | (legacy) Read a file; returns numbered lines; supports offset/limit pagination. |
+| `write_file` | (legacy) Write new content to a file in full (overwrite). |
+| `patch_file` | (legacy) Exact-string replacement in a file — for small edits. |
+| `edit_file` | (legacy) Edit a file via exact-match; creates a `.bak` backup; fails on 0 or >1 matches. |
+| `append_file` | (legacy) Append text to the end of a file. |
+| `file_info` | (legacy) File metadata: size, mtime, line count. |
 
 ---
 
 ## 2. terminal (13)
 
-Chạy lệnh, quản lý tiến trình nền và code động.
+Run shell commands, manage background processes, and execute dynamic code.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `shell_run` | Chạy shell command với timeout (mặc định 30s); không dùng shell=True, chặn lệnh nguy hiểm. |
-| `shell_bg` | Chạy lệnh nền, trả về `job_id`. |
-| `shell_status` | Kiểm tra trạng thái job nền. |
-| `shell_kill` | Kill job nền. |
-| `shell_forget` | Xóa job nền đã xong khỏi registry để giải phóng bộ nhớ. |
-| `process_start` | Khởi động tiến trình nền dài, theo dõi qua session_id; stdout/stderr buffer đến khi poll. |
-| `process_poll` | Poll tiến trình nền lấy stdout/stderr mới và trạng thái. |
-| `process_list` | Liệt kê các tiến trình nền đang theo dõi. |
-| `process_kill` | Dừng tiến trình nền, trả về output chưa poll. |
-| `sandbox_exec` | Chạy lệnh qua Rust sandbox core bằng IPC, trả về stdout + exit code. |
-| `execute_code` | Chạy Python code in-process với tool registry được expose; trả về stdout. |
-| `fuzzy_patch` | Sửa text kiểu find-and-replace chịu lỗi: exact → CRLF → Unicode → trim whitespace → fuzzy ≥ 0.85. |
-| `rewind` | Hoàn tác các sửa file của session này: khôi phục file đã sửa, xóa file đã tạo (dry_run để xem trước). |
+| Tool name | Description |
+|-----------|-------------|
+| `shell_run` | Run a shell command with a timeout (default 30s); no shell=True; blocks dangerous commands. |
+| `shell_bg` | Run a command in the background; returns a `job_id`. |
+| `shell_status` | Check the status of a background job. |
+| `shell_kill` | Kill a background job. |
+| `shell_forget` | Drop a finished background job from the registry to free memory. |
+| `process_start` | Start a long-running background process tracked via session_id; stdout/stderr buffered until polled. |
+| `process_poll` | Poll a background process for new stdout/stderr and status. |
+| `process_list` | List tracked background processes. |
+| `process_kill` | Stop a background process; returns unpolled output. |
+| `sandbox_exec` | Run a command via the Rust sandbox core over IPC; returns stdout + exit code. |
+| `execute_code` | Run Python code in-process with the tool registry exposed; returns stdout. |
+| `fuzzy_patch` | Fault-tolerant find-and-replace text patching: exact → CRLF → Unicode → whitespace-trim → fuzzy ≥ 0.85. |
+| `rewind` | Undo this session's file edits: restore modified files, delete created files (dry_run to preview). |
 
 ---
 
 ## 3. git (11)
 
-6 tool git local + 5 tool GitHub (qua token).
+6 local git tools + 5 GitHub tools (via token).
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `git_status` | Git status --porcelain: staged/unstaged theo từng file. |
-| `git_diff` | Xem git diff: thống kê từng file + raw diff text (giới hạn), staged=true diff index. |
-| `git_log` | Lịch sử commit gần nhất: hash, author, date, subject. |
-| `git_diff_summary` | Tóm tắt diff: số file đổi, +/- dòng, function bị chạm. |
-| `git_safe_commit` | Commit file staged CHỈ khi message không rỗng và không phát hiện secret; từ chối trên nhánh protected. |
-| `git_branch_guard` | Kiểm tra nhánh hiện tại có phải nhánh protected (main/master) không — agent phải tạo feature branch. |
-| `github_list_issues` | Liệt kê issues của repo (loại trừ PR). |
-| `github_get_issue` | Đọc 1 issue kèm body và comment đầu. |
-| `github_list_prs` | Liệt kê pull requests của repo. |
-| `github_read_file` | Đọc file text từ repo tại 1 ref (branch/tag/commit, mặc định main). |
-| `github_search_code` | Tìm kiếm code trên các repo mà token có quyền truy cập. |
+| Tool name | Description |
+|-----------|-------------|
+| `git_status` | Git status --porcelain: staged/unstaged per file. |
+| `git_diff` | View git diff: per-file stats + raw diff text (capped); staged=true diffs the index. |
+| `git_log` | Recent commit history: hash, author, date, subject. |
+| `git_diff_summary` | Diff summary: files changed, +/- lines, functions touched. |
+| `git_safe_commit` | Commit staged files only when the message is non-empty and no secret is detected; refuses on protected branches. |
+| `git_branch_guard` | Check whether the current branch is protected (main/master) — the agent must create a feature branch. |
+| `github_list_issues` | List repo issues (excluding PRs). |
+| `github_get_issue` | Read a single issue with its body and first comments. |
+| `github_list_prs` | List repo pull requests. |
+| `github_read_file` | Read a text file from a repo at a given ref (branch/tag/commit, default main). |
+| `github_search_code` | Search code across repos the token can access. |
 
 ---
 
 ## 4. web (28)
 
-Tìm kiếm, fetch, extract, browser headless thật, scrape, tin tức và thời tiết.
+Search, fetch, extract, real headless browser, scraping, news, and weather.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `web_search` | Tìm kiếm web qua DuckDuckGo HTML; trả về list {title, url, snippet}. |
-| `web_fetch` | Fetch URL trả về text; có timeout, retry, circuit breaker. |
-| `web_extract` | Trích xuất nội dung chính từ URL, loại bỏ nav/footer/scripts. |
-| `web_extract_many` | Fetch song song nhiều URL; URL lỗi chỉ lỗi ở slot của nó. |
-| `crawl_site` | Crawl BFS một site (chỉ cùng domain); polite: delay giữa các fetch, backoff khi 429. |
-| `read_sitemap` | Đọc sitemap.xml thành [{url, lastmod}], hỗ trợ sitemapindex (đệ quy tối đa 5). |
-| `browser_navigate` | Mở URL trong headless Chrome/Edge; browser giữ mở cho các tool browser khác. |
-| `browser_click` | Click element theo CSS selector bằng mouse event thật. |
-| `browser_fill` | Gõ text vào input/textarea, kích hoạt input/change events. |
-| `browser_eval` | Chạy JavaScript trên trang hiện tại, trả về giá trị. |
-| `browser_screenshot` | Chụp PNG toàn trang hoặc 1 element theo CSS selector. |
-| `browser_tabs` | Liệt kê các tab đang mở và tab active. |
-| `browser_open_tab` | Mở URL trong tab mới và chuyển sang tab đó. |
-| `browser_use_tab` | Chuyển sang tab tại index cho trước. |
-| `browser_close_tab` | Đóng tab tại index cho trước. |
-| `browser_close` | Đóng browser, process và profile tạm. |
-| `browser_wait_for` | Đợi đến khi CSS selector khớp (không đoán thời gian). |
-| `browser_network` | Liệt kê các request trang đã thực hiện (method, url, type, status). |
-| `scrape_basic` | Scrape cấu trúc 1 trang HTML tĩnh: mỗi element khớp item_selector thành 1 item. |
-| `scrape_list` | Crawl trang list phân trang, trích field theo CSS selector; trang JS tự fallback browser headless. |
-| `scrape_product` | Trích trang chi tiết (tên, giá, ảnh, mô tả) theo schema {field: selector}. |
-| `scrape_table` | Trích bảng HTML thành [{column: value}] rows. |
-| `news_headlines` | Tin mới nhất từ RSS VnExpress (tin-mới-nhất, kinh-doanh, thể-thao) hoặc RSS tùy chỉnh. |
-| `news_search` | Tìm tin VnExpress theo keyword (match không phân biệt hoa thường trên title). |
-| `research_brief` | Dựng research brief có trích dẫn [1], [2] từ nguồn ĐÃ thu thập; không fetch thêm. |
-| `watch_url` | Snapshot trang (SHA256) và báo thay đổi so với lần chạy trước — thiết kế cho cron daily (VD: theo dõi giá). |
-| `weather_now` | Thời tiết hiện tại tại tọa độ: nhiệt độ, độ ẩm, gió (VD: Hà Nội 21.0285, 105.8542). |
-| `weather_daily` | Dự báo ngày tại tọa độ: nhiệt độ max/min và mô tả ngắn tiếng Việt. |
+| Tool name | Description |
+|-----------|-------------|
+| `web_search` | Search the web via DuckDuckGo HTML; returns a list of {title, url, snippet}. |
+| `web_fetch` | Fetch a URL, return text; has timeout, retry, circuit breaker. |
+| `web_extract` | Extract the main content of a URL, stripping nav/footer/scripts. |
+| `web_extract_many` | Fetch multiple URLs in parallel; a failing URL fails only its own slot. |
+| `crawl_site` | BFS-crawl a single site (same domain only); polite: delay between fetches, backoff on 429. |
+| `read_sitemap` | Parse sitemap.xml into [{url, lastmod}]; supports sitemapindex (recursive, max 5). |
+| `browser_navigate` | Open a URL in headless Chrome/Edge; the browser stays open for other browser tools. |
+| `browser_click` | Click an element via CSS selector using a real mouse event. |
+| `browser_fill` | Type text into an input/textarea, firing input/change events. |
+| `browser_eval` | Run JavaScript on the current page; returns the value. |
+| `browser_screenshot` | Capture a PNG of the full page or one element via CSS selector. |
+| `browser_tabs` | List open tabs and the active tab. |
+| `browser_open_tab` | Open a URL in a new tab and switch to it. |
+| `browser_use_tab` | Switch to the tab at the given index. |
+| `browser_close_tab` | Close the tab at the given index. |
+| `browser_close` | Close the browser, its process, and temp profile. |
+| `browser_wait_for` | Wait until a CSS selector matches (no guessing durations). |
+| `browser_network` | List requests the page has made (method, url, type, status). |
+| `scrape_basic` | Scrape a static HTML page structurally: each element matching item_selector becomes one item. |
+| `scrape_list` | Crawl a paginated listing page, extracting fields via CSS selectors; JS pages auto-fallback to the headless browser. |
+| `scrape_product` | Extract a detail page (name, price, images, description) via a {field: selector} schema. |
+| `scrape_table` | Extract an HTML table into [{column: value}] rows. |
+| `news_headlines` | Latest news from VnExpress RSS (latest, business, sports) or a custom RSS feed. |
+| `news_search` | Search VnExpress news by keyword (case-insensitive title match). |
+| `research_brief` | Build a cited research brief [1], [2] from already-gathered sources; fetches nothing new. |
+| `watch_url` | Snapshot a page (SHA256) and report changes vs. the previous run — designed for daily cron (e.g. price tracking). |
+| `weather_now` | Current weather at coordinates: temperature, humidity, wind (e.g. Hanoi 21.0285, 105.8542). |
+| `weather_daily` | Daily forecast at coordinates: max/min temperature and a short description. |
 
 ---
 
 ## 5. code (11)
 
-Phân tích code, review, verify và điều phối agent.
+Code analysis, review, verification, and agent coordination.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `ast_inspect` | Parse file Python, liệt kê imports/classes/functions mà không chạy code. |
-| `ast_parse` | Parse 1 file Python bằng AST: trả về classes/functions/imports kèm số dòng. |
-| `code_review` | Review tĩnh file Python: complexity, dead code, bare except, TODO; trả về báo cáo Markdown tiếng Việt. |
-| `dep_cycles` | Tìm import vòng tròn (circular imports) dưới 1 thư mục. |
-| `dep_impact` | Tìm các module bị ảnh hưởng khi file cho trước thay đổi (reverse dependency BFS). |
-| `verify_code` | Verify code Python thật: chạy trong subprocess, tự debug lỗi bằng LLM vài vòng, rồi critique adversarial. |
-| `verify_text` | Verify text/fact/plan bằng adversarial critic + Self-Refine; loại 'fact' dùng search_fn kiểm chứng claim. |
-| `optimize_workflow` | Tìm workflow đa-agent tốt hơn cho 1 loại mục tiêu lặp lại; workflow thắng lưu vào memories/workflows.json. |
-| `delegate_task` | Chạy subtask như các subagent riêng (transcript riêng); subtask có depends_on chạy sau và nhận kết quả của subtask trước. Roles: planner, coder, reviewer, critic, learner. |
-| `search_tools` | Tìm tool theo keyword tại runtime (tên, mô tả, toolset); trả về kèm schema. Dùng thay vì đoán tên tool. |
-| `list_toolsets` | Liệt kê mọi toolset đã đăng ký và tên tool trong từng toolset. |
+| Tool name | Description |
+|-----------|-------------|
+| `ast_inspect` | Parse a Python file; list imports/classes/functions without running code. |
+| `ast_parse` | Parse a single Python file with AST: returns classes/functions/imports with line numbers. |
+| `code_review` | Static review of a Python file: complexity, dead code, bare except, TODO; returns a Markdown report (in Vietnamese). |
+| `dep_cycles` | Find circular imports under a directory. |
+| `dep_impact` | Find modules affected when a given file changes (reverse-dependency BFS). |
+| `verify_code` | Verify Python code for real: run in a subprocess, auto-debug errors with the LLM over a few rounds, then adversarial critique. |
+| `verify_text` | Verify text/fact/plan with an adversarial critic + Self-Refine; the 'fact' kind verifies claims via search_fn. |
+| `optimize_workflow` | Find a better multi-agent workflow for a repeated goal type; the winning workflow is saved to memories/workflows.json. |
+| `delegate_task` | Run a subtask as separate subagents (own transcripts); subtasks with depends_on run after and receive the previous subtask's result. Roles: planner, coder, reviewer, critic, learner. |
+| `search_tools` | Find a tool by keyword at runtime (name, description, toolset); returns results with schemas. Use instead of guessing tool names. |
+| `list_toolsets` | List all registered toolsets and the tool names in each. |
 
 ---
 
 ## 6. security (12)
 
-Quét secret, sanitize input, phân quyền RBAC và audit.
+Secret scanning, input sanitization, RBAC authorization, and audit.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `secret_scan` | Quét file/thư mục tìm secret rò rỉ (API key, token, private key); preview bị che. |
-| `sanitize_input` | Sanitize args trước khi gọi tool: strip ký tự điều khiển, truncate, phát hiện prompt injection, validate path chống traversal. |
-| `check_rate_limit` | Kiểm tra rate limit (token bucket) cho 1 key; strict=true cho tool nguy hiểm. |
-| `authz_check` | Kiểm tra user có quyền không; trả về allowed=true/false. |
-| `authz_add_user` | Thêm user mới (roles tùy chọn, phải tồn tại). |
-| `authz_assign_role` | Gán role cho user. |
-| `authz_revoke_role` | Gỡ role khỏi user. |
-| `authz_create_role` | Tạo role custom (không trùng tên builtin). |
-| `authz_list_roles` | Liệt kê tất cả roles (builtin + custom). |
-| `authz_list_users` | Liệt kê tất cả users kèm roles. |
-| `audit_get` | Lấy 1 audit event theo id. |
-| `audit_query` | Tìm kiếm trong audit log append-only (ai làm gì, khi nào). |
+| Tool name | Description |
+|-----------|-------------|
+| `secret_scan` | Scan files/directories for leaked secrets (API keys, tokens, private keys); previews are masked. |
+| `sanitize_input` | Sanitize args before a tool call: strip control characters, truncate, detect prompt injection, validate paths against traversal. |
+| `check_rate_limit` | Check a token-bucket rate limit for a key; strict=true for dangerous tools. |
+| `authz_check` | Check whether a user is authorized; returns allowed=true/false. |
+| `authz_add_user` | Add a new user (optional roles, which must exist). |
+| `authz_assign_role` | Assign a role to a user. |
+| `authz_revoke_role` | Remove a role from a user. |
+| `authz_create_role` | Create a custom role (must not clash with builtin names). |
+| `authz_list_roles` | List all roles (builtin + custom). |
+| `authz_list_users` | List all users with their roles. |
+| `audit_get` | Get one audit event by id. |
+| `audit_query` | Search the append-only audit log (who did what, when). |
 
 ---
 
 ## 7. db (3)
 
-SQLite an toàn: chỉ bảng đã whitelist, parameterized query, không SQL thô.
+Safe SQLite: whitelisted tables only, parameterized queries, no raw SQL.
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `db_query` | SELECT chỉ-đọc trên bảng đã whitelist; where chỉ cho phép 'col OP ?' nối AND/OR. |
-| `db_insert` | INSERT 1 dòng {cột: giá trị} vào bảng đã whitelist; trả về rowid. |
-| `db_update` | UPDATE bảng đã whitelist; WHERE bắt buộc (chống update toàn bảng). |
+| Tool name | Description |
+|-----------|-------------|
+| `db_query` | Read-only SELECT on whitelisted tables; where only allows 'col OP ?' joined by AND/OR. |
+| `db_insert` | INSERT one row {column: value} into a whitelisted table; returns rowid. |
+| `db_update` | UPDATE a whitelisted table; WHERE is mandatory (guards against full-table updates). |
 
 ---
 
-## 8. legacy & mở rộng (67)
+## 8. legacy & extended (67)
 
-Các tool cũ (giữ tương thích) và tool mở rộng theo domain.
+Legacy tools (kept for compatibility) and domain-extended tools.
 
 ### Skills (3)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `list_skills` | Liệt kê Agent Skills khả dụng kèm tên và mô tả. |
-| `view_skill` | Đọc tài liệu đầy đủ của 1 skill (tùy chọn file cụ thể bên trong). |
-| `install_skill` | Cài skill theo tên từ skills hub. |
+| Tool name | Description |
+|-----------|-------------|
+| `list_skills` | List available Agent Skills with names and descriptions. |
+| `view_skill` | Read a skill's full documentation (optionally a specific file inside). |
+| `install_skill` | Install a skill by name from the skills hub. |
 
 ### Email — Gmail (5)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `gmail_search` | Tìm message Gmail; trả về list id/snippet, không có body. |
-| `gmail_read` | Đọc 1 message Gmail: headers, snippet, body plain-text. |
-| `gmail_draft` | Tạo LOCAL draft (không gửi, không gọi Gmail API); trả về draft_id + preview. |
-| `gmail_send` | Gửi draft đã tạo bằng gmail_draft. NGUY HIỂM: gửi thật, luôn cần approval. |
-| `gmail_discard` | Hủy local draft mà không gửi. |
+| Tool name | Description |
+|-----------|-------------|
+| `gmail_search` | Search Gmail messages; returns a list of id/snippet, no body. |
+| `gmail_read` | Read one Gmail message: headers, snippet, plain-text body. |
+| `gmail_draft` | Create a LOCAL draft (does not send, no Gmail API call); returns draft_id + preview. |
+| `gmail_send` | Send a draft created with gmail_draft. DANGEROUS: sends for real, always requires approval. |
+| `gmail_discard` | Discard a local draft without sending. |
 
 ### Connectors: calendar, drive, spotify, status (9)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `calendar_list` | Liệt kê sự kiện calendar chính giữa 2 mốc ISO 8601. |
-| `calendar_create` | Tạo sự kiện trên calendar chính (timezone mặc định Asia/Ho_Chi_Minh). |
-| `calendar_delete` | Xóa sự kiện theo id. |
-| `drive_list` | Liệt kê file Google Drive (mới nhất trước). |
-| `drive_search` | Tìm file Drive theo tên. |
-| `drive_download` | Tải nội dung file Drive (text inline tối đa 200k ký tự). |
-| `drive_upload` | Upload text thành file Drive mới. |
-| `spotify_search` | Tìm track/artist/album trên Spotify. |
-| `spotify_now_playing` | Đang phát gì trên Spotify; trả về {"playing": false} trung thực khi không có gì. |
-| `spotify_play` | Phát track URI trên thiết bị Spotify đang active. |
-| `spotify_pause` | Tạm dừng phát nhạc Spotify. |
-| `connector_status` | Connector nào đang connected/disconnected + gợi ý setup; chỉ kiểm tra config, không gọi mạng. |
+| Tool name | Description |
+|-----------|-------------|
+| `calendar_list` | List events on the primary calendar between two ISO 8601 timestamps. |
+| `calendar_create` | Create an event on the primary calendar (default timezone Asia/Ho_Chi_Minh). |
+| `calendar_delete` | Delete an event by id. |
+| `drive_list` | List Google Drive files (newest first). |
+| `drive_search` | Find Drive files by name. |
+| `drive_download` | Download a Drive file's content (text inlined, up to 200k characters). |
+| `drive_upload` | Upload text as a new Drive file. |
+| `spotify_search` | Search tracks/artists/albums on Spotify. |
+| `spotify_now_playing` | What's playing on Spotify; honestly returns {"playing": false} when nothing is. |
+| `spotify_play` | Play a track URI on the active Spotify device. |
+| `spotify_pause` | Pause Spotify playback. |
+| `connector_status` | Which connectors are connected/disconnected + setup hints; config check only, no network calls. |
 
 ### Memory & learning (5)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `memory` | Đọc-ghi durable memory notes hiển thị trong system prompt. |
-| `session_search` | Full-text search các session trò chuyện cũ trong SQLite. |
-| `learn_from_conversation` | Trích learnings bền vững (preference, fact, correction) từ hội thoại và ghi nhớ. |
-| `recall_learned` | Tìm các learnings đã nhớ, sắp theo độ tin cậy. |
-| `forget_learning` | Xóa vĩnh viễn 1 learning theo id. |
+| Tool name | Description |
+|-----------|-------------|
+| `memory` | Read/write durable memory notes shown in the system prompt. |
+| `session_search` | Full-text search old chat sessions in SQLite. |
+| `learn_from_conversation` | Extract durable learnings (preference, fact, correction) from a conversation and store them. |
+| `recall_learned` | Find stored learnings, ordered by confidence. |
+| `forget_learning` | Permanently delete one learning by id. |
 
 ### Goals (6)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `goal_add` | Ghi nhận mục tiêu dài hạn mới (lưu memories/goals.json + log tiến độ có timestamp). |
-| `goal_get` | Lấy 1 goal kèm full progress log. |
-| `goal_list` | Liệt kê goals, lọc theo status (active/paused/completed). |
-| `goal_log` | Thêm ghi chú tiến độ có timestamp vào log của goal. |
-| `goal_pause` | Tạm dừng goal mà không xóa. |
-| `goal_complete` | Đánh dấu goal hoàn thành. |
+| Tool name | Description |
+|-----------|-------------|
+| `goal_add` | Record a new long-term goal (saves to memories/goals.json + timestamped progress log). |
+| `goal_get` | Get one goal with its full progress log. |
+| `goal_list` | List goals, filtered by status (active/paused/completed). |
+| `goal_log` | Append a timestamped progress note to a goal's log. |
+| `goal_pause` | Pause a goal without deleting it. |
+| `goal_complete` | Mark a goal complete. |
 
 ### Tasks (5)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `task_create` | Tạo task bền vững từ goal; goal được chia thành steps qua LLM planner (fallback 1 step). |
-| `task_status` | Lấy 1 task kèm steps và trạng thái/kết quả từng step. |
-| `task_list` | Liệt kê tasks, lọc theo status. |
-| `task_resume` | Chạy/tiếp tục task từng step qua engine brain; step đã xong bị bỏ qua; mỗi step checkpoint vào SQLite. |
-| `task_cancel` | Đánh dấu task cancelled mà không xóa. |
+| Tool name | Description |
+|-----------|-------------|
+| `task_create` | Create a durable task from a goal; the goal is broken into steps via the LLM planner (fallback: 1 step). |
+| `task_status` | Get one task with its steps and each step's status/result. |
+| `task_list` | List tasks, filtered by status. |
+| `task_resume` | Run/continue a task step by step via the brain engine; finished steps are skipped; each step checkpoints to SQLite. |
+| `task_cancel` | Mark a task cancelled without deleting it. |
 
 ### People (5)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `person_add` | Ghi nhớ 1 người: tên, quan hệ, ghi chú đầu; tên đã biết (không phân biệt hoa thường) thì update. |
-| `person_get` | Lấy record của 1 người theo tên. |
-| `person_list` | Liệt kê mọi người trong people ledger theo thứ tự thêm. |
-| `person_note` | Thêm ghi chú vào người đã có trong ledger. |
-| `person_search` | Tìm người theo keyword trên tên và ghi chú (không phân biệt hoa thường). |
+| Tool name | Description |
+|-----------|-------------|
+| `person_add` | Remember a person: name, relationship, initial notes; if the name is already known (case-insensitive), updates instead. |
+| `person_get` | Get a person's record by name. |
+| `person_list` | List everyone in the people ledger in the order added. |
+| `person_note` | Add a note to an existing person in the ledger. |
+| `person_search` | Find people by keyword over names and notes (case-insensitive). |
 
 ### Cron & triggers (8)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `cron_add` | Lên lịch chạy prompt theo cron expression 5 trường (hỗ trợ @hourly/@daily/...). Job lưu memories/cron_jobs.json; với deliver_to ({channel, target}) kết quả được đẩy ra channel khi job xong. |
-| `cron_list` | Liệt kê cron jobs: expression, lần chạy cuối, số lần chạy, trạng thái. |
-| `cron_remove` | Xóa cron job theo id. |
-| `cron_run` | Chạy ngay 1 job qua agent loop, bất kể lịch. |
-| `trigger_create` | Tạo trigger: điều kiện được runner kiểm tra định kỳ, chạy action khi kích hoạt. Kinds: gmail_new, price_below, keyword_news, webhook. |
-| `trigger_list` | Liệt kê triggers, tùy chọn chỉ enabled. |
-| `trigger_toggle` | Bật/tắt trigger. |
-| `trigger_delete` | Xóa trigger theo id. |
+| Tool name | Description |
+|-----------|-------------|
+| `cron_add` | Schedule a prompt on a 5-field cron expression (supports @hourly/@daily/...). Jobs are stored in memories/cron_jobs.json; with deliver_to ({channel, target}) the result is pushed to the channel when the job finishes. |
+| `cron_list` | List cron jobs: expression, last run, run count, status. |
+| `cron_remove` | Delete a cron job by id. |
+| `cron_run` | Run a job now through the agent loop, regardless of schedule. |
+| `trigger_create` | Create a trigger: a condition checked periodically by the runner, running an action when fired. Kinds: gmail_new, price_below, keyword_news, webhook. |
+| `trigger_list` | List triggers, optionally only enabled ones. |
+| `trigger_toggle` | Enable/disable a trigger. |
+| `trigger_delete` | Delete a trigger by id. |
 
 ### Artifacts (4)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `artifact_markdown` | Dựng file báo cáo Markdown dưới artifacts/ (tên file tự suy từ title nếu không cho). |
-| `artifact_json` | Dựng file JSON pretty-printed dưới artifacts/. |
-| `artifact_csv` | Dựng bảng CSV dưới artifacts/ từ list dicts (header là hợp có thứ tự các keys). |
-| `artifact_html` | Dựng trang HTML standalone hoàn chỉnh dưới artifacts/. |
+| Tool name | Description |
+|-----------|-------------|
+| `artifact_markdown` | Build a Markdown report file under artifacts/ (filename inferred from the title if not given). |
+| `artifact_json` | Build a pretty-printed JSON file under artifacts/. |
+| `artifact_csv` | Build a CSV table under artifacts/ from a list of dicts (header = ordered union of keys). |
+| `artifact_html` | Build a complete standalone HTML page under artifacts/. |
 
 ### OCR (3)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `ocr_image` | Trích text từ file ảnh local bằng Tesseract OCR local; trả về {text, lang, char_count}. |
-| `ocr_image_url` | Tải ảnh (tối đa 10MB) và trích text bằng Tesseract OCR. |
-| `ocr_image_queued` | OCR qua worker queue có giới hạn: an toàn khi tải cao (giới hạn tesseract đồng thời, cache ảnh lặp lại). |
+| Tool name | Description |
+|-----------|-------------|
+| `ocr_image` | Extract text from a local image file with local Tesseract OCR; returns {text, lang, char_count}. |
+| `ocr_image_url` | Download an image (max 10MB) and extract text with Tesseract OCR. |
+| `ocr_image_queued` | OCR via a bounded worker queue: safe under load (limited concurrent tesseract, repeated-image cache). |
 
-### E-commerce VN (5)
+### Vietnam e-commerce (5)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `tiki_search` | Tìm sản phẩm Tiki theo keyword: id, name, price, url, seller, brand, rating. |
-| `tiki_product` | Chi tiết sản phẩm Tiki theo id/URL: giá, rating, tồn kho. |
-| `shopee_search` | Tìm sản phẩm Shopee theo keyword (best-effort: anti-bot Shopee thường chặn client non-browser). |
-| `shopee_product` | Chi tiết sản phẩm Shopee từ URL (best-effort, cùng caveat anti-bot). |
-| `lazada_search` | Tìm sản phẩm Lazada theo keyword (best-effort: trang JS-rendered nên plain fetch thường không thấy data). |
+| Tool name | Description |
+|-----------|-------------|
+| `tiki_search` | Search Tiki products by keyword: id, name, price, url, seller, brand, rating. |
+| `tiki_product` | Tiki product details by id/URL: price, rating, stock. |
+| `shopee_search` | Search Shopee products by keyword (best-effort: Shopee's anti-bot usually blocks non-browser clients). |
+| `shopee_product` | Shopee product details from a URL (best-effort, same anti-bot caveat). |
+| `lazada_search` | Search Lazada products by keyword (best-effort: JS-rendered pages so plain fetch often finds no data). |
 
-### Thông báo & tiện ích (7)
+### Notifications & utilities (7)
 
-| Tên tool | Mô tả |
-|----------|-------|
-| `broadcast_send` | Gửi 1 tin nhắn text tới nhiều channel target (rate-limit friendly); dry_run để xem trước. |
-| `broadcast_history` | Liệt kê các broadcast đã gửi (mới nhất trước). |
-| `captcha_balance` | Kiểm tra số dư tài khoản 2captcha (cần BOOM_2CAPTCHA_KEY). |
-| `captcha_solve_image` | Giải CAPTCHA ảnh qua dịch vụ trả phí 2captcha (poll tối đa 120s). |
-| `digest_preview` | Render markdown briefing chủ động từ các sections để xem trước đúng thứ cron job sẽ gửi. |
-| `sample_echo` | Tool mẫu của plugin: echo input trả về caller. |
+| Tool name | Description |
+|-----------|-------------|
+| `broadcast_send` | Send one text message to many channel targets (rate-limit friendly); dry_run to preview. |
+| `broadcast_history` | List sent broadcasts (newest first). |
+| `captcha_balance` | Check a 2captcha account balance (needs BOOM_2CAPTCHA_KEY). |
+| `captcha_solve_image` | Solve an image CAPTCHA via the paid 2captcha service (polls up to 120s). |
+| `digest_preview` | Render a proactive Markdown briefing from sections to preview exactly what the cron job will send. |
+| `sample_echo` | Plugin sample tool: echoes input back to the caller. |
 
 ---
 
-*Cập nhật 2026-10-16 từ `main` (commit `f4ed006` — 139 → 158 tools). Số liệu lấy bằng cách chạy thật `AgentEnvironment.get_tools()` — không ước lượng.*
+*Updated 2026-10-16 from `main` (commit `f4ed006` — 139 → 158 tools). Numbers obtained by actually running `AgentEnvironment.get_tools()` — not estimated.*

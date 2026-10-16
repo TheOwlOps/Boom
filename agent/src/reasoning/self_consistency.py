@@ -1,15 +1,16 @@
-"""Self-Consistency — bỏ phiếu từ nhiều lần suy luận độc lập.
+"""Self-Consistency — voting from multiple independent reasoning runs.
 
-Ý tưởng: thay vì tin một lần trả lời duy nhất, hỏi LLM n lần
-(với gợi ý "Hãy thử cách khác" từ vòng 2 trở đi để đa dạng suy luận),
-trích đáp án mỗi lần rồi bỏ phiếu — đáp án phổ biến nhất thắng.
+The idea: instead of trusting a single answer, ask the LLM n times
+(with a "try a different approach" hint from round 2 on for diverse
+reasoning), extract each round's answer, then vote — the most common
+answer wins.
 
 API:
     from self_consistency import vote
     result = vote(llm_fn, "7 + 5 x 2 = ?", n=5)
     # {"answers": [...], "winner": "24", "votes": {"24": 3, ...}}
 
-Chỉ dùng stdlib (re, collections). LLM được inject nên dễ test với mock.
+Stdlib only (re, collections). The LLM is injected so testing with mocks is easy.
 """
 
 from __future__ import annotations
@@ -18,18 +19,18 @@ import re
 from collections import Counter
 from typing import Callable, Dict, List
 
-# Trích đáp án từ dòng bắt đầu bằng "Đáp án:" hoặc "Answer:".
+# Extracts the answer from a line starting with "Đáp án:" or "Answer:".
 _ANSWER_RE = re.compile(r"(?:đáp án|answer)\s*:\s*(.+)", re.IGNORECASE)
 
-# Gợi ý thêm từ vòng 2 trở đi để giả lập temperature cao (đa dạng cách suy luận).
+# Extra hint from round 2 on to simulate high temperature (diverse reasoning).
 _VARIATION_HINT = "Hãy thử cách khác:"
 
 
 def extract_answer(response: str) -> str:
-    """Trích đáp án từ một lần trả lời.
+    """Extracts the answer from one response.
 
-    Ưu tiên dòng "Đáp án: ..."/"Answer: ..."; không có thì lấy toàn bộ
-    câu trả lời đã strip (fallback, không bao giờ bịa ra đáp án).
+    Prefers the "Đáp án: ..."/"Answer: ..." line; falls back to the whole
+    stripped response (never invents an answer).
     """
     text = (response or "").strip()
     match = _ANSWER_RE.search(text)
@@ -39,29 +40,31 @@ def extract_answer(response: str) -> str:
 
 
 def vote(llm_fn: Callable[[str], str], problem: str, n: int = 5) -> Dict:
-    """Hỏi LLM n lần và bỏ phiếu chọn đáp án phổ biến nhất.
+    """Asks the LLM n times and votes for the most common answer.
 
-    Trả về: {"answers": [...], "winner": str, "votes": {ans: count}}
-    Hòa phiếu: đáp án xuất hiện trước thắng (giữ ổn định, không random).
+    Returns: {"answers": [...], "winner": str, "votes": {ans: count}}
+    Ties: the earliest-appearing answer wins (stable, no randomness).
     """
     if not callable(llm_fn):
-        raise TypeError("llm_fn phải là callable")
+        raise TypeError("llm_fn must be callable")
     if n < 1:
-        raise ValueError("n phải >= 1")
+        raise ValueError("n must be >= 1")
 
+    # NOTE: kept in Vietnamese — evals/test_reasoning.py's mock LLMs key on
+    # the "đáp án" phrasing in prompts.
     base_prompt = f"Bài toán: {problem}\nCho đáp án cuối, bắt đầu bằng \"Đáp án:\"."
 
     answers: List[str] = []
     for i in range(n):
         prompt = base_prompt
         if i > 0:
-            # Từ vòng 2: gợi ý thử hướng khác → đa dạng suy luận.
+            # From round 2: hint to try a different direction → diverse reasoning.
             prompt = f"{_VARIATION_HINT}\n{base_prompt}"
         response = (llm_fn(prompt) or "").strip()
         answers.append(extract_answer(response))
 
     votes = dict(Counter(answers))
-    # most_common giữ thứ tự xuất hiện lần đầu khi hòa phiếu.
+    # most_common keeps first-appearance order on ties.
     winner = Counter(answers).most_common(1)[0][0]
 
     return {"answers": answers, "winner": winner, "votes": votes}

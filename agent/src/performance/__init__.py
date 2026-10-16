@@ -1,10 +1,10 @@
-"""Gói performance cho Boom: cache TTL, lazy import, profiling nhẹ.
+"""Performance package for Boom: TTL cache, lazy import, lightweight profiling.
 
-Các module:
-- ``cache``: TTLCache + decorator ``cached`` — cache skill loading, tool schemas.
-- ``lazy``: LazyLoader + ``lazy_import`` — hoãn import module nặng tới khi dùng.
-- ``profile``: decorator ``timeit``, context manager ``timed``,
-  ``ProfileReport``/``get_report`` — đo bottleneck.
+Modules:
+- ``cache``: TTLCache + ``cached`` decorator — caches skill loading, tool schemas.
+- ``lazy``: LazyLoader + ``lazy_import`` — defers heavy imports until first use.
+- ``profile``: ``timeit`` decorator, ``timed`` context manager,
+  ``ProfileReport``/``get_report`` — bottleneck measurement.
 """
 
 from .cache import TTLCache, cached

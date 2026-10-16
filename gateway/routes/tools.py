@@ -1,23 +1,23 @@
-"""Routes nhóm "tools" — liệt kê và chạy thử tools.
+"""The "tools" route group — listing and trial-running tools.
 
-Nguồn gốc: ``gateway/api.py`` (nhánh ``do_GET`` cho ``/api/tools``,
+Origin: ``gateway/api.py`` (the ``do_GET`` branch for ``/api/tools``,
 ``do_POST`` -> ``_handle_tool_run``).
 
-Backward-compat: giữ nguyên ``/api/tools`` (GET) và ``/api/tools/run`` (POST).
+Backward-compat: keep ``/api/tools`` (GET) and ``/api/tools/run`` (POST).
 """
 
-# Mỗi entry: (HTTP method, path pattern, tên handler trong api.py).
+# Each entry: (HTTP method, path pattern, handler name in api.py).
 ROUTES = [
-    # Liệt kê tools thật từ AgentEnvironment: {"tools":[{name,
+    # List real tools from AgentEnvironment: {"tools":[{name,
     # description, group}], "count": n}.
     ("GET", "/api/tools", "handle_tools"),
-    # _handle_tool_run: nhận {"tool","args"}; chạy qua SandboxedToolRunner
-    # nếu import được, ngược lại gọi trực tiếp. Trả {"ok","result"|"error"}.
+    # _handle_tool_run: accepts {"tool","args"}; runs via SandboxedToolRunner
+    # when importable, otherwise calls directly. Returns {"ok","result"|"error"}.
     ("POST", "/api/tools/run", "_handle_tool_run"),
 ]
 
 
 def register(router):
-    """Gắn mọi route của module này vào router (duck-typed)."""
+    """Attach every route of this module to the router (duck-typed)."""
     for method, path, handler in ROUTES:
         router.add(method, path, handler, __name__.rsplit(".", 1)[-1])

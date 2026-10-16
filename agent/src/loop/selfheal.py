@@ -1,10 +1,11 @@
-"""Self-healing cho agent loop của Boom.
+"""Self-healing for the Boom agent loop.
 
-Module này bọc mọi bước chạy (LLM call, tool call) bằng một lớp phục hồi tự động:
-phân loại lỗi -> quyết định retry / compress context / skip / dừng ngay.
+This module wraps every execution step (LLM call, tool call) in an automatic
+recovery layer: classify the error -> decide retry / compress context /
+skip / abort immediately.
 
-Chỉ dùng stdlib + pydantic, không phụ thuộc phần còn lại của Boom nên có thể
-test độc lập.
+Stdlib + pydantic only, no dependency on the rest of Boom, so it can be
+tested standalone.
 """
 from __future__ import annotations
 
@@ -20,26 +21,26 @@ log = logging.getLogger("boom.selfheal")
 
 
 # ---------------------------------------------------------------------------
-# Exception marker: cho phép code Boom chủ động gắn nhãn lỗi khi raise.
+# Exception markers: let Boom code actively label errors when raising.
 # ---------------------------------------------------------------------------
 class FatalError(Exception):
-    """Lỗi nghiêm trọng (auth/config): không retry, dừng ngay."""
+    """Critical error (auth/config): no retry, abort immediately."""
 
 
 class TransientError(Exception):
-    """Lỗi tạm thời (network/timeout/rate limit): retry với backoff."""
+    """Temporary error (network/timeout/rate limit): retry with backoff."""
 
 
 class ToolError(Exception):
-    """Tool chạy lỗi: retry 1 lần rồi skip, không làm sập loop."""
+    """Tool execution error: retry once then skip, never crash the loop."""
 
 
 class ContextOverflowError(Exception):
-    """Context tràn: cần nén context rồi thử lại."""
+    """Context overflow: needs context compression before retrying."""
 
 
 class SelfHealingFailed(Exception):
-    """Gói lỗi gốc sau khi đã hết mọi phương án phục hồi."""
+    """Wraps the original error after all recovery options are exhausted."""
 
     def __init__(self, message: str, *, category: str, attempts: int,
                  original: BaseException):
@@ -50,22 +51,22 @@ class SelfHealingFailed(Exception):
 
 
 class Skipped(Exception):
-    """Đánh dấu một bước tool bị skip sau khi retry thất bại (không raise)."""
+    """Marks a tool step skipped after failed retries (never raised)."""
 
 
 # ---------------------------------------------------------------------------
 # Models (pydantic)
 # ---------------------------------------------------------------------------
 class ErrorClassification(BaseModel):
-    """Kết quả phân loại một lỗi."""
+    """The result of classifying one error."""
 
     category: str = Field(pattern=r"^(transient|tool_error|fatal|context_overflow)$")
     retryable: bool
-    backoff_sec: int  # backoff gợi ý cho lần retry đầu tiên
+    backoff_sec: int  # suggested backoff for the first retry
 
 
 class RetryConfig(BaseModel):
-    """Cấu hình chính sách retry."""
+    """Retry policy configuration."""
 
     base_delay: float = Field(default=1.0, ge=0)
     max_delay: float = Field(default=60.0, ge=0)
@@ -74,19 +75,19 @@ class RetryConfig(BaseModel):
 
 
 class RecoveryAttempt(BaseModel):
-    """Một bản ghi trong nhật ký phục hồi (mọi lần thử lại đều log)."""
+    """One record in the recovery journal (every retry attempt is logged)."""
 
     timestamp: float = Field(default_factory=time.time)
     func_name: str
     category: str
-    attempt: int  # số retry đã thực hiện trước lần này (0 = lần chạy đầu lỗi)
+    attempt: int  # retries already done before this run (0 = first run failed)
     delay_sec: float
     action: str  # retry | skip | raise | compress+retry
     error: str
 
 
 class ContextManagerProtocol(Protocol):
-    """Interface tối thiểu cần của ContextManager để tự nén khi tràn."""
+    """Minimum ContextManager interface needed for auto-compress on overflow."""
 
     def compress(self, keep_recent: Optional[int] = None) -> Any: ...
 
@@ -95,9 +96,9 @@ class ContextManagerProtocol(Protocol):
 # 1. ErrorClassifier
 # ---------------------------------------------------------------------------
 class ErrorClassifier:
-    """Phân loại lỗi thành 4 nhóm để quyết định chiến lược phục hồi."""
+    """Classifies errors into 4 groups to pick a recovery strategy."""
 
-    # Pattern nhận diện theo message (thứ tự ưu tiên: overflow > fatal > transient).
+    # Message-based detection (priority: overflow > fatal > transient).
     _OVERFLOW_RE = re.compile(
         r"(context|token).*(length|limit|overflow|exceed|too (long|many))|"
         r"max(imum)?[_ ]?tokens|context_length_exceeded|"
@@ -119,11 +120,11 @@ class ErrorClassifier:
         r"service (unavailable|temporarily)|overloaded|try again)",
         re.IGNORECASE,
     )
-    # Các exception type luôn là transient dù message không khớp pattern.
+    # Exception types that are always transient regardless of message.
     _TRANSIENT_TYPES = (TimeoutError, ConnectionError)
 
     def classify(self, error: BaseException) -> ErrorClassification:
-        # 0) Marker exception do code Boom chủ động raise -> tôn trọng nhãn.
+        # 0) Marker exceptions actively raised by Boom code -> honor the label.
         if isinstance(error, ContextOverflowError):
             return ErrorClassification(category="context_overflow",
                                        retryable=False, backoff_sec=0)
@@ -139,19 +140,19 @@ class ErrorClassifier:
 
         msg = f"{type(error).__name__}: {error}"
 
-        # 1) Tràn context: không retry "chay", phải compress trước.
+        # 1) Context overflow: no blind retry, must compress first.
         if self._OVERFLOW_RE.search(msg):
             return ErrorClassification(category="context_overflow",
                                        retryable=False, backoff_sec=0)
-        # 2) Fatal: auth/config hỏng -> retry cũng vô ích, dừng ngay.
+        # 2) Fatal: broken auth/config -> retrying is pointless, abort now.
         if self._FATAL_RE.search(msg):
             return ErrorClassification(category="fatal",
                                        retryable=False, backoff_sec=0)
-        # 3) Transient: mạng/timeout/rate-limit -> retry với backoff.
+        # 3) Transient: network/timeout/rate-limit -> retry with backoff.
         if isinstance(error, self._TRANSIENT_TYPES) or self._TRANSIENT_RE.search(msg):
             return ErrorClassification(category="transient",
                                        retryable=True, backoff_sec=2)
-        # 4) Mặc định: coi như tool fail -> retry 1 lần rồi skip.
+        # 4) Default: treat as a tool failure -> retry once then skip.
         return ErrorClassification(category="tool_error",
                                    retryable=True, backoff_sec=1)
 
@@ -160,7 +161,7 @@ class ErrorClassifier:
 # 2. RetryPolicy: exponential backoff + jitter
 # ---------------------------------------------------------------------------
 class RetryPolicy:
-    """delay = min(base * 2^attempt + jitter_ngẫu_nhiên, max_delay)."""
+    """delay = min(base * 2^attempt + random_jitter, max_delay)."""
 
     def __init__(self, config: Optional[RetryConfig] = None,
                  rng: Optional[random.Random] = None):
@@ -168,20 +169,20 @@ class RetryPolicy:
         self._rng = rng or random.Random()
 
     def delay_for(self, attempt: int) -> float:
-        """Tính thời gian chờ trước lần retry thứ `attempt` (attempt=0 là retry đầu)."""
+        """Wait time before retry number `attempt` (attempt=0 is the first retry)."""
         jitter = self._rng.uniform(0, self.config.jitter)
         return min(self.config.base_delay * (2 ** attempt) + jitter,
                    self.config.max_delay)
 
     def should_retry(self, category: str, attempt: int,
                      max_attempts: Optional[int] = None) -> bool:
-        """attempt = số retry đã thực hiện. Trả về True nếu được retry thêm."""
+        """attempt = retries already done. Returns True when another retry is allowed."""
         if category == "fatal":
-            return False  # fatal: dừng ngay, không retry
+            return False  # fatal: abort immediately, no retry
         if category == "tool_error":
-            return attempt < 1  # retry đúng 1 lần rồi skip
+            return attempt < 1  # exactly 1 retry, then skip
         if category == "context_overflow":
-            return attempt < 1  # compress xong retry 1 lần
+            return attempt < 1  # 1 retry after compressing
         if category == "transient":
             cap = max_attempts if max_attempts is not None else self.config.max_attempts
             return attempt < cap
@@ -189,10 +190,10 @@ class RetryPolicy:
 
 
 # ---------------------------------------------------------------------------
-# 3. SelfHealingLoop: wrapper chạy func với tự phục hồi
+# 3. SelfHealingLoop: runs a func with automatic recovery
 # ---------------------------------------------------------------------------
 class SelfHealingLoop:
-    """Bọc mọi callable: lỗi -> classify -> retry / compress / skip / raise."""
+    """Wraps any callable: error -> classify -> retry / compress / skip / raise."""
 
     def __init__(
         self,
@@ -207,16 +208,16 @@ class SelfHealingLoop:
         self.policy = RetryPolicy(retry_config, rng=rng)
         self.context_manager = context_manager
         self.on_recovery = on_recovery
-        self.sleep = sleep  # inject được để test không phải chờ thật
+        self.sleep = sleep  # injectable so tests don't really wait
         self.skip_on_tool_error = skip_on_tool_error
         self.recovery_log: List[RecoveryAttempt] = []
 
-    # -- hook có thể override -------------------------------------------------
+    # -- overridable hook ---------------------------------------------------
     def on_context_overflow(self, context_manager: ContextManagerProtocol) -> None:
-        """Tự động nén context khi phát hiện tràn."""
+        """Auto-compresses the context when overflow is detected."""
         context_manager.compress()
 
-    # -- API chính ------------------------------------------------------------
+    # -- main API -------------------------------------------------------------
     def execute_with_recovery(
         self,
         func: Callable[..., Any],
@@ -225,30 +226,31 @@ class SelfHealingLoop:
         context_manager: Optional[ContextManagerProtocol] = None,
         **kwargs: Any,
     ) -> Any:
-        """Chạy func; nếu lỗi thì phân loại và retry / compress / skip / raise.
+        """Runs func; on error classifies it and retries / compresses / skips / raises.
 
-        - transient: retry tới max_attempts với backoff tăng dần.
-        - context_overflow: gọi compress() rồi retry 1 lần.
-        - tool_error: retry 1 lần rồi skip (trả None) thay vì làm sập loop.
-        - fatal: dừng ngay, raise SelfHealingFailed.
+        - transient: retries up to max_attempts with growing backoff.
+        - context_overflow: compresses then retries once.
+        - tool_error: retries once then skips (returns None) instead of
+          crashing the loop.
+        - fatal: aborts immediately, raises SelfHealingFailed.
         """
         cm = context_manager if context_manager is not None else self.context_manager
-        attempt = 0  # số retry đã thực hiện
+        attempt = 0  # retries done so far
         func_name = getattr(func, "__name__", type(func).__name__)
 
         while True:
             try:
                 return func(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 - classifier xử lý mọi lỗi
+            except Exception as exc:  # noqa: BLE001 - the classifier handles all errors
                 cls = self.classifier.classify(exc)
                 category = cls.category
 
-                # Tràn context: nén trước rồi mới quyết định retry.
+                # Context overflow: compress before deciding to retry.
                 if category == "context_overflow":
                     if cm is None:
                         self._log(func_name, category, attempt, 0.0, "raise", exc)
                         raise SelfHealingFailed(
-                            f"Context overflow nhưng không có ContextManager để nén "
+                            f"Context overflow with no ContextManager to compress "
                             f"({func_name})",
                             category=category, attempts=attempt, original=exc,
                         ) from exc
@@ -260,44 +262,44 @@ class SelfHealingLoop:
                         continue
                     self._log(func_name, category, attempt, 0.0, "raise", exc)
                     raise SelfHealingFailed(
-                        f"Context overflow vẫn còn sau khi nén ({func_name})",
+                        f"Context still overflowing after compression ({func_name})",
                         category=category, attempts=attempt, original=exc,
                     ) from exc
 
-                # Fatal: dừng ngay, không retry.
+                # Fatal: abort immediately, no retry.
                 if category == "fatal":
                     self._log(func_name, category, attempt, 0.0, "raise", exc)
                     raise SelfHealingFailed(
-                        f"Lỗi nghiêm trọng, dừng ngay ({func_name}): {exc}",
+                        f"Fatal error, aborting immediately ({func_name}): {exc}",
                         category=category, attempts=attempt, original=exc,
                     ) from exc
 
-                # tool_error hết retry: skip thay vì raise (không sập loop).
+                # tool_error out of retries: skip instead of raising (loop survives).
                 if (category == "tool_error" and self.skip_on_tool_error
                         and not self.policy.should_retry(category, attempt,
                                                          max_attempts)):
                     self._log(func_name, category, attempt, 0.0, "skip", exc)
-                    log.warning("selfheal: skip %s sau %d lần thử (tool_error): %s",
+                    log.warning("selfheal: skipping %s after %d attempt(s) (tool_error): %s",
                                 func_name, attempt + 1, exc)
                     return None
 
-                # Hết lượt retry cho các loại còn lại: escalate.
+                # Out of retries for the rest: escalate.
                 if not self.policy.should_retry(category, attempt, max_attempts):
                     self._log(func_name, category, attempt, 0.0, "raise", exc)
                     raise SelfHealingFailed(
-                        f"Hết lượt retry ({attempt} lần) cho {func_name}: {exc}",
+                        f"Out of retries ({attempt}) for {func_name}: {exc}",
                         category=category, attempts=attempt, original=exc,
                     ) from exc
 
-                # Còn lượt: backoff rồi retry.
+                # Retries left: back off, then retry.
                 delay = self.policy.delay_for(attempt)
                 self._log(func_name, category, attempt, delay, "retry", exc)
-                log.info("selfheal: retry %s lần %d sau %.2fs (%s): %s",
+                log.info("selfheal: retrying %s (attempt %d) after %.2fs (%s): %s",
                          func_name, attempt + 1, delay, category, exc)
                 self.sleep(delay)
                 attempt += 1
 
-    # -- tiện ích --------------------------------------------------------------
+    # -- utilities ------------------------------------------------------------
     def _log(self, func_name: str, category: str, attempt: int, delay: float,
              action: str, exc: BaseException) -> None:
         entry = RecoveryAttempt(
@@ -313,7 +315,7 @@ class SelfHealingLoop:
             self.on_recovery(entry)
 
     def recovery_summary(self) -> Dict[str, Any]:
-        """Thống kê nhanh các lần phục hồi đã ghi."""
+        """Quick stats of recorded recoveries."""
         by_action: Dict[str, int] = {}
         for e in self.recovery_log:
             by_action[e.action] = by_action.get(e.action, 0) + 1

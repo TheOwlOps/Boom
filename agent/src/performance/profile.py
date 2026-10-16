@@ -1,21 +1,21 @@
-"""Profiling nhẹ: decorator ``timeit`` + ``ProfileReport`` tổng hợp.
+"""Lightweight profiling: the ``timeit`` decorator + the ``ProfileReport`` aggregate.
 
-Mục đích: đo xem skill loading / tool schema build / search catalog
-tốn bao lâu, để biết bottleneck thật ở đâu thay vì đoán.
+Purpose: measure how long skill loading / tool schema builds / catalog
+searches take, to find the real bottleneck instead of guessing.
 
-Cách dùng::
+Usage::
 
     from performance.profile import timeit, get_report
 
     @timeit("skill_scan")
     def scan_skills(): ...
 
-    @timeit  # tên mặc định = tên hàm
+    @timeit  # default name = the function's name
     def search_catalog(q): ...
 
     print(get_report().summary())
 
-Hoặc đo một đoạn code bất kỳ bằng context manager::
+Or measure any code block with the context manager::
 
     with timed("heavy_section"):
         ...
@@ -33,14 +33,14 @@ from typing import Callable, Dict, Iterator, List, Optional
 
 @dataclass
 class TimingRecord:
-    """Một lần đo: tên + thời gian chạy (giây)."""
+    """One measurement: name + runtime (seconds)."""
     name: str
     elapsed: float
 
 
 @dataclass
 class _Aggregate:
-    """Tổng hợp theo tên: số lần gọi, tổng thời gian, min, max."""
+    """Per-name aggregate: call count, total time, min, max."""
     calls: int = 0
     total: float = 0.0
     min: float = field(default_factory=lambda: float("inf"))
@@ -58,7 +58,7 @@ class _Aggregate:
 
 
 class ProfileReport:
-    """Thu thập các TimingRecord, thread-safe, in báo cáo sắp xếp theo tổng thời gian."""
+    """Collects TimingRecords, thread-safe, prints a report sorted by total time."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -66,13 +66,13 @@ class ProfileReport:
         self._agg: Dict[str, _Aggregate] = {}
 
     def record(self, name: str, elapsed: float) -> None:
-        """Ghi một lần đo vào báo cáo."""
+        """Records one measurement in the report."""
         with self._lock:
             self._records.append(TimingRecord(name=name, elapsed=elapsed))
             self._agg.setdefault(name, _Aggregate()).add(elapsed)
 
     def reset(self) -> None:
-        """Xóa toàn bộ dữ liệu đo (dùng giữa các lần benchmark)."""
+        """Clears all measured data (use between benchmarks)."""
         with self._lock:
             self._records.clear()
             self._agg.clear()
@@ -83,9 +83,9 @@ class ProfileReport:
             return len(self._records)
 
     def summary(self, limit: Optional[int] = None) -> str:
-        """Bảng text: name | calls | total(s) | avg(ms) | min(ms) | max(ms).
+        """Text table: name | calls | total(s) | avg(ms) | min(ms) | max(ms).
 
-        Sắp xếp theo tổng thời gian giảm dần — bottleneck nằm ở dòng đầu.
+        Sorted by descending total time — the bottleneck is on the first line.
         """
         with self._lock:
             items = sorted(self._agg.items(), key=lambda kv: kv[1].total, reverse=True)
@@ -101,31 +101,31 @@ class ProfileReport:
                 f"{agg.avg * 1000:>10.2f} {agg.min * 1000:>10.2f} {agg.max * 1000:>10.2f}"
             )
         if not items:
-            lines.append("(chưa có dữ liệu đo nào)")
+            lines.append("(no measurements yet)")
         return "\n".join(lines)
 
     def totals(self) -> Dict[str, float]:
-        """Trả về {name: tổng_thời_gian} để assert trong test."""
+        """Returns {name: total_time} for assertions in tests."""
         with self._lock:
             return {name: agg.total for name, agg in self._agg.items()}
 
     def call_counts(self) -> Dict[str, int]:
-        """Trả về {name: số_lần_gọi} để assert trong test."""
+        """Returns {name: call_count} for assertions in tests."""
         with self._lock:
             return {name: agg.calls for name, agg in self._agg.items()}
 
 
-# Báo cáo toàn cục: mọi @timeit không truyền report riêng đều ghi vào đây.
+# Global report: every @timeit without its own report writes here.
 _global_report = ProfileReport()
 
 
 def get_report() -> ProfileReport:
-    """Lấy báo cáo profiling toàn cục."""
+    """Gets the global profiling report."""
     return _global_report
 
 
 def timeit(_fn=None, *, name: Optional[str] = None, report: Optional[ProfileReport] = None):
-    """Decorator đo thời gian chạy hàm, dùng được cả 2 kiểu::
+    """Decorator measuring a function's runtime, usable both ways::
 
         @timeit
         def f(): ...
@@ -133,7 +133,7 @@ def timeit(_fn=None, *, name: Optional[str] = None, report: Optional[ProfileRepo
         @timeit("skill_scan")
         def g(): ...
 
-    Giữ nguyên tên/docstring/return value của hàm gốc (functools.wraps).
+    Preserves the original function's name/docstring/return value (functools.wraps).
     """
     target_report = report if report is not None else _global_report
 
@@ -142,7 +142,7 @@ def timeit(_fn=None, *, name: Optional[str] = None, report: Optional[ProfileRepo
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            start = time.perf_counter()  # Đồng hồ chính xác nhất để đo khoảng thời gian.
+            start = time.perf_counter()  # the most precise clock for durations.
             try:
                 return fn(*args, **kwargs)
             finally:
@@ -150,7 +150,7 @@ def timeit(_fn=None, *, name: Optional[str] = None, report: Optional[ProfileRepo
 
         return wrapper
 
-    # Hỗ trợ cả @timeit (không ngoặc) và @timeit("label") (có ngoặc).
+    # Supports both @timeit (no parens) and @timeit("label") (with parens).
     if _fn is not None and callable(_fn):
         return decorator(_fn)
     return decorator
@@ -158,7 +158,7 @@ def timeit(_fn=None, *, name: Optional[str] = None, report: Optional[ProfileRepo
 
 @contextmanager
 def timed(name: str, report: Optional[ProfileReport] = None) -> Iterator[None]:
-    """Đo một khối code bất kỳ::
+    """Measures any code block::
 
         with timed("skill_scan"):
             skills = loader.list_skills()

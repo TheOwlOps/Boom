@@ -1,15 +1,15 @@
-"""DeepSearch core cho Boom: nghiên cứu đa hop (multi-hop) qua web.
+"""DeepSearch core for Boom: multi-hop web research.
 
-Luồng làm việc của ``DeepSearch.research(query)``:
-  1. web_search(query) -> danh sách sources
-  2. web_fetch từng source -> trích text
-  3. Trích entities/keywords mới từ text bằng regex đơn giản
-     (cụm viết hoa 2+ từ, ngày tháng, số liệu)
-  4. Sinh follow-up queries từ entities chưa explore
-  5. Lặp lại cho tới ``max_hops`` hoặc hết query mới
+``DeepSearch.research(query)`` workflow:
+  1. web_search(query) -> source list
+  2. web_fetch each source -> extract text
+  3. Extract new entities/keywords from text with simple regexes
+     (2+ word capitalized phrases, dates, numbers)
+  4. Generate follow-up queries from unexplored entities
+  5. Repeat until ``max_hops`` or no new queries
 
-Triết lý: stdlib + httpx (qua agent/src/tools/web.py), không cần API key.
-Deploy vào: agent/src/research/deepsearch.py
+Philosophy: stdlib + httpx (via agent/src/tools/web.py), no API key needed.
+Deployed at: agent/src/research/deepsearch.py
 """
 
 from __future__ import annotations
@@ -19,48 +19,50 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 __all__ = ["DeepSearch"]
 
-# --- Import web.py thật khi chạy trong repo; standalone test thì để None ---
+# --- Import the real web.py when running in the repo; None in standalone tests ---
 try:
     from tools.web import web_search as _real_search  # type: ignore
     from tools.web import web_fetch as _real_fetch  # type: ignore
-except ImportError:  # standalone (test): cho phép inject mock qua constructor
+except ImportError:  # standalone (test): allow mock injection via constructor
     _real_search = None
     _real_fetch = None
 
-# --- lifecycle/timeout cho mỗi fetch; không import được thì bỏ qua ---
+# --- lifecycle/timeout per fetch; skipped if not importable ---
 try:
     from lifecycle.timeout import with_timeout  # type: ignore
 except ImportError:
     with_timeout = None  # type: ignore[assignment]
 
-FETCH_TIMEOUT = 30.0      # giây cho mỗi lần fetch source
-MAX_TEXT_CHARS = 20_000   # cắt text mỗi source để entities không bị nhiễu quá dài
-FOLLOWUPS_PER_HOP = 3     # số follow-up query tối đa sinh ra mỗi hop
+FETCH_TIMEOUT = 30.0      # seconds per source fetch
+MAX_TEXT_CHARS = 20_000   # cap text per source so entities don't get too noisy
+FOLLOWUPS_PER_HOP = 3     # max follow-up queries generated per hop
 
-# Cụm viết hoa 2+ từ: chữ cái đầu mỗi từ là in hoa (kể cả tiếng Việt có dấu),
-# cho phép tối đa 4 từ để không nuốt cả câu.
+# 2+ word capitalized phrases: each word starts with a capital letter
+# (including accented Vietnamese), max 4 words so it doesn't swallow sentences.
+# NOTE: the character classes and unit keywords below are functional
+# Vietnamese-aware patterns — kept as-is.
 _CAP_LETTER = r"[A-ZÀ-ÝĂĐĨŨƠƯẠ-Ỹ]"
 _CAP_WORD = _CAP_LETTER + r"[\wÀ-ỹ\-]*"
 _RE_CAP_PHRASE = re.compile(r"\b" + _CAP_WORD + r"(?:\s+" + _CAP_WORD + r"){1,3}\b")
 
-# Ngày tháng dạng 14/03/2023, 1-2-24, 2026-10-15 không khớp (năm trước) -> chấp nhận.
+# Dates like 14/03/2023, 1-2-24 (year-first 2026-10-15 doesn't match) -> accepted.
 _RE_DATE = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
 
-# Số liệu: 175, 3.5, 10,000 kèm đơn vị tùy chọn (triệu, tỷ, %, USD, VND...).
+# Numbers: 175, 3.5, 10,000 with optional units (triệu, tỷ, %, USD, VND...).
 _RE_NUMBER = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*(?:triệu|tỷ|nghìn|%|USD|VND|đồng|người)?\b"
 )
 
 
 class DeepSearch:
-    """Nghiên cứu đa hop: search -> fetch -> trích entities -> follow-up -> lặp.
+    """Multi-hop research: search -> fetch -> extract entities -> follow-up -> repeat.
 
     Args:
-        search_fn: hàm ``(query) -> [{title, url, snippet}]``. Mặc định dùng
-            ``tools.web.web_search`` nếu import được.
-        fetch_fn: hàm ``(url) -> {url, text, title, ...}``. Mặc định dùng
-            ``tools.web.web_fetch`` (đã có circuit breaker + retry bên trong).
-        Nếu cả hai đều None và web.py import thất bại -> raise RuntimeError.
+        search_fn: ``(query) -> [{title, url, snippet}]``. Defaults to
+            ``tools.web.web_search`` when importable.
+        fetch_fn: ``(url) -> {url, text, title, ...}``. Defaults to
+            ``tools.web.web_fetch`` (has circuit breaker + retry built in).
+        If both are None and web.py failed to import -> raises RuntimeError.
     """
 
     def __init__(
@@ -72,21 +74,21 @@ class DeepSearch:
         self._fetch_fn = fetch_fn if fetch_fn is not None else _real_fetch
         if self._search_fn is None or self._fetch_fn is None:
             raise RuntimeError(
-                "DeepSearch cần search_fn/fetch_fn: web.py không import được "
-                "và không có mock nào được inject."
+                "DeepSearch needs search_fn/fetch_fn: web.py could not be imported "
+                "and no mock was injected."
             )
-        # Bọc fetch bằng timeout của lifecycle nếu có; nếu không thì gọi trực tiếp.
+        # Wrap fetch with the lifecycle timeout when available; call directly otherwise.
         base_fetch = self._fetch_fn
         if with_timeout is not None:
             self._fetch_fn = with_timeout(FETCH_TIMEOUT)(base_fetch)
 
     # ------------------------------------------------------------------
-    # Trích entities
+    # Entity extraction
     def _extract_entities(self, text: str) -> List[str]:
-        """Trích entities/keywords từ text bằng 3 regex, giữ thứ tự xuất hiện.
+        """Extracts entities/keywords from text with 3 regexes, in order of appearance.
 
-        Trả về danh sách duy nhất (dedupe, so sánh không phân biệt hoa/thường)
-        theo thứ tự: cụm viết hoa -> ngày tháng -> số liệu.
+        Returns a deduped list (case-insensitive compare) ordered:
+        capitalized phrases -> dates -> numbers.
         """
         text = (text or "")[:MAX_TEXT_CHARS]
         found: List[str] = []
@@ -106,8 +108,9 @@ class DeepSearch:
         for m in _RE_DATE.finditer(text):
             _add(m.group(0))
         for m in _RE_NUMBER.finditer(text):
-            # Bỏ số trần trụi quá ngắn (vd "1", "2") vì nhiễu; giữ số có đơn vị
-            # hoặc >= 3 chữ số. Kiểm tra đơn vị bằng cách xem match có chữ không.
+            # Drop short bare numbers (e.g. "1", "2") as noise; keep numbers
+            # with units or >= 3 digits. Unit detection: does the match
+            # contain a letter?
             num = m.group(0).strip()
             has_unit = bool(re.search(r"[a-zA-Z%]", num))
             digits = re.sub(r"\D", "", num)
@@ -116,24 +119,27 @@ class DeepSearch:
         return found
 
     # ------------------------------------------------------------------
-    # Sinh follow-up query
+    # Follow-up query generation
     @staticmethod
     def _followup_query(entity: str, original_query: str, first: bool) -> str:
-        """Sinh câu hỏi đào sâu từ một entity chưa explore.
+        """Builds a digging-deeper question from an unexplored entity.
 
-        Entity đầu tiên của hop -> "{entity} là gì" (hỏi định nghĩa);
-        các entity sau -> "{entity} {original_query}" (hỏi trong ngữ cảnh gốc).
+        First entity of the hop -> "{entity} là gì" (asks for a definition);
+        later entities -> "{entity} {original_query}" (asks in the original context).
+
+        NOTE: the "là gì" template is pinned by evals/test_deepsearch.py —
+        keep it as-is.
         """
         if first:
             return f"{entity} là gì"
         return f"{entity} {original_query}"
 
     # ------------------------------------------------------------------
-    # Fetch an toàn: lỗi mạng của 1 source không được giết cả vòng research
+    # Safe fetch: one source's network error must not kill the whole research loop
     def _safe_fetch(self, url: str) -> Dict[str, Any]:
         try:
             page = self._fetch_fn(url) or {}
-        except Exception as exc:  # noqa: BLE001 - fetch lỗi thì bỏ source này
+        except Exception as exc:  # noqa: BLE001 - failed fetch drops this source
             return {"url": url, "title": "", "text": "", "error": str(exc)}
         return {
             "url": page.get("url", url),
@@ -148,19 +154,19 @@ class DeepSearch:
         max_hops: int = 5,
         max_sources: int = 10,
     ) -> Dict[str, Any]:
-        """Chạy nghiên cứu đa hop.
+        """Runs multi-hop research.
 
         Args:
-            query: câu hỏi gốc.
-            max_hops: số vòng search tối đa.
-            max_sources: tổng số source tối đa được fetch.
+            query: the original question.
+            max_hops: max search rounds.
+            max_sources: max total sources to fetch.
 
         Returns:
             {
-              "query": query gốc,
+              "query": original query,
               "sources": [{"url", "title", "text", "hop"}],
-              "entities": [entity strings theo thứ tự xuất hiện],
-              "hops_used": số hop thực tế đã chạy,
+              "entities": [entity strings in order of appearance],
+              "hops_used": actual hops run,
             }
         """
         query = (query or "").strip()
@@ -169,11 +175,11 @@ class DeepSearch:
         max_hops = max(1, int(max_hops))
         max_sources = max(1, int(max_sources))
 
-        # Hàng đợi BFS các (query, hop); tránh lặp query bằng seen_queries.
+        # BFS queue of (query, hop); avoid repeating queries with seen_queries.
         queue: List[Tuple[str, int]] = [(query, 0)]
         seen_queries: Set[str] = {query.lower()}
 
-        # 2 tập chống trùng: URL đã fetch và entity đã sinh follow-up.
+        # 2 dedupe sets: fetched URLs and entities that spawned follow-ups.
         fetched_urls: Set[str] = set()
         explored_entities: Set[str] = set()
 
@@ -190,7 +196,7 @@ class DeepSearch:
             try:
                 results = self._search_fn(q) or []
             except Exception:
-                continue  # search lỗi -> bỏ hop này, thử query khác trong queue
+                continue  # failed search -> skip this hop, try the next queued query
 
             new_entities_this_hop: List[str] = []
             for r in results:
@@ -198,7 +204,7 @@ class DeepSearch:
                     break
                 url = (r or {}).get("url", "")
                 if not url or url in fetched_urls:
-                    continue  # dedup: URL đã fetch thì bỏ qua
+                    continue  # dedupe: skip already-fetched URLs
                 fetched_urls.add(url)
 
                 page = self._safe_fetch(url)
@@ -220,8 +226,8 @@ class DeepSearch:
 
             hops_used = max(hops_used, hop + 1)
 
-            # Sinh follow-up: chỉ từ entities mới và chưa từng explore,
-            # tối đa FOLLOWUPS_PER_HOP mỗi hop để không bùng nổ tổ hợp.
+            # Generate follow-ups: only from new, unexplored entities,
+            # capped at FOLLOWUPS_PER_HOP per hop to avoid combinatorial explosion.
             made = 0
             for i, ent in enumerate(new_entities_this_hop):
                 if made >= FOLLOWUPS_PER_HOP:
@@ -245,15 +251,15 @@ class DeepSearch:
 
 
 def build_tools(env=None):
-    """Factory cho environment.py — đăng ký deep_search tool."""
+    """Factory for environment.py — registers the deep_search tool."""
     from research.deepsearch import DeepSearch
 
     def deep_search(query: str, max_hops: int = 3) -> dict:
-        """Nghiên cứu đa hop: search → fetch → entities → follow-up.
-        
+        """Multi-hop research: search → fetch → entities → follow-up.
+
         Args:
-            query: câu hỏi/chủ đề nghiên cứu.
-            max_hops: số hop tối đa (1-5).
+            query: the research question/topic.
+            max_hops: max hops (1-5).
         """
         try:
             ds = DeepSearch()
@@ -265,12 +271,12 @@ def build_tools(env=None):
         "deep_search": {
             "name": "deep_search",
             "func": deep_search,
-            "description": "Nghiên cứu sâu đa hop với cross-source verification.",
+            "description": "Deep multi-hop research with cross-source verification.",
             "schema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Câu hỏi/chủ đề."},
-                    "max_hops": {"type": "integer", "description": "Số hop (1-5).", "default": 3},
+                    "query": {"type": "string", "description": "The question/topic."},
+                    "max_hops": {"type": "integer", "description": "Hops (1-5).", "default": 3},
                 },
                 "required": ["query"],
             },

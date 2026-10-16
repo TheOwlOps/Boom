@@ -1,11 +1,11 @@
-"""Tools nhóm security: quét secret / sanitize input / rate limit.
+"""Security tool group: secret scanning / input sanitize / rate limit.
 
-Wrap các module có sẵn trong repo (không copy logic):
+Wraps the repo's existing modules (no logic copied):
   - ``agent/src/security/secretscan.py`` -> secret_scan
   - ``agent/src/security/sanitize.py``    -> sanitize_input
   - ``agent/src/security/ratelimit.py``   -> check_rate_limit
 
-Import theo kiểu try/except: module nào thiếu thì tool đó trả {"error"}.
+Try/except imports: a missing module makes its tool return {"error"}.
 """
 
 from typing import Any, Dict, List, Optional
@@ -38,22 +38,22 @@ except ImportError:
 def _need(mod, name: str):
     if mod is None:
         raise RuntimeError(
-            f"module gốc cho tool {name!r} không khả dụng trong môi trường này"
+            f"the source module for tool {name!r} is not available in this environment"
         )
     return mod
 
 
 # ------------------------------------------------------------------ tools
 def secret_scan(target: str, diff: bool = False) -> Dict[str, Any]:
-    """Quét secret bị lộ trong file / thư mục / unified diff.
+    """Scans a file / dir / unified diff for leaked secrets.
 
-    target: đường dẫn file, thư mục, hoặc nội dung diff (khi diff=True).
-    Trả về {target, findings: [{line, type, preview (đã che)}], has_secrets}.
-    preview đã che 80% giá trị — an toàn để log/show cho agent.
+    target: file path, directory, or diff content (when diff=True).
+    Returns {target, findings: [{line, type, preview (masked)}], has_secrets}.
+    Previews mask 80% of the value — safe to log/show to the agent.
     """
     mod = _need(_secretscan, "secret_scan")
     if not isinstance(target, str) or not target.strip():
-        raise ValueError("target phải là string không rỗng")
+        raise ValueError("target must be a non-empty string")
     target = target.strip()
     if diff:
         findings = mod.scan_diff(target)
@@ -78,18 +78,19 @@ def sanitize_input(
     allowed_roots: Optional[List[str]] = None,
     max_str_len: int = 100_000,
 ) -> Dict[str, Any]:
-    """Sanitize dict args trước khi gọi 1 tool (dùng security/sanitize.py).
+    """Sanitizes a dict of args before calling a tool (uses security/sanitize.py).
 
-    Mỗi giá trị string: strip ký tự điều khiển (giữ \\n\\t) -> truncate về
-    max_str_len -> phát hiện prompt injection. Key là path thì validate
-    chống path traversal theo allowed_roots (không truyền = bỏ qua bước này).
+    For each string value: strip control chars (keeps \\n\\t) -> truncate to
+    max_str_len -> detect prompt injection. Path keys are validated against
+    path traversal per allowed_roots (omit = skip this step).
 
-    Trả về {ok, sanitized_args, warnings}. ok=False chỉ khi có injection hoặc
-    path traversal — trường hợp đó agent KHÔNG được gọi tool với args này.
+    Returns {ok, sanitized_args, warnings}. ok=False only on injection or
+    path traversal — in that case the agent must NOT call the tool with
+    these args.
     """
     mod = _need(_sanitize, "sanitize_input")
     if not isinstance(args, dict):
-        raise ValueError("args phải là dict")
+        raise ValueError("args must be a dict")
     try:
         max_len = int(max_str_len)
     except (TypeError, ValueError):
@@ -102,9 +103,9 @@ def sanitize_input(
     )
 
 
-# Rate limiter dùng chung cho tool (token bucket theo key).
-# Giữ 2 instance module-level: default và strict — tạo mới mỗi lần gọi sẽ
-# làm mất trạng thái bucket nên strict cũng phải dùng chung 1 instance.
+# Shared rate limiter for the tool (token bucket per key).
+# Two module-level instances: default and strict — creating a new one per call
+# would lose bucket state, so strict also shares a single instance.
 _limiter = None
 _limiter_strict = None
 
@@ -122,22 +123,22 @@ def _get_limiter(strict: bool = False):
 
 
 def check_rate_limit(key: str, strict: bool = False) -> Dict[str, Any]:
-    """Kiểm tra rate limit cho 1 key (user/channel/tool).
+    """Checks the rate limit for one key (user/channel/tool).
 
-    Trả về {key, allowed, retry_after}. allowed=False nghĩa là key đã hết
-    token — agent nên chờ retry_after giây rồi thử lại, không spam.
-    strict=True dùng preset STRICT (cho tool nguy hiểm: gửi tin, xóa...).
-    Không raise: vượt limit chỉ trả allowed=False.
+    Returns {key, allowed, retry_after}. allowed=False means the key is out
+    of tokens — the agent should wait retry_after seconds and retry, not spam.
+    strict=True uses the STRICT preset (for dangerous tools: sending, deleting...).
+    Never raises: exceeding the limit just returns allowed=False.
     """
     if not isinstance(key, str) or not key.strip():
-        raise ValueError("key phải là string không rỗng")
+        raise ValueError("key must be a non-empty string")
     key = key.strip()
     limiter = _get_limiter(strict=bool(strict))
     allowed = limiter.allow(key)
     retry_after = 0.0
     if not allowed:
         state = limiter.get_state(key)
-        # get_state trả {"tokens", ...}: retry_after ~ thời gian nạp lại 1 token
+        # get_state returns {"tokens", ...}: retry_after ~ time to refill 1 token
         tokens = float(state.get("tokens", 0.0) or 0.0)
         refill = float(getattr(limiter, "refill", 0.5) or 0.5)
         retry_after = max(0.0, (1.0 - tokens) / refill)
@@ -149,7 +150,7 @@ def check_rate_limit(key: str, strict: bool = False) -> Dict[str, Any]:
 def _guard(fn):
     try:
         return fn()
-    except Exception as exc:  # tool không bao giờ raise vào agent loop
+    except Exception as exc:  # tools never raise into the agent loop
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -159,7 +160,7 @@ def _schema(properties=None, required=None):
 
 
 def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
-    """Registry-ready tool dicts cho environment của Boom."""
+    """Registry-ready tool dicts for Boom's environment."""
 
     def t_secret_scan(target: str, diff: bool = False):
         return _guard(lambda: secret_scan(target, bool(diff)))
@@ -177,19 +178,19 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
             "name": "secret_scan",
             "func": t_secret_scan,
             "description": (
-                "Quét secret lộ trong file/thư mục/unified diff. Trả về "
-                "findings (preview đã che) + has_secrets. Chạy trước khi "
-                "commit/push hoặc khi nghi ngờ lộ key."
+                "Scans a file/dir/unified diff for leaked secrets. Returns "
+                "findings (masked previews) + has_secrets. Run before "
+                "commit/push or when a key leak is suspected."
             ),
             "schema": _schema(
                 {
                     "target": {
                         "type": "string",
-                        "description": "Đường dẫn file/thư mục, hoặc nội dung diff khi diff=true.",
+                        "description": "File/dir path, or diff content when diff=true.",
                     },
                     "diff": {
                         "type": "boolean",
-                        "description": "True nếu target là nội dung unified diff.",
+                        "description": "True when target is unified diff content.",
                     },
                 },
                 ["target"],
@@ -199,22 +200,22 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
             "name": "sanitize_input",
             "func": t_sanitize_input,
             "description": (
-                "Sanitize args trước khi gọi tool: strip ký tự điều khiển, "
-                "truncate, phát hiện prompt injection, validate path chống "
-                "traversal. ok=false -> KHÔNG gọi tool với args này."
+                "Sanitizes args before calling a tool: strips control chars, "
+                "truncates, detects prompt injection, validates paths against "
+                "traversal. ok=false -> do NOT call the tool with these args."
             ),
             "schema": _schema(
                 {
-                    "tool_name": {"type": "string", "description": "Tên tool sắp gọi."},
-                    "args": {"type": "object", "description": "Dict args sắp truyền cho tool."},
+                    "tool_name": {"type": "string", "description": "Name of the tool about to be called."},
+                    "args": {"type": "object", "description": "Dict of args about to be passed to the tool."},
                     "allowed_roots": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Root cho phép nếu args chứa path.",
+                        "description": "Allowed roots when args contain paths.",
                     },
                     "max_str_len": {
                         "type": "integer",
-                        "description": "Độ dài tối đa mỗi string. Mặc định 100000.",
+                        "description": "Max length per string. Default 100000.",
                     },
                 },
                 ["tool_name", "args"],
@@ -224,15 +225,15 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
             "name": "check_rate_limit",
             "func": t_check_rate_limit,
             "description": (
-                "Kiểm tra rate limit (token bucket) cho 1 key. allowed=false "
-                "-> chờ retry_after giây. strict=true cho tool nguy hiểm."
+                "Checks the rate limit (token bucket) for one key. allowed=false "
+                "-> wait retry_after seconds. strict=true for dangerous tools."
             ),
             "schema": _schema(
                 {
-                    "key": {"type": "string", "description": "Key cần check (user/channel/tool)."},
+                    "key": {"type": "string", "description": "Key to check (user/channel/tool)."},
                     "strict": {
                         "type": "boolean",
-                        "description": "Dùng preset STRICT cho tool nguy hiểm.",
+                        "description": "Use the STRICT preset for dangerous tools.",
                     },
                 },
                 ["key"],

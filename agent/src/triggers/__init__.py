@@ -1,4 +1,4 @@
-"""Boom trigger package: định nghĩa trigger (điều kiện + action) lưu SQLite.
+"""Boom trigger package: trigger definitions (condition + action), stored in SQLite.
 
-Module thật: models.py, store.py. Checker (poll trigger) do worker khác làm.
+Real modules: models.py, store.py. The poll-based checker is another worker's job.
 """

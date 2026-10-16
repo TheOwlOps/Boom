@@ -1,14 +1,15 @@
-"""tools.git.gitops — git tools an toàn cho Boom.
+"""tools.git.gitops — safe git tools for Boom.
 
-Wrap agent/src/autonomous/gitops.py thành 5 tool functions:
+Wraps agent/src/autonomous/gitops.py into 5 tool functions:
 git_status / git_diff / git_log / git_safe_commit / git_branch_guard.
 
-- Mọi lỗi (GitOpsError, git exit != 0, repo không hợp lệ) được bắt và trả về
-  dict {"ok": False, "error": ...} thay vì raise.
-- git_safe_commit quét secret bằng agent/src/security/secretscan.py
-  (scan_diff trên staged diff) TRƯỚC khi commit — phát hiện secret thì từ chối.
+- Every error (GitOpsError, git exit != 0, invalid repo) is caught and
+  returned as {"ok": False, "error": ...} instead of raising.
+- git_safe_commit scans secrets with agent/src/security/secretscan.py
+  (scan_diff over the staged diff) BEFORE committing — a detected secret
+  aborts the commit.
 
-Chỉ dùng stdlib + pydantic.
+Stdlib + pydantic only.
 """
 
 from __future__ import annotations
@@ -19,11 +20,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
-_TIMEOUT = 30  # giây, tránh git treo khi agent chạy nền
+_TIMEOUT = 30  # seconds, avoids git hanging when the agent runs in the background
 
 
 # ---------------------------------------------------------------------------
-# nạp module gốc (chạy được cả khi repo root lẫn agent/src nằm trên sys.path)
+# load the original module (works whether repo root or agent/src is on sys.path)
 # ---------------------------------------------------------------------------
 
 def _import(name_primary: str, name_fallback: str, label: str):
@@ -36,8 +37,8 @@ def _import(name_primary: str, name_fallback: str, label: str):
         return __import__(name_fallback, fromlist=["*"])
     except ImportError as exc:
         raise ImportError(
-            f"không nạp được module {label}: thử '{name_primary}' và "
-            f"'{name_fallback}' đều thất bại ({exc})")
+            f"could not load module {label}: both '{name_primary}' and "
+            f"'{name_fallback}' failed ({exc})")
 
 
 def _gitops():
@@ -50,32 +51,32 @@ def _secretscan():
 
 
 class LogOptions(BaseModel):
-    """Tham số validate cho git_log()."""
+    """Validated parameters for git_log()."""
 
     limit: int = Field(default=10, ge=1, le=100,
-                       description="số commit tối đa, 1..100")
+                       description="max commits, 1..100")
 
 
 # ---------------------------------------------------------------------------
-# helper nội bộ
+# internal helpers
 # ---------------------------------------------------------------------------
 
 def _check_repo(repo: str) -> Optional[str]:
-    """Validate repo: phải là chuỗi non-empty trỏ tới thư mục tồn tại.
+    """Validate repo: must be a non-empty string pointing at an existing dir.
 
-    Trả về None nếu hợp lệ, ngược lại chuỗi lỗi.
+    Returns None if valid, otherwise an error string.
     """
     if not isinstance(repo, str) or not repo.strip():
-        return "repo phải là chuỗi đường dẫn non-empty"
+        return "repo must be a non-empty path string"
     if not os.path.isdir(repo):
-        return f"repo không phải thư mục tồn tại: {repo}"
+        return f"repo is not an existing directory: {repo}"
     return None
 
 
 def _git(repo: str, *args: str) -> Tuple[bool, str]:
-    """Chạy `git <args>` trong repo. Trả về (ok, stdout_hoặc_lỗi).
+    """Run `git <args>` inside the repo. Returns (ok, stdout_or_error).
 
-    Không raise — lỗi được gói trong tuple.
+    Never raises — errors are wrapped in the tuple.
     """
     try:
         proc = subprocess.run(
@@ -87,31 +88,32 @@ def _git(repo: str, *args: str) -> Tuple[bool, str]:
             timeout=_TIMEOUT,
         )
     except FileNotFoundError:
-        return False, "không tìm thấy lệnh git trên máy"
+        return False, "git command not found on this machine"
     except subprocess.TimeoutExpired:
-        return False, f"lệnh git bị timeout: git {' '.join(args)}"
+        return False, f"git command timed out: git {' '.join(args)}"
     except OSError as exc:
         return False, str(exc)
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "lỗi không rõ").strip()
-        return False, f"git {' '.join(args)} thất bại: {err}"
+        err = (proc.stderr or proc.stdout or "unknown error").strip()
+        return False, f"git {' '.join(args)} failed: {err}"
     return True, proc.stdout
 
 
 def _scan_staged_secrets(repo: str) -> List[Dict[str, Any]]:
-    """Quét secret trên staged diff bằng secretscan.scan_diff.
+    """Scan secrets on the staged diff via secretscan.scan_diff.
 
-    Trả về list findings (rỗng = sạch). Mỗi finding có {path, line, type, preview}.
+    Returns a list of findings (empty = clean). Each finding has
+    {path, line, type, preview}.
     """
     secretscan = _secretscan()
     ok, diff_text = _git(repo, "diff", "--cached", "-U0")
     if not ok:
-        return []  # không đọc được diff -> để gitops xử lý ở bước sau
+        return []  # couldn't read the diff -> gitops handles it in the next step
     try:
         findings = secretscan.scan_diff(diff_text) or []
     except Exception:
         return []
-    # Gắn path từng file vào finding để báo lỗi rõ ràng.
+    # Attach each finding's file path for clearer error reporting.
     ok, names = _git(repo, "diff", "--cached", "--name-only", "-z")
     paths = [p for p in names.split("\x00") if p] if ok else []
     for f in findings:
@@ -125,17 +127,17 @@ def _scan_staged_secrets(repo: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def git_status(repo: str = ".") -> Dict[str, Any]:
-    """Xem trạng thái worktree (file nào staged/unstaged, loại thay đổi).
+    """Show worktree status (which files are staged/unstaged, change type).
 
-    Mô tả:
-        Tương đương `git status --porcelain`, trả về dạng structured.
+    Description:
+        Equivalent to `git status --porcelain`, returned in structured form.
     Args:
-        repo: đường dẫn thư mục chứa repo git.
+        repo: path to the directory containing the git repo.
     Returns:
         {"ok": True, "files": [{"path","staged","unstaged","kind"}], "counts": {...}}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     err = _check_repo(repo)
     if err:
@@ -145,8 +147,8 @@ def git_status(repo: str = ".") -> Dict[str, Any]:
         files = gitops.status(repo)
     except gitops.GitOpsError as exc:
         return {"ok": False, "error": str(exc)}
-    except Exception as exc:  # phòng thủ: không để exception lạ lọt ra
-        return {"ok": False, "error": f"lỗi không ngờ: {exc}"}
+    except Exception as exc:  # defensive: no unexpected exception escapes
+        return {"ok": False, "error": f"unexpected error: {exc}"}
     counts: Dict[str, int] = {}
     for f in files:
         counts[f.get("kind", "unknown")] = counts.get(f.get("kind", "unknown"), 0) + 1
@@ -155,34 +157,36 @@ def git_status(repo: str = ".") -> Dict[str, Any]:
 
 def git_diff(repo: str = ".", staged: bool = False,
              stat_only: bool = True, max_chars: int = 20000) -> Dict[str, Any]:
-    """Xem diff: tóm tắt số liệu + (tùy chọn) nội dung diff thô.
+    """Show diff: stats summary + (optional) raw diff text.
 
-    Mô tả:
-        summary: số file đổi, tổng dòng thêm/xóa, hàm bị sửa (parse từ hunk header).
-        text: nội dung unified diff (cắt ở max_chars), None khi stat_only=True.
+    Description:
+        summary: files changed, total added/removed lines, touched functions
+        (parsed from hunk headers).
+        text: unified diff content (capped at max_chars), None when
+        stat_only=True.
     Args:
-        repo: đường dẫn repo.
-        staged: True để chỉ xem phần đã `git add` (--cached).
-        stat_only: True thì chỉ trả summary, không trả text.
-        max_chars: giới hạn độ dài text (1..200000).
+        repo: repo path.
+        staged: True to only show `git add`-ed changes (--cached).
+        stat_only: True returns only the summary, no text.
+        max_chars: text length cap (1..200000).
     Returns:
         {"ok": True, "summary": {...}, "text": str|None}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     err = _check_repo(repo)
     if err:
         return {"ok": False, "error": err}
     if not isinstance(max_chars, int) or not 1 <= max_chars <= 200000:
-        return {"ok": False, "error": "max_chars phải trong khoảng 1..200000"}
+        return {"ok": False, "error": "max_chars must be within 1..200000"}
     gitops = _gitops()
     try:
         summary = gitops.diff_summary(repo)
     except gitops.GitOpsError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        return {"ok": False, "error": f"lỗi không ngờ: {exc}"}
+        return {"ok": False, "error": f"unexpected error: {exc}"}
     text = None
     if not stat_only:
         args = ["diff", "--cached"] if staged else ["diff", "HEAD"]
@@ -196,18 +200,18 @@ def git_diff(repo: str = ".", staged: bool = False,
 
 
 def git_log(repo: str = ".", limit: int = 10) -> Dict[str, Any]:
-    """Xem lịch sử commit gần nhất.
+    """Show recent commit history.
 
-    Mô tả:
-        Trả về *limit* commit mới nhất: hash, author, date, message.
+    Description:
+        Returns the *limit* newest commits: hash, author, date, message.
     Args:
-        repo: đường dẫn repo.
-        limit: số commit (1..100).
+        repo: repo path.
+        limit: number of commits (1..100).
     Returns:
         {"ok": True, "commits": [{"hash","author","date","message"}]}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     err = _check_repo(repo)
     if err:
@@ -215,7 +219,7 @@ def git_log(repo: str = ".", limit: int = 10) -> Dict[str, Any]:
     try:
         opts = LogOptions(limit=limit)
     except ValidationError as exc:
-        return {"ok": False, "error": f"limit không hợp lệ: {exc.errors()[0]['msg']}"}
+        return {"ok": False, "error": f"invalid limit: {exc.errors()[0]['msg']}"}
     ok, out = _git(repo, "log", f"-n{opts.limit}",
                    "--format=%H%x1f%an%x1f%ad%x1f%s", "--date=iso")
     if not ok:
@@ -231,36 +235,36 @@ def git_log(repo: str = ".", limit: int = 10) -> Dict[str, Any]:
 
 
 def git_safe_commit(repo: str, message: str) -> Dict[str, Any]:
-    """Commit an toàn: chặn message rỗng, chặn commit rỗng, chặn secret.
+    """Safe commit: blocks empty messages, empty commits, and secrets.
 
-    Mô tả:
-        1. message rỗng -> từ chối.
-        2. Quét secret trên staged diff bằng secretscan.scan_diff;
-           phát hiện secret -> từ chối (kèm vị trí).
-        3. Gọi gitops.safe_commit (kiểm tra lại: có file staged không,
-           quét secret fallback) rồi commit.
+    Description:
+        1. Empty message -> refused.
+        2. Scans secrets on the staged diff via secretscan.scan_diff;
+           any secret found -> refused (with location).
+        3. Calls gitops.safe_commit (re-checks: anything staged,
+           fallback secret scan) then commits.
     Args:
-        repo: đường dẫn repo.
+        repo: repo path.
         message: commit message.
     Returns:
         {"ok": True, "commit_hash": str}
-        hoặc {"ok": False, "error": str} (tiếng Việt).
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     err = _check_repo(repo)
     if err:
         return {"ok": False, "error": err}
     if not isinstance(message, str) or not message.strip():
-        return {"ok": False, "error": "commit message rỗng, từ chối commit"}
+        return {"ok": False, "error": "empty commit message, commit refused"}
     findings = _scan_staged_secrets(repo)
     if findings:
         first = findings[0] if isinstance(findings[0], dict) else {}
-        detail = "%s (loại %s, dòng %s)" % (
+        detail = "%s (type %s, line %s)" % (
             first.get("path", "?"), first.get("type", "?"), first.get("line", "?"))
         return {"ok": False,
-                "error": "phát hiện secret trong file staged: %s "
-                         "(+%d phát hiện khác), từ chối commit"
+                "error": "secret detected in staged files: %s "
+                         "(+%d more finding(s)), commit refused"
                          % (detail, len(findings) - 1)}
     gitops = _gitops()
     try:
@@ -268,47 +272,48 @@ def git_safe_commit(repo: str, message: str) -> Dict[str, Any]:
     except gitops.GitOpsError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        return {"ok": False, "error": f"lỗi không ngờ: {exc}"}
-    # gitops.safe_commit đã trả dict {"ok": ...} — chuyển tiếp nguyên vẹn.
+        return {"ok": False, "error": f"unexpected error: {exc}"}
+    # gitops.safe_commit already returns an {"ok": ...} dict — pass it through.
     if isinstance(result, dict):
         return result
-    return {"ok": False, "error": f"kết quả lạ từ gitops: {result!r}"}
+    return {"ok": False, "error": f"unexpected result from gitops: {result!r}"}
 
 
 def git_branch_guard(repo: str = ".",
                      protected: Tuple[str, ...] = ("main", "master")) -> Dict[str, Any]:
-    """Kiểm tra nhánh hiện tại có phải nhánh protected không.
+    """Check whether the current branch is a protected one.
 
-    Mô tả:
-        Agent KHÔNG được commit thẳng lên nhánh protected (main/master) —
-        phải tạo branch mới. Tool này cho agent biết mình đang ở đâu.
+    Description:
+        The agent must NOT commit directly to a protected branch (main/master) —
+        it must create a new branch instead. This tool tells the agent where
+        it is.
     Args:
-        repo: đường dẫn repo.
-        protected: tuple tên nhánh được bảo vệ.
+        repo: repo path.
+        protected: tuple of protected branch names.
     Returns:
         {"ok": True, "branch": str, "protected": bool, "warning": str|None}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     err = _check_repo(repo)
     if err:
         return {"ok": False, "error": err}
     if not isinstance(protected, (tuple, list)) or not protected:
-        return {"ok": False, "error": "protected phải là tuple/list non-empty"}
+        return {"ok": False, "error": "protected must be a non-empty tuple/list"}
     gitops = _gitops()
     try:
         on_protected = gitops.branch_guard(repo, tuple(protected))
     except gitops.GitOpsError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        return {"ok": False, "error": f"lỗi không ngờ: {exc}"}
+        return {"ok": False, "error": f"unexpected error: {exc}"}
     ok, branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     branch_name = branch.strip() if ok else "?"
     warning = None
     if on_protected:
-        warning = (f"đang ở nhánh protected '{branch_name}': "
-                   "không commit thẳng, hãy tạo branch mới")
+        warning = (f"on protected branch '{branch_name}': "
+                   "do not commit directly, create a new branch")
     return {"ok": True, "branch": branch_name, "protected": on_protected,
             "warning": warning}
 

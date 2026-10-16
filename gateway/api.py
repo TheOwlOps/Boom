@@ -46,7 +46,7 @@ _LOG_MAX = 200
 
 
 def api_log(msg: str):
-    """Thêm log vào buffer (giữ tối đa 200 dòng mới nhất)."""
+    """Append a log entry to the buffer (keeps the newest 200 lines at most)."""
     import datetime
     _LOG_BUFFER.append({
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -233,7 +233,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/health":
-            # Đếm tools/skills thật từ environment
+            # Count real tools/skills from the environment
             tools_count = 0
             skills_count = 0
             try:
@@ -276,7 +276,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/dag/status":
             self._send_json(200, self.api.dag_status())
         elif path == "/api/tools":
-            # Danh sách tools thật từ environment
+            # Real tool list from the environment
             tools = []
             try:
                 from agent.src.environment import AgentEnvironment
@@ -291,7 +291,7 @@ class _Handler(BaseHTTPRequestHandler):
                 api_log(f"/api/tools error: {e}")
             self._send_json(200, {"tools": tools, "count": len(tools)})
         elif path == "/api/skills":
-            # Quét skills/ thật từ repo
+            # Scan the repo's real skills/ directory
             skills = []
             try:
                 from pathlib import Path
@@ -339,7 +339,7 @@ class _Handler(BaseHTTPRequestHandler):
     # ----------------------------------------------------------------- chat
 
     def _handle_tool_run(self):
-        """Chạy thử 1 tool qua API (dùng SandboxedToolRunner nếu có)."""
+        """Try running one tool via the API (uses SandboxedToolRunner if available)."""
         data, err = self._read_json_body()
         if err:
             status, payload = err
@@ -358,7 +358,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._error(404, f"tool not found: {tool_name}")
             tool = tools[tool_name]
             func = getattr(tool, "func", None) or tool
-            # Chạy qua sandbox nếu có
+            # Run through the sandbox when available
             try:
                 from agent.src.security.toolsandbox import SandboxedToolRunner
                 runner = SandboxedToolRunner()

@@ -1,28 +1,29 @@
-"""Routes nhóm "admin" — introspection nội bộ (skills, DAG).
+"""The "admin" route group — internal introspection (skills, DAG).
 
-Nguồn gốc: ``gateway/api.py`` (nhánh ``do_GET`` cho ``/api/skills`` và
+Origin: ``gateway/api.py`` (the ``do_GET`` branch for ``/api/skills`` and
 ``/api/dag/status``).
 
-Lưu ý: gateway KHÔNG có namespace ``/admin/*`` hay ``/config`` trên HTTP API
-hiện tại. Hai route introspection sẵn có được gom vào module admin vì chúng
-phục vụ quản trị/giám sát agent, không thuộc luồng chat/tools/channels.
+Note: the gateway currently has NO ``/admin/*`` or ``/config`` namespace
+on the HTTP API. The two existing introspection routes are grouped into
+the admin module because they serve agent administration/monitoring, not
+the chat/tools/channels flows.
 
-Backward-compat: giữ nguyên ``/api/skills`` và ``/api/dag/status`` (GET).
+Backward-compat: keep ``/api/skills`` and ``/api/dag/status`` (GET).
 """
 
-# Mỗi entry: (HTTP method, path pattern, tên handler trong api.py).
+# Each entry: (HTTP method, path pattern, handler name in api.py).
 ROUTES = [
-    # Quét thư mục skills/ thật của repo: {"skills":[{name,description}],
-    # "count": n}. Mô tả lấy từ dòng đầu của SKILL.md.
+    # Scan the repo's real skills/ directory: {"skills":[{name,description}],
+    # "count": n}. Descriptions come from the first line of SKILL.md.
     ("GET", "/api/skills", "handle_skills"),
-    # BoomAPI.dag_status(): {"nodes": [...]} — hôm nay Brain chưa lưu
-    # last-run nên trả [] trung thực; nếu Brain tương lai expose
-    # last_result thì surface theo đúng contract.
+    # BoomAPI.dag_status(): {"nodes": [...]} — today the Brain does not
+    # persist last-run, so [] is the honest answer; if a future Brain
+    # exposes last_result, surface it per the contract.
     ("GET", "/api/dag/status", "handle_dag_status"),
 ]
 
 
 def register(router):
-    """Gắn mọi route của module này vào router (duck-typed)."""
+    """Attach every route of this module to the router (duck-typed)."""
     for method, path, handler in ROUTES:
         router.add(method, path, handler, __name__.rsplit(".", 1)[-1])

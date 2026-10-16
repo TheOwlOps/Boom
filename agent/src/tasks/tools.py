@@ -1,4 +1,4 @@
-"""Agent-facing tools cho durable task engine.
+"""Agent-facing tools for the durable task engine.
 
 Tool dicts follow the repo convention {"name", "func", "description", "schema"} and the
 {"error": ...} failure envelope. Every tool returns a plain dict; nothing here raises
@@ -37,9 +37,11 @@ def _now_iso() -> str:
 def build_tools(env_or_root_dir) -> Dict[str, Dict[str, Any]]:
     """5 tools: task_create, task_list, task_status, task_resume, task_cancel.
 
-    DB tại <root_dir>/memories/tasks.db (lazy tạo khi gọi tool).
-    llm lấy từ getattr(env, "llm", None) — có thì plan_goal, không thì 1 step fallback desc=goal.
-    brain lấy từ getattr(env, "brain", None) — task_resume cần brain, thiếu thì {"error"}.
+    DB at <root_dir>/memories/tasks.db (created lazily on first tool call).
+    llm comes from getattr(env, "llm", None) — plan_goal when present, otherwise
+    a 1-step fallback with desc=goal.
+    brain comes from getattr(env, "brain", None) — task_resume needs brain,
+    returns {"error"} without it.
     """
     root_dir = _resolve_root(env_or_root_dir)
 
@@ -116,7 +118,7 @@ def build_tools(env_or_root_dir) -> Dict[str, Dict[str, Any]]:
             task = TaskRunner(store, brain).resume(task_id)
         except ValueError as e:
             return {"error": str(e)}
-        except Exception as e:  # never raise ra ngoai agent loop
+        except Exception as e:  # never raises into the agent loop
             return {"error": f"task resume failed: {e}"}
         return {"task": task.to_dict()}
 

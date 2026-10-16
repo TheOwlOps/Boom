@@ -1,13 +1,14 @@
-"""VideoProcessor — trích xuất frames từ video rồi mô tả bằng OCR.
+"""VideoProcessor — extracts frames from video, then describes them with OCR.
 
-Backend trích frames (chọn tự động theo thứ tự ưu tiên):
-  1. ffmpeg (subprocess) — KHUYẾN NGHỊ, có sẵn trên máy
-  2. cv2 (OpenCV VideoCapture) — dự phòng nếu không có ffmpeg
+Frame extraction backend (auto-selected in priority order):
+  1. ffmpeg (subprocess) — RECOMMENDED, already on the machine
+  2. cv2 (OpenCV VideoCapture) — fallback when no ffmpeg
 
-Cả 2 đều là dependency OPTIONAL. Nếu thiếu cả 2, extract_frames() raise
-RuntimeError với message tiếng Việt rõ ràng.
+Both are OPTIONAL dependencies. When both are missing, extract_frames()
+raises RuntimeError with a clear error message.
 
-Module này KHÔNG copy code từ repo tham chiếu nào: tự viết cho Boom.
+This module copies no code from any reference repo: written from scratch
+for Boom.
 """
 
 from __future__ import annotations
@@ -20,20 +21,20 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-# Message lỗi khi không có backend nào để trích frames.
+# Error message when no frame extraction backend is available.
 ERR_NO_BACKEND = (
-    "Không trích xuất được frame: máy chưa có ffmpeg và chưa có OpenCV. "
-    "Hãy cài một trong hai rồi thử lại:\n"
-    "  - ffmpeg:        apt install ffmpeg   (khuyến nghị)\n"
+    "Cannot extract frames: this machine has neither ffmpeg nor OpenCV. "
+    "Install one of the two and try again:\n"
+    "  - ffmpeg:        apt install ffmpeg   (recommended)\n"
     "  - OpenCV:        pip install opencv-python-headless\n"
-    "Lưu ý: không dùng apt install python3-opencv nếu muốn giữ môi trường sạch."
+    "Note: don't use apt install python3-opencv if you want a clean environment."
 )
 
-FFMPEG_TIMEOUT = 120  # giây, giới hạn mỗi lần gọi ffmpeg
+FFMPEG_TIMEOUT = 120  # seconds, per ffmpeg call
 
 
 def _has_cv2() -> bool:
-    """Kiểm tra OpenCV có import được không (không import ồn ào)."""
+    """Checks whether OpenCV is importable (without noisy imports)."""
     try:
         import importlib.util
 
@@ -43,10 +44,10 @@ def _has_cv2() -> bool:
 
 
 def _resolve_default_ocr() -> Optional[Callable[[str], str]]:
-    """Tự tìm ocr_tool của Boom và bọc thành function(path) -> text.
+    """Auto-finds Boom's ocr_tool and wraps it as function(path) -> text.
 
-    ocr_image() của Boom trả về dict {"text": ...} hoặc {"error": ...},
-    không raise — nên wrapper chuyển mọi lỗi thành text rỗng.
+    Boom's ocr_image() returns dict {"text": ...} or {"error": ...} and never
+    raises — so the wrapper turns every error into empty text.
     """
     for mod in ("agent.src.tools.ocr_tool", "tools.ocr_tool"):
         try:
@@ -75,10 +76,10 @@ class VideoProcessor:
         work_dir: str = "/tmp/boom_frames",
     ) -> None:
         """Args:
-            ocr_fn: function(path) -> text. Nếu None, tự thử lấy từ
-                tools.ocr_tool của Boom. Nếu cũng không có thì frames
-                vẫn trích được, chỉ là text sẽ rỗng.
-            work_dir: thư mục gốc lưu frames trích xuất.
+            ocr_fn: function(path) -> text. When None, auto-tries Boom's
+                tools.ocr_tool. When that's also missing, frames still
+                extract fine — only the text will be empty.
+            work_dir: root dir for extracted frames.
         """
         self.ocr_fn = ocr_fn if ocr_fn is not None else _resolve_default_ocr()
         self.work_dir = Path(work_dir)
@@ -87,7 +88,7 @@ class VideoProcessor:
         self._cv2_ok = _has_cv2()
 
     # ------------------------------------------------------------------
-    # Thuộc tính kiểm tra backend
+    # Backend availability flags
     # ------------------------------------------------------------------
     @property
     def has_ffmpeg(self) -> bool:
@@ -98,7 +99,7 @@ class VideoProcessor:
         return self._cv2_ok
 
     # ------------------------------------------------------------------
-    # API chính
+    # Main API
     # ------------------------------------------------------------------
     def extract_frames(
         self,
@@ -106,22 +107,22 @@ class VideoProcessor:
         fps: float = 1.0,
         max_frames: int = 60,
     ) -> List[Dict[str, Any]]:
-        """Trích frames từ video.
+        """Extracts frames from a video.
 
-        Returns: [{"index": int, "timestamp": float (giây), "path": str}]
+        Returns: [{"index": int, "timestamp": float (seconds), "path": str}]
         """
         video = Path(video_path)
         if not video.exists():
-            raise FileNotFoundError("Không tìm thấy file video: %s" % video_path)
+            raise FileNotFoundError("Video file not found: %s" % video_path)
         if fps <= 0:
-            raise ValueError("fps phải > 0, nhận được %r" % (fps,))
+            raise ValueError("fps must be > 0, got %r" % (fps,))
         if max_frames < 1:
-            raise ValueError("max_frames phải >= 1, nhận được %r" % (max_frames,))
+            raise ValueError("max_frames must be >= 1, got %r" % (max_frames,))
 
-        # Mỗi video có thư mục frames riêng (tránh đè lẫn nhau khi xử lý nhiều video).
+        # Each video gets its own frames dir (no clobbering across videos).
         digest = hashlib.sha256(str(video.resolve()).encode()).hexdigest()[:12]
         out_dir = self.work_dir / digest
-        # Dọn frames cũ của video này để kết quả luôn tươi.
+        # Clear this video's old frames so results are always fresh.
         if out_dir.exists():
             shutil.rmtree(out_dir)
         out_dir.mkdir(parents=True)
@@ -133,10 +134,10 @@ class VideoProcessor:
         raise RuntimeError(ERR_NO_BACKEND)
 
     def describe_frames(self, frames: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Chạy OCR trên từng frame.
+        """Runs OCR on each frame.
 
         Returns: [{"index", "timestamp", "text", "path"}]
-        OCR fail hoặc không có ocr_fn -> text = "" (không crash).
+        OCR failure or no ocr_fn -> text = "" (no crash).
         """
         described: List[Dict[str, Any]] = []
         for f in frames:
@@ -172,11 +173,11 @@ class VideoProcessor:
             "-i",
             str(video),
             "-vf",
-            "fps=%.4f" % fps,  # trích đúng fps yêu cầu, không phụ thuộc fps gốc
+            "fps=%.4f" % fps,  # extract at exactly the requested fps, independent of source fps
             "-frames:v",
-            str(max_frames),  # giới hạn số frame -> không nổ disk
+            str(max_frames),  # frame cap -> no disk explosions
             "-q:v",
-            "4",  # chất lượng JPEG vừa đủ cho OCR, file nhỏ
+            "4",  # JPEG quality good enough for OCR, small files
             pattern,
         ]
         try:
@@ -185,14 +186,14 @@ class VideoProcessor:
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError(
-                "ffmpeg trích frames quá %ds, đã hủy (video: %s)"
+                "ffmpeg frame extraction exceeded %ds, killed (video: %s)"
                 % (FFMPEG_TIMEOUT, video)
             )
         except OSError as e:
-            raise RuntimeError("Không chạy được ffmpeg: %s" % (e,))
+            raise RuntimeError("Cannot run ffmpeg: %s" % (e,))
         if proc.returncode != 0:
             raise RuntimeError(
-                "ffmpeg trích frames thất bại: %s" % ((proc.stderr or "").strip()[:500])
+                "ffmpeg frame extraction failed: %s" % ((proc.stderr or "").strip()[:500])
             )
 
         frames: List[Dict[str, Any]] = []
@@ -200,8 +201,8 @@ class VideoProcessor:
             frames.append(
                 {
                     "index": i,
-                    # Timestamp suy từ thứ tự frame / fps yêu cầu (filter fps=
-                    # cho frame cách đều, chính xác với video bình thường).
+                    # Timestamp inferred from frame order / requested fps (the fps=
+                    # filter gives evenly spaced frames, accurate for normal videos).
                     "timestamp": round(i / fps, 3),
                     "path": str(p),
                 }
@@ -214,14 +215,14 @@ class VideoProcessor:
     def _extract_cv2(
         self, video: Path, out_dir: Path, fps: float, max_frames: int
     ) -> List[Dict[str, Any]]:
-        import cv2  # import lazy: cv2 là optional
+        import cv2  # lazy import: cv2 is optional
 
         cap = cv2.VideoCapture(str(video))
         if not cap.isOpened():
-            raise RuntimeError("OpenCV không mở được video: %s" % (video,))
+            raise RuntimeError("OpenCV cannot open video: %s" % (video,))
         try:
             src_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-            # Bước nhảy: cứ mỗi `step` frame gốc thì lấy 1 frame.
+            # Step: take 1 frame per every `step` source frames.
             step = max(1, int(round(src_fps / fps))) if src_fps > 0 else 1
 
             frames: List[Dict[str, Any]] = []
@@ -250,7 +251,7 @@ class VideoProcessor:
 
 
 def _supports_import(name: str) -> bool:
-    """Helper nhỏ cho test kiểm tra khả năng import mà không gây crash."""
+    """Tiny helper for tests to check importability without crashing."""
     try:
         __import__(name)
         return True
@@ -259,11 +260,11 @@ def _supports_import(name: str) -> bool:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    # Chạy nhanh: python3 video.py <file.mp4>
+    # Quick run: python3 video.py <file.mp4>
     vp = VideoProcessor()
-    print("ffmpeg:", "có" if vp.has_ffmpeg else "không",
-          "| cv2:", "có" if vp.has_cv2 else "không",
-          "| ocr:", "có" if vp.ocr_fn else "không")
+    print("ffmpeg:", "yes" if vp.has_ffmpeg else "no",
+          "| cv2:", "yes" if vp.has_cv2 else "no",
+          "| ocr:", "yes" if vp.ocr_fn else "no")
     if len(sys.argv) > 1:
         fr = vp.extract_frames(sys.argv[1])
         for d in vp.describe_frames(fr):

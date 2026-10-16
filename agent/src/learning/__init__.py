@@ -1,5 +1,5 @@
-"""Learning — hệ thống tự học của Boom: lưu preference, fact, decision,
-correction về user vào SQLite, hỗ trợ supersede khi kiến thức mới thay cũ.
+"""Learning — Boom's self-learning system: stores user preferences, facts,
+decisions, corrections in SQLite; supports superseding old knowledge with new.
 
 models: Learning, LearningType
 store:  LearningStore

@@ -1,4 +1,4 @@
-"""Self-healing cho agent loop của Boom: phân loại lỗi, retry backoff, tự nén context."""
+"""Self-healing for the Boom agent loop: error classification, backoff retry, context compression."""
 from .selfheal import (
     ContextManagerProtocol,
     ContextOverflowError,

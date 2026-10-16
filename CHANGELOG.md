@@ -1,50 +1,50 @@
-# CHANGELOG — Phiên làm việc xuyên đêm 2026-10-16
+# CHANGELOG — Overnight session 2026-10-16
 
-**Thời gian:** 01:36 → ~07:00 (+07), 2026-10-16
+**Time:** 01:36 → ~07:00 (+07), 2026-10-16
 **Repo:** TheOwlOps/Boom, branch `main`
-**Kết quả:** 26 commits, **~1.400+ assertions PASS**, 0 fail.
+**Result:** 26 commits, **~1,400+ assertions PASS**, 0 fail.
 
 ---
 
-## Đợt 0 — Hardening coding + security (01:36)
+## Batch 0 — Coding hardening + security (01:36)
 
-**Commit `543a7bf`** — 8 modules mới, 286 tests PASS.
+**Commit `543a7bf`** — 8 new modules, 286 tests PASS.
 
 **CODING** → `agent/src/autonomous/`:
-| Module | Tests | Chức năng |
+| Module | Tests | Functionality |
 |---|---|---|
-| `codereview.py` | 34 | Review tĩnh: complexity, dead code, bare except, TODO |
-| `depgraph.py` | 29 | Import graph, phát hiện circular, impact analysis |
-| `gitops.py` | 40 | Diff summary, branch guard, safe commit (quét secret) |
-| `coverage.py` | 19 | Coverage qua sys.monitoring (stdlib, Python 3.12+) |
+| `codereview.py` | 34 | Static review: complexity, dead code, bare except, TODO |
+| `depgraph.py` | 29 | Import graph, circular detection, impact analysis |
+| `gitops.py` | 40 | Diff summary, branch guard, safe commit (secret scan) |
+| `coverage.py` | 19 | Coverage via sys.monitoring (stdlib, Python 3.12+) |
 
-**BẢO MẬT** → `agent/src/security/`:
-| Module | Tests | Chức năng |
+**SECURITY** → `agent/src/security/`:
+| Module | Tests | Functionality |
 |---|---|---|
-| `secretscan.py` | 43 | Quét 8 loại secret, preview che 80% |
-| `sanitize.py` | 49 | Chống prompt injection (Việt+Anh), path traversal |
-| `ratelimit.py` | 43 | Token bucket per-user, thread-safe |
-| `redact.py` | 29 | Che secret trong audit log (fail-open) |
+| `secretscan.py` | 43 | Scan for 8 secret types, 80%-masked preview |
+| `sanitize.py` | 49 | Anti prompt injection (Vietnamese+English), path traversal |
+| `ratelimit.py` | 43 | Per-user token bucket, thread-safe |
+| `redact.py` | 29 | Redact secrets in audit log (fail-open) |
 
-**Wiring:** 8 tools mới vào `environment.py` → **131 → 139 tools**. `redact` móc vào `AuditStore.log()`.
+**Wiring:** 8 new tools into `environment.py` → **131 → 139 tools**. `redact` hooked into `AuditStore.log()`.
 
 ---
 
-## Đợt 1 — Tools/Skills/Security/UI/Mobile (01:45 → 02:35)
+## Batch 1 — Tools/Skills/Security/UI/Mobile (01:45 → 02:35)
 
 19 commits (`02d4189` → `bf171b9`), ~800+ tests PASS.
 
-### Tools — tổ chức lại thành 7 packages
-| Commit | Nội dung | Tests |
+### Tools — reorganized into 7 packages
+| Commit | Contents | Tests |
 |---|---|---|
 | `72ca054` | `tools/filesystem/`, `tools/terminal/`, `tools/git/` | 91 |
 | `6b63299` | `tools/web/`, `tools/code/`, `tools/security/`, `tools/db/` | 75 |
-| `f4ed006` | Wire 7 packages vào environment | 93 → **139 → 158 tools** |
+| `f4ed006` | Wire 7 packages into environment | 93 → **139 → 158 tools** |
 | `b7ccfad` | Wire `deep_search`/`deep_think` | **→ 160 tools** |
 
-Mỗi package có SSRF / SQLi / path-traversal protection.
+Each package has SSRF / SQLi / path-traversal protection.
 
-### Skills — 16 mới (tổng 80+)
+### Skills — 16 new (80+ total)
 | Commit | Skills |
 |---|---|
 | `02d4189` | deployer, doc-researcher, refactor-assistant, api-designer (38 tests) |
@@ -53,10 +53,10 @@ Mỗi package có SSRF / SQLi / path-traversal protection.
 | `afb484b` | log-analyzer, backup-manager, notify-hub, data-validator (25 tests) |
 
 ### Security — 10 modules
-`secretscan`, `sanitize`, `ratelimit`, `redact` (đợt 0) + `a85ee9d` command validator + env protector (45 tests) + `c8faae6` tool execution sandbox + audit (46 tests).
+`secretscan`, `sanitize`, `ratelimit`, `redact` (batch 0) + `a85ee9d` command validator + env protector (45 tests) + `c8faae6` tool execution sandbox + audit (46 tests).
 
 ### Harness core
-| Commit | Nội dung | Tests |
+| Commit | Contents | Tests |
 |---|---|---|
 | `d6f33f4` | Context window management | 34 |
 | `90e659a` | Self-healing agent loop | 26 |
@@ -64,47 +64,47 @@ Mỗi package có SSRF / SQLi / path-traversal protection.
 | `ccfd154` | Performance utils (TTLCache, LazyLoader, profiler) | 31 |
 
 ### UI / Mobile / Docs
-| Commit | Nội dung |
+| Commit | Contents |
 |---|---|
 | `5ba47cd` | Dashboard UI: StatusBar, ToolManager, SkillList, TerminalLog (build PASS) |
 | `5a0820c` | Mobile PWA + API enhancements (`/api/logs`, health stats) |
 | `c1e4f8c` | OpenAPI spec + API docs (9 endpoints) |
 | `b7ccfad` | TOOLS.md (158), SKILLS.md (80), ARCHITECTURE.md |
 
-### Bug thật đã fix
-- `a2d1a20`: `build_environment()` không tồn tại trong `api.py` → dùng `AgentEnvironment()`.
+### Real bugs fixed
+- `a2d1a20`: `build_environment()` doesn't exist in `api.py` → use `AgentEnvironment()`.
 
-### "Trao đổi với Boom"
-Dùng chính module Boom (planner, reasoning) để tự đánh giá — chi tiết trong `docs/SELF_REVIEW.md`.
+### "Conversation with Boom"
+Used Boom's own modules (planner, reasoning) for self-evaluation — details in `docs/SELF_REVIEW.md`.
 
 ---
 
-## Đợt 2 — Redo sau VM restart (fix tồn đọng + hoàn thiện)
+## Batch 2 — Redo after VM restart (fix leftovers + finalize)
 
-6 commits local (chờ push), ~580 assertions PASS.
+6 local commits (pending push), ~580 assertions PASS.
 
-| Commit | Nội dung | Tests |
+| Commit | Contents | Tests |
 |---|---|---|
-| `3192f99` | `gateway/bind_config.py` — bind 0.0.0.0 + CORS đầy đủ cho mobile PWA trong LAN (phát hiện: `api.py:487` bind cứng 127.0.0.1) | 43 |
-| `353a307` | Tách gateway router → `gateway/routes/` (health, chat, tools, channels, admin, websocket) — 9 endpoints thật, backward-compat | 214 |
-| `0b348c9` | Integration test full pipeline: env init, 159 tools, gọi tool thật — **không phát hiện bug** | 39 |
-| `902a107` | `benchmarks/bench_tools.py` — 17 benchmarks (import ~300ms/pkg, `_init_tools` 0.5ms, tool calls pure ~µs) | 32 |
-| `c5f722b` | Tách `_init_tools` (893 → 106 dòng) → `agent/src/tool_groups.py` (7 hàm group) — **registry tương đương 100%** bản gốc (verify names+descriptions+schemas) | 34 |
-| `fdd2301` | `agent/src/autonomous/deadcode.py` — AST analyzer, 12 nhóm loại trừ false positive | 166 |
+| `3192f99` | `gateway/bind_config.py` — bind 0.0.0.0 + full CORS for mobile PWA on LAN (found: `api.py:487` hard-binds 127.0.0.1) | 43 |
+| `353a307` | Split gateway router → `gateway/routes/` (health, chat, tools, channels, admin, websocket) — 9 real endpoints, backward-compat | 214 |
+| `0b348c9` | Full-pipeline integration test: env init, 159 tools, real tool calls — **no bugs found** | 39 |
+| `902a107` | `benchmarks/bench_tools.py` — 17 benchmarks (import ~300ms/pkg, `_init_tools` 0.5ms, pure tool calls ~µs) | 32 |
+| `c5f722b` | Split `_init_tools` (893 → 106 lines) → `agent/src/tool_groups.py` (7 group functions) — **registry 100% equivalent** to the original (verified names+descriptions+schemas) | 34 |
+| `fdd2301` | `agent/src/autonomous/deadcode.py` — AST analyzer, 12 false-positive exclusion groups | 166 |
 
 ---
 
-## Tổng kết kỹ thuật
+## Technical summary
 
-- **Tools:** 131 → **160** (đợt 0+1) → 159 (đợt 2, đếm thực tế trên env)
-- **Skills:** 80+ (16 mới trong đợt 1)
+- **Tools:** 131 → **160** (batches 0+1) → 159 (batch 2, actual env count)
+- **Skills:** 80+ (16 new in batch 1)
 - **Security modules:** 10 + tool sandbox + audit
-- **Test files:** `evals/test_*.py` — mọi module mới đều có test chạy thật
+- **Test files:** `evals/test_*.py` — every new module has a test that runs for real
 - **Docs:** TOOLS.md, SKILLS.md, ARCHITECTURE.md, API.md, openapi.json, SELF_REVIEW.md, PLUGINS.md, INTEGRATION_NOTES.md
 
-## Lưu ý khi deploy
+## Deploy notes
 
-1. `gateway/api.py:487` vẫn bind `127.0.0.1` — dùng `gateway/bind_config.py` (`BOOM_HOST`/`BOOM_PORT`/`BOOM_CORS_ORIGINS`) khi cần LAN/mobile truy cập.
-2. `benchmarks/bench_tools.py` chạy độc lập: `python3 benchmarks/bench_tools.py`.
-3. `deadcode.py` là analyzer mới, chưa thay thế rule `dead_code` cũ trong `codereview.py` — có thể wire sau.
-4. `gateway/routes/websocket.py` export `ROUTES = []` có chủ ý: gateway hiện không có endpoint WebSocket công khai (chỉ nội bộ trong channel adapters).
+1. `gateway/api.py:487` still binds `127.0.0.1` — use `gateway/bind_config.py` (`BOOM_HOST`/`BOOM_PORT`/`BOOM_CORS_ORIGINS`) when LAN/mobile access is needed.
+2. `benchmarks/bench_tools.py` runs standalone: `python3 benchmarks/bench_tools.py`.
+3. `deadcode.py` is the new analyzer; it hasn't replaced the old `dead_code` rule in `codereview.py` yet — can be wired later.
+4. `gateway/routes/websocket.py` exports `ROUTES = []` intentionally: the gateway currently has no public WebSocket endpoints (only internal channel adapters).

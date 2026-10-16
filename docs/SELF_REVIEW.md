@@ -1,154 +1,153 @@
-# SELF-REVIEW: Boom tự đánh giá codebase bằng chính module của mình
+# SELF-REVIEW: Boom evaluates its own codebase with its own modules
 
-> **Ngày chạy:** 2026-10-16 ~02:30 +07
-> **Repo:** `TheOwlOps/Boom`, nhánh `main` — `git pull` đã chạy, trạng thái "Already up to date" (read-only, không sửa repo, không push)
-> **Worker:** subagent "trao đổi với Boom"
+> **Run date:** 2026-10-16 ~02:30 +07
+> **Repo:** `TheOwlOps/Boom`, branch `main` — `git pull` run, status "Already up to date" (read-only, no repo changes, no push)
+> **Worker:** subagent "conversation with Boom"
 
-## 0. Minh bạch phương pháp — cái nào là output thật, cái nào là nhận xét của worker
+## 0. Method transparency — what's real module output vs. worker commentary
 
-| # | Module đã chạy | Lệnh chạy thật | Kết quả |
+| # | Module run | Command actually run | Result |
 |---|---|---|---|
-| 1 | `agent/src/autonomous/planner.py` — `TaskPlanner.plan()` + `to_markdown()` | ✅ chạy thật, heuristic không cần LLM | Output thật, nguyên văn ở mục 1 |
-| 2 | `agent/src/reasoning/cot.py` — `ChainOfThought.think()` | ⚠️ **pipeline chạy thật, "LLM" là stub** | Xem giải thích dưới |
-| 3 | `agent/src/autonomous/codereview.py` — `CodeReviewer.review_file()` trên 5 file core | ✅ chạy thật, AST thật | Output thật, nguyên văn ở mục 3 |
+| 1 | `agent/src/autonomous/planner.py` — `TaskPlanner.plan()` + `to_markdown()` | ✅ ran for real, heuristic needs no LLM | Real output, verbatim in section 1 |
+| 2 | `agent/src/reasoning/cot.py` — `ChainOfThought.think()` | ⚠️ **pipeline ran for real, "LLM" is a stub** | See explanation below |
+| 3 | `agent/src/autonomous/codereview.py` — `CodeReviewer.review_file()` on 5 core files | ✅ ran for real, real AST | Real output, verbatim in section 3 |
 
-**Về ChainOfThought — nói rõ để tránh "báo bịa":** `ChainOfThought` bắt buộc inject `llm_fn`. Kiểm tra thực tế:
-- Endpoint muse-bridge `127.0.0.1:20138` **không reachable** (curl → HTTP 000, connection failed).
-- Không có provider key nào khả dụng trong môi trường worker.
-- `evals/test_reasoning.py` chỉ chứa mock đồ chơi (bài toán A>B>C), không dùng được cho phân tích thật.
+**On ChainOfThought — stated plainly to avoid fabricated reporting:** `ChainOfThought` requires an injected `llm_fn`. Actual checks:
+- The muse-bridge endpoint `127.0.0.1:20138` was **not reachable** (curl → HTTP 000, connection failed).
+- No provider key was available in the worker environment.
+- `evals/test_reasoning.py` only contains toy mocks (an A>B>C puzzle), unusable for real analysis.
 
-Vì vậy worker đã chạy **đúng pipeline CoT thật** (dựng prompt từng bước `_step_prompt`, nối history qua 5 bước, dựng prompt tổng hợp `_summary_prompt`, parse đáp án bằng regex `Đáp án:` của module) nhưng `llm_fn` là một **stub xác định (deterministic) do worker viết** — mỗi bước suy luận là text do worker soạn, **mọi khẳng định đều dựa trên bằng chứng đã verify bằng `CodeReviewer`, `grep`, `wc`** ở các bước trước. **Ba điểm yếu ở mục 2 là phân tích của worker có căn cứ số liệu, KHÔNG phải output của LLM thật.** Cơ chế CoT (chia bước, tổng hợp) thì chạy thật 100%.
+So the worker ran the **real CoT pipeline** (per-step `_step_prompt` construction, history chaining over 5 steps, `_summary_prompt` construction, answer parsing via the module's literal `Đáp án:` regex — Vietnamese for "Answer:") but the `llm_fn` was a **deterministic stub written by the worker** — each reasoning step is text the worker wrote, and **every claim rests on evidence already verified with `CodeReviewer`, `grep`, and `wc`** in earlier steps. **The three weaknesses in section 2 are the worker's evidence-backed analysis, NOT real LLM output.** The CoT mechanics (step splitting, summarization) ran 100% for real.
 
-**Ánh xạ 5 file core được review** (task ghi `brain/` và `memory/` là thư mục — thực tế không tồn tại, worker chọn file đại diện và ghi rõ):
-- `environment.py` → `agent/src/environment.py` (893 dòng)
-- `gateway/api.py` → `gateway/api.py` (500 dòng)
-- `loop/react.py` → `agent/src/loop/react.py` (359 dòng)
-- `brain/` → `agent/src/orchestration/brain.py` (823 dòng) — Brain ReAct+DAG+MASS, không có thư mục `brain/`
-- `memory/` → `agent/src/memory/longterm.py` (391 dòng) — file lớn nhất, trung tâm nhất của `agent/src/memory/`
+**The 5 core files reviewed** (the task named `brain/` and `memory/` as directories — they don't exist, so the worker picked representative files and says so):
+- `environment.py` → `agent/src/environment.py` (893 lines)
+- `gateway/api.py` → `gateway/api.py` (500 lines)
+- `loop/react.py` → `agent/src/loop/react.py` (359 lines)
+- `brain/` → `agent/src/orchestration/brain.py` (823 lines) — the ReAct+DAG+MASS brain, no `brain/` directory
+- `memory/` → `agent/src/memory/longterm.py` (391 lines) — the largest, most central file in `agent/src/memory/`
 
 ---
 
-## 1. Plan từ TaskPlanner — output thật 100%
+## 1. Plan from TaskPlanner — 100% real output
 
-Task đưa vào: **"Boom còn thiếu gì để thành harness mạnh nhất?"**
+Input task: **"What is Boom missing to become the strongest harness?"**
 
-`TaskPlanner.plan()` phân loại task_type = `feature` (keyword heuristic) và trả về:
+`TaskPlanner.plan()` classified task_type = `feature` (keyword heuristic) and returned:
 
 ```markdown
-# Kế hoạch thực hiện
+# Execution plan
 
-**Task:** Boom còn thiếu gì để thành harness mạnh nhất?
-**Loại:** Tính năng mới
-**Số bước dự kiến:** 5
+**Task:** What is Boom missing to become the strongest harness?
+**Type:** New feature
+**Estimated steps:** 5
 
-## Các bước
+## Steps
 
-### 1. Khảo sát codebase `low`
-Đọc code hiện có để hiểu cấu trúc module, convention và vị trí phù hợp để thêm tính năng mới.
-- **Hành động:** read, explore
+### 1. Survey codebase `low`
+Read the existing code to understand module structure, conventions, and where a new feature fits.
+- **Actions:** read, explore
 
-### 2. Thiết kế giải pháp `low`
-Xác định API/tham số, vị trí đặt code, và các trường hợp biên cần xử lý trước khi viết code.
-- **Hành động:** design
-- **Phụ thuộc:** step_1
+### 2. Design solution `low`
+Define the API/parameters, code placement, and edge cases before writing code.
+- **Actions:** design
+- **Depends on:** step_1
 
-### 3. Triển khai tính năng `high`
-Viết code theo thiết kế, chia nhỏ theo file, giữ đúng convention của repo.
-- **Hành động:** implement, multi-file
-- **Phụ thuộc:** step_2
+### 3. Implement feature `high`
+Write code per the design, split by file, following repo conventions.
+- **Actions:** implement, multi-file
+- **Depends on:** step_2
 
-### 4. Viết test `medium`
-Bổ sung test kiểm tra hành vi đúng/sai và các trường hợp biên của tính năng mới.
-- **Hành động:** test, implement
-- **Phụ thuộc:** step_3
+### 4. Write tests `medium`
+Add tests covering correct/incorrect behavior and edge cases of the new feature.
+- **Actions:** test, implement
+- **Depends on:** step_3
 
-### 5. Review và hoàn thiện `medium`
-Chạy toàn bộ test liên quan, rà soát lại code, dọn code thừa rồi kết luận.
-- **Hành động:** test, review
-- **Phụ thuộc:** step_4
+### 5. Review and finalize `medium`
+Run all related tests, re-scan the code, clean up leftovers, then conclude.
+- **Actions:** test, review
+- **Depends on:** step_4
 ```
 
-### Nhận xét của worker về output này (không phải output của module)
+### The worker's commentary on this output (not module output)
 
-Plan trên **không chứa một thông tin nào đặc thù cho Boom hay cho câu hỏi "thiếu gì"** — nó là template cố định của loại `feature`. Worker kiểm chứng thêm:
+This plan contains **no information specific to Boom or to the question "what's missing"** — it's a fixed template for the `feature` type. The worker verified further:
 
-- `plan("Thêm dark mode cho web UI")` → titles các bước **y hệt 100%** plan của task Boom.
-- `plan("Sửa lỗi crash khi gửi sticker Telegram")` → template `bugfix`, cũng cố định.
-- `_suggest_files()` trả về `[]` cho task này vì không keyword nào trong mô tả khớp danh sách gợi ý (`tool/channel/cron/memory/skill/gateway/web/autonomous/test`).
+- `plan("Add dark mode to the web UI")` → step titles **100% identical** to the Boom task's plan.
+- `plan("Fix crash when sending a Telegram sticker")` → the `bugfix` template, equally fixed.
+- `_suggest_files()` returned `[]` for this task because no keyword in the description matched the suggestion list (`tool/channel/cron/memory/skill/gateway/web/autonomous/test`).
 
-**Kết luận:** TaskPlanner hiện tại là **bộ phát template theo keyword, không hề đọc codebase**. Với câu hỏi mở như "Boom còn thiếu gì", nó không đưa ra được bước khảo sát cụ thể nào (ví dụ: đọc `GAP.md`, chạy evals, so sánh với RikkaHub/OpenClaw). Đây chính là điểm yếu #1 ở mục 2.
-
----
-
-## 2. Ba điểm yếu lớn nhất — từ pipeline ChainOfThought (stub minh bạch như mục 0)
-
-`ChainOfThought.think("Boom có những điểm yếu lớn nhất nào hiện tại? Liệt kê 3 điểm yếu lớn nhất.", max_steps=5)` đã chạy thật; 5 bước suy luận và đáp án tổng hợp (trích `Đáp án:` bằng regex của module) như sau:
-
-**Đáp án (trích từ summary của CoT):**
-> 1) TaskPlanner heuristic không phân tích codebase thật; 2) God-function/rẽ nhánh phức tạp tập trung (environment._init_tools 787 dòng/CC18, gateway do_GET CC30, react._run_live_turn CC29); 3) CodeReviewer dead_code ~40% false positive ở module scope (không theo dõi biến dùng trong hàm con, không tính arg default) + logging bằng print() rải rác.
-
-**5 bước suy luận trung gian (nguyên văn từ stub, mỗi bước có căn cứ đo đạc):**
-1. *Bằng chứng từ CodeReviewer (chạy thật trên 5 file core): 58 issues. Nổi bật: environment._init_tools dài 787 dòng, CC=18; gateway do_GET CC=30 dài 88 dòng; react._run_live_turn CC=29 dài 104 dòng; brain._heuristic_plan CC=28; 5 hằng số config chết trong gateway/api.py (MAX_BODY_BYTES, ALLOWED_ORIGINS, CHAT_STRATEGIES, KNOWN_CHANNELS, CHANNEL_CREDENTIAL_HINT — 0 tham chiếu toàn repo).*
-2. *Kiểm chứng TaskPlanner: plan('Boom còn thiếu gì...') và plan('Thêm dark mode cho web UI') cho titles steps Y HỆT nhau. Module không đọc repo, file-hints rỗng vì keyword không khớp. → Điểm yếu 1: phân tích task không codebase-aware.*
-3. *Kiểm chứng rule dead_code: brain.py 15/15 cảnh báo là false positive (mọi biến đều được dùng trong thân hàm — rule module-scope không track cross-scope); longterm.SUMMARIZE_AFTER_DAYS dùng ở dòng 274; react.HYDRATE_MESSAGES dùng làm arg default dòng 91; api.VERSION/DEFAULT_PORT được import nơi khác. → Điểm yếu 3: công cụ tự review thiếu độ tin cậy ở rule này.*
-4. *Điểm yếu 2 rõ từ số liệu: logic khởi tạo tool dồn hết vào MỘT hàm 787 dòng (_init_tools) — mọi tool mới (131→139 tools) đều phải chạm vào đây, rủi ro merge/conflict và khó test đơn vị. Tương tự do_GET (CC30) gộp routing HTTP của cả gateway API. Đây là điểm nghẽn kiến trúc, không chỉ là style.*
-5. *Xếp hạng theo tác động: (1) Planner mù codebase — mọi kế hoạch tự động đều chung chung, sai định hướng từ bước đầu; (2) God-function tập trung rủi ro — một chỗ hỏng là cả hệ tools/gateway ảnh hưởng; (3) Reviewer nhiễu — tự động hoá review trên nền false positive cao sẽ bỏ lọt lỗi thật hoặc gây mệt mỏi cảnh báo.*
-
-### Đính chính của worker sau khi verify kỹ hơn (trung thực, không giấu)
-
-Con số "~40% false positive" trong đáp án CoT là **ước tính thận trọng lúc viết stub** — sau khi verify từng biến bằng `grep` toàn repo, tỷ lệ thật còn tệ hơn:
-
-- Tổng số cảnh báo `dead_code`: **28**, trong đó **22 là false positive (~79%)**, chỉ **6 là thật**.
-- Nguyên nhân gốc duy nhất: rule phân tích **từng scope độc lập** — biến gán ở module scope nhưng chỉ được `Load` **bên trong thân hàm** (ví dụ 15/15 biến trong `brain.py`: `_DEP_WORDS` dùng ở dòng 164, `_PLAN_SYSTEM` ở 413, `_MASS_CONCURRENCY` ở 798…) thì bị kết luận "không dùng". Tương tự: `HYDRATE_MESSAGES` dùng làm giá trị default của arg (dòng 91 `react.py`), `SUMMARIZE_AFTER_DAYS` dùng ở dòng 274 `longterm.py`, `_API_START_TIME`/`_LOG_BUFFER`/`_LOG_MAX` dùng trong các hàm của `api.py`, `VERSION`/`DEFAULT_PORT` được import từ module khác.
-- 6 cảnh báo **thật**: 5 hằng số config chết trong `gateway/api.py` (`MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` — 0 tham chiếu trong toàn repo) và biến `_errors` gán mà không dùng ở `_chat_sse` (dòng 442).
+**Conclusion:** TaskPlanner is currently a **keyword-based template emitter that never reads the codebase**. For an open question like "what's missing", it can't produce a single concrete survey step (e.g.: read `GAP.md`, run evals, compare against RikkaHub/OpenClaw). This is weakness #1 in section 2.
 
 ---
 
-## 3. Top 10 issues từ CodeReviewer — output thật, đã verify từng cái
+## 2. The three biggest weaknesses — from the ChainOfThought pipeline (transparent stub per section 0)
 
-Tổng: **58 issues** trên 5 file (49 warning + 9 info, **0 error** — không có `except:` trần, không lỗi cú pháp: điểm cộng). Dưới đây là top 10 theo mức tác động, mỗi issue đều là output thật của `review_file()`; cột "Verify" là kiểm chứng của worker.
+`ChainOfThought.think("What are Boom's biggest current weaknesses? List the 3 biggest.", max_steps=5)` ran for real; the 5 intermediate reasoning steps and the synthesized answer (extracted via the module's literal `Đáp án:` regex — Vietnamese for "Answer:") follow:
 
-| # | File | Issue (output thật của module) | Verify của worker |
+**Answer (extracted from the CoT summary):**
+> 1) Heuristic TaskPlanner that never analyzes the real codebase; 2) Complexity concentrated in god-functions/branch-heavy spots (environment._init_tools 787 lines/CC18, gateway do_GET CC30, react._run_live_turn CC29); 3) CodeReviewer dead_code ~40% false positive at module scope (doesn't track variables used in child functions, doesn't count arg defaults) + scattered print() logging.
+
+**The 5 intermediate reasoning steps (verbatim from the stub, each grounded in measured evidence):**
+1. *Evidence from CodeReviewer (actually run on 5 core files): 58 issues. Highlights: environment._init_tools is 787 lines, CC=18; gateway do_GET CC=30, 88 lines; react._run_live_turn CC=29, 104 lines; brain._heuristic_plan CC=28; 5 dead config constants in gateway/api.py (MAX_BODY_BYTES, ALLOWED_ORIGINS, CHAT_STRATEGIES, KNOWN_CHANNELS, CHANNEL_CREDENTIAL_HINT — 0 references repo-wide).*
+2. *TaskPlanner verification: plan('What is Boom missing...') and plan('Add dark mode to the web UI') give byte-identical step titles. The module doesn't read the repo; file-hints are empty because no keyword matches. → Weakness 1: task analysis is not codebase-aware.*
+3. *dead_code rule verification: brain.py 15/15 warnings are false positives (every variable is used inside function bodies — the module-scope rule doesn't track cross-scope); longterm.SUMMARIZE_AFTER_DAYS used at line 274; react.HYDRATE_MESSAGES used as an arg default at line 91; api.VERSION/DEFAULT_PORT imported elsewhere. → Weakness 3: the self-review tool lacks reliability in this rule.*
+4. *Weakness 2 is clear from the numbers: all tool-registration logic is packed into ONE 787-line function (_init_tools) — every new tool (131→139 tools) must touch it, a merge/conflict risk and hard to unit-test. Likewise do_GET (CC30) packs the entire gateway API's HTTP routing. This is an architecture bottleneck, not just style.*
+5. *Ranked by impact: (1) Codebase-blind planner — every automated plan is generic and misdirected from step one; (2) Concentrated god-functions — one breakage takes out the whole tools/gateway stack; (3) Noisy reviewer — automating review on a high-false-positive base will miss real bugs or cause alert fatigue.*
+
+### The worker's correction after deeper verification (honest, nothing hidden)
+
+The "~40% false positive" in the CoT answer was a **conservative estimate made when writing the stub** — after verifying each variable with repo-wide `grep`, the real rate is even worse:
+
+- Total `dead_code` warnings: **28**, of which **22 are false positives (~79%)**, only **6 are real**.
+- Single root cause: the rule analyzes **each scope independently** — a variable assigned at module scope but only `Load`ed **inside function bodies** (e.g. 15/15 variables in `brain.py`: `_DEP_WORDS` used at line 164, `_PLAN_SYSTEM` at 413, `_MASS_CONCURRENCY` at 798…) is declared "unused". Similarly: `HYDRATE_MESSAGES` used as an arg default (line 91 of `react.py`), `SUMMARIZE_AFTER_DAYS` used at line 274 of `longterm.py`, `_API_START_TIME`/`_LOG_BUFFER`/`_LOG_MAX` used inside functions in `api.py`, `VERSION`/`DEFAULT_PORT` imported from other modules.
+- The 6 **real** warnings: 5 dead config constants in `gateway/api.py` (`MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` — 0 references repo-wide) and a `_errors` variable assigned but unused in `_chat_sse` (line 442).
+---
+
+## 3. Top 10 issues from CodeReviewer — real output, each verified
+
+Total: **58 issues** across 5 files (49 warnings + 9 info, **0 errors** — no bare `except:`, no syntax errors: a plus). Below are the top 10 by impact; each issue is the real output of `review_file()`; the "Verify" column is the worker's own check.
+
+| # | File | Issue (real module output) | Worker verification |
 |---|---|---|---|
-| 1 | `agent/src/environment.py:90` | `long_function`: `_init_tools` **dài 787 dòng** (ngưỡng 50); `complexity`: **CC=18** | ✅ Thật. Hàm đăng ký toàn bộ ~139 tools inline, từ dòng 90 đến ~876. Đây là god-function lớn nhất repo ở tầng agent. |
-| 2 | `gateway/api.py:233` | `complexity`: `do_GET` **CC=30** (ngưỡng 10); `long_function` 88 dòng | ✅ Thật. Toàn bộ routing GET của gateway API dồn trong một hàm — thêm endpoint mới là phình thêm nhánh. |
-| 3 | `agent/src/loop/react.py:237` | `complexity`: `_run_live_turn` **CC=29**; `long_function` 104 dòng | ✅ Thật. Vòng lặp turn chính của ReAct — nơi dễ sinh bug nhất mà lại khó test vì rẽ nhánh quá nhiều. |
-| 4 | `agent/src/orchestration/brain.py:505` | `complexity`: `_heuristic_plan` **CC=28**; `long_function` 82 dòng | ✅ Thật. Fallback plan khi không có LLM — logic heuristic càng phức tạp thì càng khó tin cậy đúng lúc cần nó nhất. |
-| 5 | `agent/src/orchestration/brain.py:362` | `complexity`: `_parse_plan_json` **CC=22** | ✅ Thật. Parse JSON plan của LLM — chỗ này phức tạp cao đồng nghĩa xử lý output LLM sai format rất dễ lọt lỗi. |
-| 6 | `gateway/api.py:126,374,341` | `complexity`: `dag_status` CC=17, `_handle_chat` CC=14, `_handle_tool_run` CC=11 | ✅ Thật. Cả 3 handler HTTP đều vượt ngưỡng — pattern chung: handler vừa routing vừa logic. |
-| 7 | `gateway/api.py:59,60,64,68` (+57) | `dead_code`: 5 hằng số `MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` gán không dùng | ✅ **Thật** (verify `grep -rn` toàn repo: 0 tham chiếu). Config chết — hoặc là vestigial, hoặc là tính năng dở dang không ai nhớ. |
-| 8 | `agent/src/environment.py:1` / `brain.py:1` | `long_file`: 893 dòng / 823 dòng (ngưỡng 500) | ✅ Thật. Hai file trung tâm đều vượt xa ngưỡng — trùng với issues #1, #4, #5. |
-| 9 | `environment.py:399,411,511,876` + `api.py:470,489` + `react.py:177` | `print_stmt`: 7 chỗ dùng `print()` thay vì logging | ✅ Thật. Log ra stdout thô — khi chạy daemon/gateway thật sẽ khó quản lý, khó lọc level, khó trace theo request. |
-| 10 | `gateway/api.py:442` | `dead_code`: biến `_errors` gán nhưng không dùng trong `_chat_sse` | ✅ Thật (unpack `reply, used_strategy, _errors = ...` rồi không dùng `_errors` nữa). Nhỏ nhưng là lỗi thật — đáng lẽ errors từ turn phải được log/emit. |
+| 1 | `agent/src/environment.py:90` | `long_function`: `_init_tools` is **787 lines** (threshold 50); `complexity`: **CC=18** | ✅ Real. The function registers all ~139 tools inline, from line 90 to ~876. The biggest god-function in the agent layer. |
+| 2 | `gateway/api.py:233` | `complexity`: `do_GET` **CC=30** (threshold 10); `long_function` 88 lines | ✅ Real. All gateway API GET routing in one function — every new endpoint adds another branch. |
+| 3 | `agent/src/loop/react.py:237` | `complexity`: `_run_live_turn` **CC=29**; `long_function` 104 lines | ✅ Real. The main ReAct turn loop — the likeliest place for bugs to grow, and the hardest to test because of all the branching. |
+| 4 | `agent/src/orchestration/brain.py:505` | `complexity`: `_heuristic_plan` **CC=28**; `long_function` 82 lines | ✅ Real. The no-LLM fallback planner — the more complex the heuristic, the less trustworthy it is exactly when it's needed most. |
+| 5 | `agent/src/orchestration/brain.py:362` | `complexity`: `_parse_plan_json` **CC=22** | ✅ Real. Parses the LLM's plan JSON — high complexity here means malformed LLM output slips through more easily. |
+| 6 | `gateway/api.py:126,374,341` | `complexity`: `dag_status` CC=17, `_handle_chat` CC=14, `_handle_tool_run` CC=11 | ✅ Real. All 3 HTTP handlers exceed the threshold — a shared pattern: handlers mixing routing and logic. |
+| 7 | `gateway/api.py:59,60,64,68` (+57) | `dead_code`: 5 constants `MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` assigned but unused | ✅ **Real** (verified with repo-wide `grep -rn`: 0 references). Dead config — either vestigial, or half-built features nobody remembers. |
+| 8 | `agent/src/environment.py:1` / `brain.py:1` | `long_file`: 893 lines / 823 lines (threshold 500) | ✅ Real. Both central files far exceed the threshold — overlaps issues #1, #4, #5. |
+| 9 | `environment.py:399,411,511,876` + `api.py:470,489` + `react.py:177` | `print_stmt`: 7 uses of `print()` instead of logging | ✅ Real. Raw stdout logging — hard to manage, filter by level, or trace per request once the daemon/gateway runs for real. |
+| 10 | `gateway/api.py:442` | `dead_code`: `_errors` assigned but unused in `_chat_sse` | ✅ Real (unpack `reply, used_strategy, _errors = ...` then never use `_errors`). Small but a real bug — the turn's errors should have been logged/emitted. |
 
-**Các cảnh báo đã xác định là false positive (không đưa vào top 10):** 15/15 `dead_code` trong `brain.py`, `SUMMARIZE_AFTER_DAYS` (`longterm.py:26`), `HYDRATE_MESSAGES` (`react.py:8`), `VERSION`/`DEFAULT_PORT`/`_API_START_TIME`/`_LOG_BUFFER`/`_LOG_MAX` (`api.py`) — tất cả đều được dùng thật qua verify `grep` (xem mục 2). Tỷ lệ nhiễu của rule `dead_code`: **22/28 ≈ 79%**.
-
----
-
-## 4. Đề xuất 5 cải tiến ưu tiên cao nhất (nhận xét của worker, dựa trên bằng chứng trên)
-
-**P0-1. Tách god-function `_init_tools` (787 dòng) thành tool registry theo nhóm.**
-Bằng chứng: issue #1. Mỗi lần thêm tool (131→139 tools vừa rồi) đều phải sửa cùng một hàm khổng lồ — rủi ro conflict khi nhiều worker cùng thêm tool, và không thể test đơn vị từng nhóm tool. Đề xuất: mỗi nhóm tool một module (`tools/files.py`, `tools/web.py`, …) tự đăng ký qua decorator hoặc `register()` , `_init_tools` chỉ còn gọi registry. Không đổi hành vi, chỉ đổi cấu trúc — đúng triết lý "không code rác, hạng mục nào xong báo xong".
-
-**P0-2. Nâng TaskPlanner từ "phát template" thành "đọc repo thật".**
-Bằng chứng: mục 1 + điểm yếu #1. Hiện tại plan cho "Boom thiếu gì" và "thêm dark mode" giống hệt nhau — vô dụng cho controller tự động. Đề xuất: dùng chính `agent/src/autonomous/depgraph.py` đã có để build dependency graph, `_suggest_files` quét tên file/symbol thật trong repo thay vì keyword list cố định, và ước lượng complexity từ số file chạm tới. Đây là đòn bẩy lớn nhất cho chế độ autonomous vì mọi goal đều bắt đầu từ plan.
-
-**P0-3. Sửa rule `dead_code` của CodeReviewer trước khi tin nó.**
-Bằng chứng: 22/28 false positive (~79%). Đề xuất: (a) khi xét module scope, thu thập cả các `Load` xảy ra trong thân các hàm của module (cross-scope); (b) tính giá trị default của arg như một `Load`; (c) bỏ qua biến có prefix `_` khi unpack (quy ước "cố ý không dùng"). Viết test hồi quy chạy `review_file` trên chính 5 file core này và assert số FP = 0. Một công cụ tự review mà nhiễu 79% thì hoặc bị tắt đi, hoặc tệ hơn — bị tin nhầm.
-
-**P1-4. Tách router HTTP của gateway + thay `print()` bằng logging.**
-Bằng chứng: issues #2, #6, #9. `do_GET` CC=30 là điểm nghẽn: mỗi endpoint mới thêm một nhánh `if`. Đề xuất: bảng dispatch `path → handler` (mỗi handler một hàm/một module `gateway/routes/`), `do_GET` chỉ còn ~10 dòng. Đồng thời thay 7 `print()` bằng `logging` với level và tên logger theo module — khi gateway chạy daemon dưới PM2/systemd thì đây là khác biệt giữa "debug được" và "mò".
-
-**P1-5. Dọn 5 hằng số chết + `_errors` bị nuốt + tách file dài.**
-Bằng chứng: issues #7, #8, #10. `MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` — hoặc xóa, hoặc nếu là tính năng dở dang thì ghi TODO có chủ đích (hiện tại chúng là "code chết không ai nhớ"). `_errors` trong `_chat_sse` nên được emit/log thay vì nuốt im — đúng chỗ cần observability nhất (chat turn fail) lại đang câm. `environment.py` (893) và `brain.py` (823) nên tách theo trách nhiệm sau khi làm P0-1.
+**Warnings confirmed as false positives (excluded from the top 10):** 15/15 `dead_code` in `brain.py`, `SUMMARIZE_AFTER_DAYS` (`longterm.py:26`), `HYDRATE_MESSAGES` (`react.py:8`), `VERSION`/`DEFAULT_PORT`/`_API_START_TIME`/`_LOG_BUFFER`/`_LOG_MAX` (`api.py`) — all genuinely used per `grep` verification (see section 2). The `dead_code` rule's noise rate: **22/28 ≈ 79%**.
 
 ---
 
-## Phụ lục: số liệu thô để đối chiếu
+## 4. Top 5 proposed improvements (worker commentary, evidence-backed)
 
-- `CodeReviewer` trên 5 file: **58 issues** = 49 warning + 9 info + 0 error. Không có `bare_except`, không lỗi syntax.
-- Rule `dead_code`: 28 cảnh báo → 6 thật, 22 false positive (~79%), một nguyên nhân gốc (không track cross-scope).
-- `TaskPlanner`: 2 task `feature` khác nhau → output giống hệt nhau từng title; `files: []` vì không khớp keyword gợi ý.
-- `ChainOfThought`: pipeline thật (5 step prompts + 1 summary, parse `Đáp án:` bằng regex của module) với `EvidenceLLM` stub xác định — nội dung suy luận do worker soạn từ bằng chứng đo đạc, **không phải LLM**.
-- File JSON trung gian (không commit lên repo, chỉ để worker đối chiếu): `/tmp/selfreview_issues.json`, `/tmp/selfreview_cot.json`.
-- Repo không bị sửa đổi: chỉ `git pull` (already up to date); mọi phân tích chạy trên bản đọc.
+**P0-1. Split the `_init_tools` god-function (787 lines) into per-group tool registries.**
+Evidence: issue #1. Every new tool (131→139 just now) edits the same giant function — conflict risk when multiple workers add tools, and impossible to unit-test per group. Proposal: each tool group gets its own module (`tools/files.py`, `tools/web.py`, …) self-registering via decorator or `register()`, with `_init_tools` just calling the registry. Structure change only, behavior unchanged.
+
+**P0-2. Make TaskPlanner read the real repo instead of emitting templates.**
+Evidence: section 1 + weakness #1. Right now "What's missing" and "add dark mode" plans are identical — useless for the autonomous controller. Proposal: use the existing `agent/src/autonomous/depgraph.py` to build a dependency graph, make `_suggest_files` scan real file/symbol names instead of a fixed keyword list, and estimate complexity from the files touched. This is the biggest lever for autonomous mode, since every goal starts with a plan.
+
+**P0-3. Fix CodeReviewer's `dead_code` rule before trusting it.**
+Evidence: 22/28 false positives (~79%). Proposal: (a) when scanning module scope, also collect `Load`s inside the module's function bodies (cross-scope); (b) count arg defaults as `Load`s; (c) ignore `_`-prefixed variables in unpacks (the "intentionally unused" convention). Add a regression test running `review_file` on these 5 core files and asserting FP count = 0. A self-review tool with 79% noise either gets turned off, or worse — gets trusted wrongly.
+
+**P1-4. Split the gateway HTTP router + replace `print()` with logging.**
+Evidence: issues #2, #6, #9. `do_GET` at CC=30 is a bottleneck: every new endpoint adds an `if` branch. Proposal: a dispatch table `path → handler` (one function/module per handler in `gateway/routes/`), `do_GET` down to ~10 lines. Replace the 7 `print()` calls with `logging` at proper levels and module-named loggers — once the gateway runs as a daemon under PM2/systemd, this is the difference between "debuggable" and "flying blind".
+
+**P1-5. Clean up the 5 dead constants + the swallowed `_errors` + split the long files.**
+Evidence: issues #7, #8, #10. `MAX_BODY_BYTES`, `ALLOWED_ORIGINS`, `CHAT_STRATEGIES`, `KNOWN_CHANNELS`, `CHANNEL_CREDENTIAL_HINT` — delete them, or if they're half-built features, give them intentional TODOs (right now they're "dead code nobody remembers"). `_errors` in `_chat_sse` should be emitted/logged, not swallowed silently — the one place that most needs observability (failed chat turns) is currently mute. `environment.py` (893) and `brain.py` (823) should be split by responsibility after P0-1.
+
+---
+
+## Appendix: raw numbers for cross-checking
+
+- `CodeReviewer` on 5 files: **58 issues** = 49 warnings + 9 info + 0 errors. No `bare_except`, no syntax errors.
+- `dead_code` rule: 28 warnings → 6 real, 22 false positives (~79%), one root cause (no cross-scope tracking).
+- `TaskPlanner`: 2 different `feature` tasks → byte-identical step titles; `files: []` because no keyword matched the suggestion list.
+- `ChainOfThought`: real pipeline (5 step prompts + 1 summary, the module's literal `Đáp án:` ("Answer:") regex parsing) with a deterministic `EvidenceLLM` stub — the reasoning content was written by the worker from measured evidence, **not an LLM**.
+- Intermediate JSON files (not committed to the repo, worker cross-checking only): `/tmp/selfreview_issues.json`, `/tmp/selfreview_cot.json`.
+- Repo unchanged: only `git pull` (already up to date); all analysis ran read-only.

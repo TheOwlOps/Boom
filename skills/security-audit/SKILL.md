@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: "Kiểm toán bảo mật code Python: hardcoded secret, hàm nguy hiểm (eval/exec/os.system), SQL injection, thiếu validate input."
+description: "Security audit of Python code: hardcoded secrets, dangerous functions (eval/exec/os.system), SQL injection, missing input validation."
 version: 1.0.0
 author: Boom Agent
 license: MIT
@@ -13,33 +13,33 @@ metadata:
 
 # Security Audit
 
-Kiểm toán bảo mật tĩnh cho code Python, kết hợp:
+Static security audit for Python code, combining:
 
-1. **`agent/src/security/secretscan.py` của Boom** (load read-only từ repo):
-   quét hardcoded secret — AWS key, GitHub token, Telegram bot token,
-   private key PEM, password/api_key/api_secret gán trực tiếp.
-2. **`agent/src/security/sanitize.py` của Boom**: phát hiện string literal
-   chứa pattern prompt injection (hữu ích khi audit code của agent).
-3. **AST check tự viết**: hàm nguy hiểm, SQL string concat, thiếu validate input.
+1. **Boom's `agent/src/security/secretscan.py`** (loaded read-only from the repo):
+   scans for hardcoded secrets — AWS keys, GitHub tokens, Telegram bot tokens,
+   PEM private keys, directly-assigned password/api_key/api_secret.
+2. **Boom's `agent/src/security/sanitize.py`**: detects string literals
+   containing prompt injection patterns (useful when auditing agent code).
+3. **Hand-written AST checks**: dangerous functions, SQL string concatenation, missing input validation.
 
-## Khi nào dùng
+## When to use
 
-- Trước khi commit/push code xử lý dữ liệu nhạy cảm
-- Audit định kỳ codebase, hoặc trước khi public repo
-- Khi user nói "audit bảo mật", "check secret", "code này có lỗ hổng không"
-- Review code có dùng `eval`, `os.system`, query DB, đọc input người dùng
+- Before committing/pushing code that handles sensitive data
+- Periodic codebase audits, or before making a repo public
+- When the user says "security audit", "check secrets", "does this code have vulnerabilities"
+- Reviewing code that uses `eval`, `os.system`, DB queries, reads user input
 
-**Không dùng cho:** runtime monitoring (skill chỉ phân tích tĩnh);
-ngôn ngữ khác Python.
+**Not for:** runtime monitoring (this skill only does static analysis);
+non-Python languages.
 
 ## Input
 
-- **Đường dẫn:** 1 file `.py` hoặc 1 thư mục (quét đệ quy, bỏ qua
+- **Path:** 1 `.py` file or 1 directory (recursive scan, skipping
   `__pycache__`, `.venv`, `.git`, `node_modules`)
 
 ## Output
 
-Report — list findings, mỗi finding có schema:
+Report — a list of findings, each with this schema:
 
 ```json
 [
@@ -48,32 +48,32 @@ Report — list findings, mỗi finding có schema:
     "file": "agent/src/config.py",
     "line": 12,
     "category": "hardcoded_secret",
-    "issue": "Phát hiện secret dạng hardcode (api_key, xem trước: sk-t****)",
-    "fix": "Đưa secret ra biến môi trường (os.environ.get(...)) hoặc secret manager; ..."
+    "issue": "Hardcoded secret detected (api_key, preview: sk-t****)",
+    "fix": "Move the secret to an environment variable (os.environ.get(...)) or a secret manager; ..."
   }
 ]
 ```
 
-| Category | Severity | Ý nghĩa |
+| Category | Severity | Meaning |
 |----------|----------|---------|
-| `hardcoded_secret` | high | Secret gán trực tiếp trong code |
+| `hardcoded_secret` | high | Secret assigned directly in code |
 | `dangerous_function` | high/medium | `eval`/`exec`, `os.system`, `subprocess(shell=True)`, `pickle.loads`, `yaml.load` |
-| `sql_injection` | high | Query SQL xây bằng f-string/nối chuỗi/format |
-| `missing_validation` | medium | Tham số đi thẳng vào sink nguy hiểm mà không validate |
-| `prompt_injection_string` | low | String chứa pattern prompt injection |
+| `sql_injection` | high | SQL queries built with f-strings/string concatenation/format |
+| `missing_validation` | medium | Parameters flow straight into a dangerous sink without validation |
+| `prompt_injection_string` | low | String contains a prompt injection pattern |
 
-## Ví dụ
+## Example
 
 ### CLI
 
 ```bash
-# Audit 1 file, in markdown tiếng Việt
+# Audit 1 file, print markdown
 python3 skills/security-audit/audit.py agent/src/config.py
 
-# Audit cả thư mục, in JSON (để CI parse)
+# Audit a whole directory, print JSON (for CI to parse)
 python3 skills/security-audit/audit.py agent/src/ --json
 
-# Fail CI nếu có finding high
+# Fail CI if there is a high finding
 python3 skills/security-audit/audit.py agent/src/ --fail-on high
 ```
 
@@ -85,27 +85,27 @@ from skills.security_audit.audit import audit_file, audit_source, to_markdown
 findings = audit_file("agent/src/config.py")
 for f in findings:
     print(f.severity, f.file, f.line, f.issue)
-    print("  Sửa:", f.fix)
+    print("  Fix:", f.fix)
 
-# Audit đoạn code trực tiếp
+# Audit a code snippet directly
 code = 'api_key = "sk-test-1234567890abcdef"\neval(user_input)\n'
 print(to_markdown(audit_source(code, filename="demo.py")))
 ```
 
-## Whitelist (kế thừa từ secretscan)
+## Whitelist (inherited from secretscan)
 
-Không báo lỗi khi: đọc từ `os.environ.get(...)`, placeholder
-(`***`, `xxx`, `<redacted>`), hoặc dòng có marker `# nosec-test`.
+No findings reported when: reading from `os.environ.get(...)`, placeholders
+(`***`, `xxx`, `<redacted>`), or lines with the `# nosec-test` marker.
 
-## Cấu hình
+## Configuration
 
-Biến môi trường `BOOM_REPO`: đường dẫn repo Boom chứa
-`agent/src/security/secretscan.py` và `sanitize.py` (mặc định: `/tmp/boom_git`).
+Environment variable `BOOM_REPO`: path to the Boom repo containing
+`agent/src/security/secretscan.py` and `sanitize.py` (default: `/tmp/boom_git`).
 
 ## Pitfalls
 
-- Phân tích tĩnh có thể có false positive (vd: `eval` dùng với input nội bộ
-  an toàn) — kiểm tra thủ công trước khi sửa
-- `missing_validation` chỉ phát hiện được khi tham số đi vào sink qua chuỗi
-  động (f-string/`+`/`%`/`.format`); sink nhận biến thuần thì không báo
-- Không thay thế pentest/review thủ công cho hệ thống nhạy cảm
+- Static analysis can have false positives (e.g. `eval` used with safe internal
+  input) — verify manually before fixing
+- `missing_validation` only detects parameters reaching a sink via dynamic
+  strings (f-string/`+`/`%`/`.format`); sinks receiving plain variables are not flagged
+- Not a replacement for pentests/manual review of sensitive systems

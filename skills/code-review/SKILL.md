@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review tĩnh code Python: complexity, dead code, bare except, print, TODO. Wrap codereview.py của Boom."
+description: "Statically review Python code: complexity, dead code, bare except, print, TODO. Wraps Boom's codereview.py."
 version: 1.0.0
 author: Boom Agent
 license: MIT
@@ -13,41 +13,41 @@ metadata:
 
 # Code Review
 
-Review tĩnh file Python bằng AST thật (không regex mù), wrap module
-`agent/src/autonomous/codereview.py` của Boom và bổ sung trường `file`
-và `suggestion` (gợi ý sửa tiếng Việt) cho mỗi issue.
+Statically review Python files using real AST (no blind regex), wrapping Boom's
+`agent/src/autonomous/codereview.py` module and adding `file` and `suggestion`
+(fix suggestion) fields to each issue.
 
-## Khi nào dùng
+## When to use
 
-- Trước khi commit/push: kiểm tra code mới viết có vấn đề gì không
-- Sau khi agent tự code xong một tính năng: tự review lại
-- Review git diff: chỉ check các dòng thêm mới
-- Khi user nói "review code", "kiểm tra code", "code này ổn không"
+- Before commit/push: check whether newly written code has problems
+- After an agent finishes coding a feature: review it again
+- Review git diff: check only added lines
+- When the user says "review code", "check the code", "is this code OK"
 
-**Không dùng cho:** ngôn ngữ khác Python (skill chỉ hỗ trợ Python).
+**Not for:** languages other than Python (this skill only supports Python).
 
-## Rules được check
+## Rules checked
 
-| Rule | Severity | Ý nghĩa |
+| Rule | Severity | Meaning |
 |------|----------|---------|
 | `complexity` | warning | Cyclomatic complexity > 10 |
-| `long_function` | warning | Hàm > 50 dòng |
-| `long_file` | info | File > 500 dòng |
-| `dead_code` | warning | Biến gán nhưng không dùng |
-| `bare_except` | error | `except:` trần |
-| `todo` | info | Comment TODO/FIXME |
-| `print_stmt` | info | Dùng `print()` thay vì logging |
-| `syntax` | error | Lỗi cú pháp |
+| `long_function` | warning | Function > 50 lines |
+| `long_file` | info | File > 500 lines |
+| `dead_code` | warning | Variable assigned but never used |
+| `bare_except` | error | Bare `except:` |
+| `todo` | info | TODO/FIXME comment |
+| `print_stmt` | info | Uses `print()` instead of logging |
+| `syntax` | error | Syntax error |
 
 ## Input
 
-- **Đường dẫn:** 1 file `.py`, 1 thư mục (quét đệ quy), hoặc nhiều file
-- **Git diff:** text unified diff (chỉ check dòng thêm mới)
-- **Source string:** đoạn code Python (qua API `review_source`)
+- **Path:** 1 `.py` file, 1 directory (recursive scan), or multiple files
+- **Git diff:** unified diff text (checks only added lines)
+- **Source string:** a Python code snippet (via the `review_source` API)
 
 ## Output
 
-List issues, mỗi issue có schema:
+List of issues, each with this schema:
 
 ```json
 [
@@ -56,28 +56,28 @@ List issues, mỗi issue có schema:
     "line": 42,
     "severity": "error",
     "rule": "bare_except",
-    "message": "`except:` trần bắt mọi exception...",
-    "suggestion": "Bắt exception cụ thể, vd: except (ValueError, TypeError) as e:"
+    "message": "Bare `except:` catches all exceptions...",
+    "suggestion": "Catch specific exceptions, e.g.: except (ValueError, TypeError) as e:"
   }
 ]
 ```
 
-## Ví dụ
+## Example
 
 ### CLI
 
 ```bash
-# Review 1 file, in markdown tiếng Việt
+# Review 1 file, print markdown
 python3 skills/code-review/review.py agent/src/my_module.py
 
-# Review cả thư mục, in JSON
+# Review a whole directory, print JSON
 python3 skills/code-review/review.py agent/src/ --json
 
 # Review git diff
-git diff HEAD~1 > thay_doi.diff
-python3 skills/code-review/review.py --diff-file thay_doi.diff
+git diff HEAD~1 > changes.diff
+python3 skills/code-review/review.py --diff-file changes.diff
 
-# Fail CI nếu có error
+# Fail CI if there is an error
 python3 skills/code-review/review.py agent/src/ --fail-on error
 ```
 
@@ -90,20 +90,20 @@ from skills.code_review.review import review_file, review_source, issues_to_json
 issues = review_file("agent/src/my_module.py")
 for i in issues:
     print(i.severity, i.file, i.line, i.message)
-    print("  Gợi ý:", i.suggestion)
+    print("  Suggestion:", i.suggestion)
 
-# Review đoạn code trực tiếp
+# Review a code snippet directly
 issues = review_source("try:\n    x = 1\nexcept:\n    pass\n", filename="demo.py")
 print(issues_to_json(issues))
 ```
 
-## Cấu hình
+## Configuration
 
-Biến môi trường `BOOM_REPO`: đường dẫn repo Boom chứa
-`agent/src/autonomous/codereview.py` (mặc định: `/tmp/boom_git`).
+Environment variable `BOOM_REPO`: path to the Boom repo containing
+`agent/src/autonomous/codereview.py` (default: `/tmp/boom_git`).
 
 ## Pitfalls
 
-- `review_diff` chỉ check được 3 rules theo dòng (todo, print_stmt, bare_except)
-- Ngưỡng mặc định: complexity 10, hàm 50 dòng, file 500 dòng (lấy từ module gốc)
-- File lỗi cú pháp → trả về 1 issue `syntax`, bỏ qua các rule khác
+- `review_diff` can only check 3 line-based rules (todo, print_stmt, bare_except)
+- Default thresholds: complexity 10, 50 lines per function, 500 lines per file (taken from the original module)
+- A file with a syntax error → returns 1 `syntax` issue, all other rules are skipped

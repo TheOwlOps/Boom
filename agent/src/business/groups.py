@@ -1,13 +1,13 @@
-"""Group Manager cho Boom (doanh nghiệp): quản lý nhiều group trên nhiều kênh.
+"""Group Manager for Boom (business): manages groups across channels.
 
-Đăng ký group (telegram/discord/zalo...), thống kê tin nhắn/member theo
-từng group, và gắn policy cho phép/cấm command ở cấp group.
+Registers groups (telegram/discord/zalo...), tracks message/member stats per
+group, and attaches allow/deny command policies at the group level.
 
-Pattern theo repo: SQLite + threading.Lock, mỗi thao tác mở connection
-mới (`with self._lock, self._connect()`), field dict lưu dạng JSON,
-lỗi trả về dạng dict {"error": ...} thay vì raise (trừ getters trả None).
+Repo pattern: SQLite + threading.Lock, each operation opens a fresh connection
+(`with self._lock, self._connect()`), dict fields stored as JSON, errors
+returned as {"error": ...} dicts instead of raising (getters return None).
 
-Chỉ dùng stdlib.
+Stdlib only.
 """
 
 from __future__ import annotations
@@ -21,27 +21,27 @@ from typing import Any, Dict, List, Optional
 
 
 def _now() -> str:
-    """Timestamp ISO hiện tại (giờ local), cùng format với broadcast.py."""
+    """Current timestamp in ISO (local time), same format as broadcast.py."""
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _normalize_command(command: Any) -> str:
-    """Chuẩn hoá tên command để so sánh với policy.
+    """Normalizes a command name for policy comparison.
 
-    Bỏ khoảng trắng, bỏ dấu "/" đầu (kiểu Telegram "/help"), lowercase.
+    Strips whitespace, strips the leading "/" (Telegram-style "/help"), lowercases.
     """
     return str(command or "").strip().lstrip("/").lower()
 
 
 def _normalize_command_list(values: Any) -> List[str]:
-    """Chuẩn hoá danh sách command trong policy thành list[str]."""
+    """Normalizes a policy's command list into list[str]."""
     if not isinstance(values, list):
         return []
     return [_normalize_command(v) for v in values if _normalize_command(v)]
 
 
 def _decode_json(value: Any, default: Any) -> Any:
-    """Giải mã JSON từ DB; dữ liệu hỏng → trả default, không crash."""
+    """Decodes JSON from the DB; corrupt data → returns default, no crash."""
     if not value:
         return default
     try:
@@ -51,7 +51,7 @@ def _decode_json(value: Any, default: Any) -> Any:
 
 
 class GroupManager:
-    """Quản lý groups theo từng channel, backend SQLite. Thread-safe."""
+    """Manages groups per channel, SQLite backend. Thread-safe."""
 
     def __init__(self, db_path: Any) -> None:
         self.db_path = Path(db_path)
@@ -72,7 +72,7 @@ class GroupManager:
                        PRIMARY KEY (channel, group_id)
                    )""")
 
-    # ------------------------------------------------------------ nội bộ
+    # ------------------------------------------------------------ internals
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -95,7 +95,7 @@ class GroupManager:
 
     @staticmethod
     def _validate_ident(channel: Any, group_id: Any) -> Optional[str]:
-        """Kiểm tra channel/group_id hợp lệ; trả về message lỗi hoặc None."""
+        """Validates channel/group_id; returns an error message or None."""
         if not isinstance(channel, str) or not channel.strip():
             return "channel must be a non-empty string"
         if not isinstance(group_id, str) or not group_id.strip():
@@ -108,11 +108,11 @@ class GroupManager:
             "SELECT * FROM groups WHERE channel = ? AND group_id = ?",
             (channel, group_id)).fetchone()
 
-    # ------------------------------------------------------------ đăng ký
+    # ------------------------------------------------------------ registration
 
     def register_group(self, channel: str, group_id: str, name: str,
                        settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Đăng ký group mới. Trùng (channel, group_id) → báo lỗi rõ, không đè."""
+        """Registers a new group. Duplicate (channel, group_id) → clear error, no overwrite."""
         err = self._validate_ident(channel, group_id)
         if err:
             return {"error": err}
@@ -138,7 +138,7 @@ class GroupManager:
         return {"ok": True, "group": self._row_to_dict(row)}
 
     def unregister_group(self, channel: str, group_id: str) -> Dict[str, Any]:
-        """Gỡ đăng ký group. Group không tồn tại → báo lỗi."""
+        """Unregisters a group. Missing group → error."""
         err = self._validate_ident(channel, group_id)
         if err:
             return {"error": err}
@@ -153,8 +153,8 @@ class GroupManager:
         return {"ok": True}
 
     def list_groups(self, channel: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Liệt kê groups (kèm stats message_count/member_count).
-        channel=None → tất cả các kênh."""
+        """Lists groups (with message_count/member_count stats).
+        channel=None → all channels."""
         with self._lock, self._connect() as conn:
             if channel is None:
                 rows = conn.execute(
@@ -165,13 +165,13 @@ class GroupManager:
                     (channel,)).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
-    # ------------------------------------------------------------ hoạt động
+    # ------------------------------------------------------------ activity
 
     def record_message(self, channel: str, group_id: str) -> Dict[str, Any]:
-        """Ghi nhận 1 tin nhắn: tăng message_count, cập nhật last_active.
+        """Records 1 message: bumps message_count, updates last_active.
 
-        Group chưa đăng ký → tự tạo với name mặc định (đường chạy message
-        pipeline không được chặn vì group mới xuất hiện).
+        Unregistered group → auto-created with a default name (the message
+        pipeline must not be blocked by a newly appearing group).
         """
         err = self._validate_ident(channel, group_id)
         if err:
@@ -180,7 +180,7 @@ class GroupManager:
         with self._lock, self._connect() as conn:
             row = self._get_row(conn, channel, group_id)
             if row is None:
-                # Tự đăng ký group mới: name mặc định "channel:group_id".
+                # Auto-register a new group: default name "channel:group_id".
                 conn.execute(
                     "INSERT INTO groups (channel, group_id, name, created_at)"
                     " VALUES (?, ?, ?, ?)",
@@ -193,7 +193,7 @@ class GroupManager:
         return {"ok": True, "group": self._row_to_dict(row)}
 
     def get_group_stats(self, channel: str, group_id: str) -> Optional[Dict[str, Any]]:
-        """Stats 1 group. Không tồn tại → None."""
+        """Stats for one group. Missing → None."""
         err = self._validate_ident(channel, group_id)
         if err:
             return None
@@ -202,7 +202,7 @@ class GroupManager:
         return self._row_to_dict(row) if row else None
 
     def set_member_count(self, channel: str, group_id: str, n: int) -> Dict[str, Any]:
-        """Cập nhật số member của group. n phải là số nguyên >= 0."""
+        """Updates a group's member count. n must be an integer >= 0."""
         err = self._validate_ident(channel, group_id)
         if err:
             return {"error": err}
@@ -223,7 +223,7 @@ class GroupManager:
 
     def set_group_policy(self, channel: str, group_id: str,
                          policy: Dict[str, Any]) -> Dict[str, Any]:
-        """Gắn policy cho group. policy là dict, ví dụ:
+        """Attaches a policy to a group. policy is a dict, e.g.:
         {"allowed_commands": ["help", "report"], "require_approval": ["broadcast"]}.
         """
         err = self._validate_ident(channel, group_id)
@@ -247,7 +247,7 @@ class GroupManager:
         return {"ok": True, "policy": policy}
 
     def get_group_policy(self, channel: str, group_id: str) -> Dict[str, Any]:
-        """Trả về policy của group; mặc định {} (không có policy → cho phép hết)."""
+        """Returns a group's policy; default {} (no policy → everything allowed)."""
         err = self._validate_ident(channel, group_id)
         if err:
             return {}
@@ -259,19 +259,20 @@ class GroupManager:
         return policy if isinstance(policy, dict) else {}
 
     def is_command_allowed(self, channel: str, group_id: str, command: Any) -> bool:
-        """Kiểm tra command có được phép trong group theo policy không.
+        """Checks whether a command is allowed in a group per its policy.
 
-        Logic (không bao giờ raise):
-        - Không có policy → cho phép hết.
-        - "denied_commands" chứa command → cấm (ưu tiên cao nhất).
-        - "allowed_commands" có mặt (list) → chỉ cho phép command trong list.
-        - "require_approval" không cấm command, chỉ đánh dấu cần duyệt
-          (approval xử lý ở tầng khác, ví dụ ApprovalGate của Boom).
+        Logic (never raises):
+        - No policy → everything allowed.
+        - "denied_commands" contains the command → denied (highest priority).
+        - "allowed_commands" present (list) → only commands in the list.
+        - "require_approval" doesn't deny a command, only marks it as needing
+          approval (approval is handled on another layer, e.g. Boom's
+          ApprovalGate).
         """
         try:
             policy = self.get_group_policy(channel, group_id)
         except Exception:
-            return True  # policy đọc lỗi → fail-open để không chặn pipeline
+            return True  # policy read failed → fail-open so the pipeline isn't blocked
         if not policy:
             return True
 

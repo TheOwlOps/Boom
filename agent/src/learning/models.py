@@ -1,7 +1,7 @@
-"""Models cho hệ thống tự học (learning) của Boom.
+"""Models for Boom's self-learning system.
 
-Chỉ stdlib. JSON-serializable. Pattern tái dùng từ tasks/models.py:
-str Enum + @dataclass + to_dict/from_dict (from_dict chịu được giá trị lạ).
+Stdlib only. JSON-serializable. Pattern reused from tasks/models.py:
+str Enum + @dataclass + to_dict/from_dict (from_dict tolerates odd values).
 """
 
 from dataclasses import dataclass
@@ -10,16 +10,16 @@ from typing import Any, Dict, Optional
 
 
 class LearningType(str, Enum):
-    """Loại kiến thức agent học được về user."""
+    """Kind of knowledge the agent learned about the user."""
 
-    PREFERENCE = "preference"   # sở thích / thói quen của user
-    FACT = "fact"               # sự thật về user
-    DECISION = "decision"       # quyết định đã chốt
-    CORRECTION = "correction"   # lần user sửa mình
+    PREFERENCE = "preference"   # user preferences / habits
+    FACT = "fact"               # facts about the user
+    DECISION = "decision"       # finalized decisions
+    CORRECTION = "correction"   # times the user corrected the agent
 
 
 def _clamp_confidence(value: Any) -> float:
-    """Ép confidence về [0.0, 1.0]; giá trị không phải số → 0.0."""
+    """Clamps confidence to [0.0, 1.0]; non-numbers → 0.0."""
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -35,11 +35,11 @@ def _clamp_confidence(value: Any) -> float:
 
 @dataclass
 class Learning:
-    """Một mẩu kiến thức đã học.
+    """One learned piece of knowledge.
 
-    `source` chỉ mô tả nguồn (vd "conversation 2026-10-15") — KHÔNG lưu
-    transcript nguyên văn.
-    `superseded_by` trỏ tới id của Learning mới thay thế mẩu này.
+    `source` only describes the origin (e.g. "conversation 2026-10-15") — it does
+    NOT store the raw transcript.
+    `superseded_by` points at the id of the newer Learning replacing this one.
     """
 
     id: str

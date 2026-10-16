@@ -1,12 +1,13 @@
-"""Khung WebSocket client cho realtime feed của Boom.
+"""WebSocket client framework for Boom's realtime feeds.
 
-Ưu tiên dùng `tools/ws_client.py` có sẵn của repo (stdlib-only, RFC6455 thật,
-không cần cài thêm lib). Nếu không import được thì thử lib `websockets`;
-không có cái nào thì raise lỗi rõ ràng.
+Prefers the repo's own `tools/ws_client.py` (stdlib-only, real RFC6455, no
+extra lib needed). Falls back to the `websockets` lib when not importable;
+raises a clear error when neither exists.
 
-Mọi feed WS chạy trong thread riêng; callback `on_message` được gọi từ thread đó.
-Auto-reconnect: disconnect -> backoff 1s, 2s, 4s ... tối đa 60s, thử lại vô hạn
-trừ khi đặt `max_retries`.
+Every WS feed runs in its own thread; the `on_message` callback is invoked
+from that thread.
+Auto-reconnect: disconnect -> backoff 1s, 2s, 4s ... up to 60s, retried
+indefinitely unless `max_retries` is set.
 """
 from __future__ import annotations
 
@@ -15,14 +16,14 @@ import threading
 import time
 from typing import Callable, Optional
 
-# --- Chọn backend WS: repo ws_client trước, websockets lib sau, không có thì raise ---
+# --- WS backend choice: repo ws_client first, websockets lib second, else raise ---
 _WS_BACKEND = None  # "repo" | "websockets"
 _WS_IMPORT_ERROR = None
 
 try:
     from tools.ws_client import WebSocket as _RepoWebSocket, WSError as _RepoWSError
     _WS_BACKEND = "repo"
-except ImportError as e:  # khi chạy ngoài agent/src (chưa thêm vào sys.path)
+except ImportError as e:  # when run outside agent/src (not yet on sys.path)
     _RepoWebSocket = None
     _RepoWSError = None
     _WS_IMPORT_ERROR = e
@@ -35,27 +36,27 @@ except ImportError as e:  # khi chạy ngoài agent/src (chưa thêm vào sys.pa
 
 
 class WebSocketFeedError(Exception):
-    """Lỗi của WebSocketFeed (không có backend WS, connect fail, ...)."""
+    """WebSocketFeed error (no WS backend, connect failure, ...)."""
 
 
 def _require_backend() -> str:
-    """Trả về tên backend khả dụng, hoặc raise lỗi rõ ràng."""
+    """Returns the available backend's name, or raises a clear error."""
     if _WS_BACKEND is None:
         raise WebSocketFeedError(
-            "Không có WebSocket backend nào khả dụng. "
-            "Cách 1: đặt module này vào agent/src/feeds/ của repo Boom để dùng "
-            "tools/ws_client.py có sẵn (khuyến nghị). "
-            f"Lỗi import gốc: {_WS_IMPORT_ERROR}. "
-            "Cách 2: pip install websockets."
+            "No WebSocket backend available. "
+            "Option 1: place this module under agent/src/feeds/ of the Boom repo "
+            "to use the bundled tools/ws_client.py (recommended). "
+            f"Original import error: {_WS_IMPORT_ERROR}. "
+            "Option 2: pip install websockets."
         )
     return _WS_BACKEND
 
 
 class _WebsocketsAdapter:
-    """Bọc `websockets` lib cho cùng interface tối thiểu như repo WebSocket.
+    """Wraps the `websockets` lib to the same minimal interface as the repo WebSocket.
 
-    Chưa được test với lib thật (môi trường dev không có lib này);
-    backend mặc định vẫn là tools/ws_client.py của repo.
+    Not yet tested against the real lib (dev env doesn't have it);
+    the default backend remains the repo's tools/ws_client.py.
     """
 
     def __init__(self, ws):
@@ -91,7 +92,7 @@ class _WebsocketsAdapter:
 
 
 def _default_connect(url: str, timeout: float = 30.0):
-    """Factory mặc định: kết nối WS thật bằng backend khả dụng."""
+    """Default factory: makes a real WS connection with the available backend."""
     backend = _require_backend()
     if backend == "repo":
         return _RepoWebSocket.connect(url, timeout=timeout)
@@ -99,7 +100,7 @@ def _default_connect(url: str, timeout: float = 30.0):
 
 
 class Feed:
-    """Base class nhẹ cho mọi feed: start/close/is_running + on_message gán được."""
+    """Lightweight base class for every feed: start/close/is_running + assignable on_message."""
 
     def __init__(self, on_message: Optional[Callable] = None):
         self.on_message: Optional[Callable] = on_message
@@ -111,14 +112,14 @@ class Feed:
         return self._running
 
     def _emit(self, msg) -> None:
-        """Gọi callback an toàn: lỗi ở callback không giết thread feed."""
+        """Invokes the callback safely: a callback error never kills the feed thread."""
         cb = self.on_message
         if cb is None:
             return
         try:
             cb(msg)
         except Exception:
-            pass  # callback của user lỗi thì bỏ qua, feed vẫn chạy tiếp
+            pass  # a user callback failing is ignored, the feed keeps running
 
     def start(self) -> None:
         raise NotImplementedError
@@ -128,17 +129,17 @@ class Feed:
 
 
 class WebSocketFeed(Feed):
-    """WebSocket client chạy trong thread riêng, tự reconnect khi rớt mạng.
+    """WebSocket client running in its own thread, auto-reconnects on network drops.
 
     Args:
-        url: ws:// hoặc wss:// URL.
-        on_message: callback(message) — message là str (text) hoặc bytes (binary).
-        on_error: callback(exception) khi connect/recv lỗi (trước mỗi lần retry).
-        max_retries: số lần reconnect tối đa; None = thử lại vô hạn.
-        backoff_base: giây chờ lần retry đầu (mặc định 1s theo spec).
-        backoff_max: trần backoff (mặc định 60s theo spec).
-        _connect_factory: hook cho test — hàm (url) -> ws-like object
-            có send_text/recv/close. Mặc định dùng backend WS thật.
+        url: ws:// or wss:// URL.
+        on_message: callback(message) — message is str (text) or bytes (binary).
+        on_error: callback(exception) on connect/recv errors (before each retry).
+        max_retries: max reconnect attempts; None = retry forever.
+        backoff_base: seconds to wait on the first retry (default 1s per spec).
+        backoff_max: backoff ceiling (default 60s per spec).
+        _connect_factory: test hook — a (url) -> ws-like object function
+            with send_text/recv/close. Defaults to the real WS backend.
     """
 
     def __init__(
@@ -157,7 +158,7 @@ class WebSocketFeed(Feed):
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.backoff_max = backoff_max
-        # Kiểm tra backend ngay từ lúc khởi tạo để lỗi hiện sớm, rõ ràng.
+        # Check the backend at init time so failures surface early and clearly.
         self._connect_factory = _connect_factory or _default_connect
         if _connect_factory is None:
             _require_backend()
@@ -166,26 +167,26 @@ class WebSocketFeed(Feed):
         self._stop = threading.Event()
         self._pending_subscribe: Optional[str] = None
         self.connected = False
-        self.reconnect_count = 0  # đếm số lần đã reconnect (tiện cho monitor/test)
+        self.reconnect_count = 0  # reconnect counter (handy for monitor/test)
 
-    # -- API theo spec -------------------------------------------------
+    # -- spec API -----------------------------------------------------------
     def connect(self) -> None:
-        """Kết nối WS một lần (blocking). Raise nếu thất bại."""
+        """Connects WS once (blocking). Raises on failure."""
         with self._lock:
             if self._ws is not None:
-                return  # đã connect rồi
+                return  # already connected
             ws = self._connect_factory(self.url)
             self._ws = ws
             self.connected = True
-            # Gửi subscribe message còn treo (nếu subscribe() gọi trước khi connect)
+            # Send any pending subscribe message (when subscribe() ran before connect)
             if self._pending_subscribe is not None:
                 ws.send_text(self._pending_subscribe)
                 self._pending_subscribe = None
 
     def subscribe(self, message) -> None:
-        """Gửi subscribe message. Nếu chưa connect thì giữ lại, gửi ngay khi connect xong.
+        """Sends a subscribe message. Held back and sent on connect when not yet connected.
 
-        message có thể là dict (tự json.dumps) hoặc str.
+        message can be a dict (json.dumps'd) or a str.
         """
         text = json.dumps(message) if isinstance(message, dict) else str(message)
         with self._lock:
@@ -195,7 +196,7 @@ class WebSocketFeed(Feed):
                 self._pending_subscribe = text
 
     def start(self) -> None:
-        """Chạy vòng lặp connect/recv/reconnect trong thread riêng (daemon)."""
+        """Runs the connect/recv/reconnect loop in its own (daemon) thread."""
         if self._running:
             return
         self._stop.clear()
@@ -206,7 +207,7 @@ class WebSocketFeed(Feed):
         self._thread.start()
 
     def close(self) -> None:
-        """Đóng sạch: dừng thread, đóng socket."""
+        """Closes cleanly: stops the thread, closes the socket."""
         self._stop.set()
         with self._lock:
             ws, self._ws = self._ws, None
@@ -221,9 +222,9 @@ class WebSocketFeed(Feed):
             th.join(timeout=10)
         self._running = False
 
-    # -- Vòng lặp nội bộ ------------------------------------------------
+    # -- internal loop --------------------------------------------------------
     def _run_loop(self) -> None:
-        import socket as _socket  # import local để tránh phụ thuộc thừa ở module top
+        import socket as _socket  # local import to avoid extra module-top deps
 
         retries = 0
         backoff = self.backoff_base
@@ -234,7 +235,7 @@ class WebSocketFeed(Feed):
                 backoff = self.backoff_base
                 self._recv_loop(_socket)
             except Exception as e:
-                # Dọn socket hỏng trước khi retry
+                # Clean up the broken socket before retrying
                 with self._lock:
                     ws, self._ws = self._ws, None
                     self.connected = False
@@ -250,7 +251,7 @@ class WebSocketFeed(Feed):
                     if self.on_error:
                         try:
                             self.on_error(WebSocketFeedError(
-                                f"quá {self.max_retries} lần retry, dừng feed {self.url}"))
+                                f"exceeded {self.max_retries} retries, stopping feed {self.url}"))
                         except Exception:
                             pass
                     break
@@ -260,23 +261,24 @@ class WebSocketFeed(Feed):
                     except Exception:
                         pass
                 self.reconnect_count += 1
-                # Backoff 1s, 2s, 4s ... tối đa 60s; stop event để close() ngắt chờ ngay
+                # Backoff 1s, 2s, 4s ... up to 60s; the stop event lets close()
+                # interrupt the wait immediately
                 if self._stop.wait(timeout=min(backoff, self.backoff_max)):
                     break
                 backoff = min(backoff * 2, self.backoff_max)
         self._running = False
 
     def _recv_loop(self, _socket) -> None:
-        """Nhận message tới khi disconnect. Hết hàm = rớt kết nối -> raise để retry."""
+        """Receives messages until disconnect. Returning = dropped connection -> raise to retry."""
         while not self._stop.is_set():
             with self._lock:
                 ws = self._ws
             if ws is None:
-                raise WebSocketFeedError("mất kết nối (ws=None)")
+                raise WebSocketFeedError("lost connection (ws=None)")
             try:
                 msg = ws.recv(timeout=1.0)
             except _socket.timeout:
-                continue  # peer im lặng -> chờ tiếp, không tính là lỗi
+                continue  # silent peer -> keep waiting, not an error
             if msg is None:
-                raise WebSocketFeedError("server đóng kết nối (close frame)")
+                raise WebSocketFeedError("server closed the connection (close frame)")
             self._emit(msg)

@@ -1,17 +1,18 @@
-"""Auto Report cho Boom: log tin nhắn các group rồi sinh báo cáo tự động.
+"""Auto Report for Boom: logs group messages then generates reports automatically.
 
-Thiết kế theo đúng pattern của repo:
-- SQLite + threading.Lock (giống gateway/broadcast.py)
+Follows the repo's exact patterns:
+- SQLite + threading.Lock (like gateway/broadcast.py)
 - stdlib only: sqlite3, csv, re, datetime, collections
-- Gửi báo cáo qua send_fn do caller truyền vào (giống cách daemon.send_to
-  được bind vào cron deliver hook trong agent/src/tools/cronjob_tool.py).
+- Sends reports via a caller-provided send_fn (like daemon.send_to being
+  bound into the cron deliver hook in agent/src/tools/cronjob_tool.py).
 
-Chu trình dùng:
-1. Mỗi tin nhắn group đi qua: gen.log_message(channel, group_id, ...)
-2. Cron chạy `cron_daily_job(channel, group_id, send_fn)` lúc 7h sáng để gửi
-   summary hôm qua, `cron_weekly_job(send_fn)` sáng thứ Hai để gửi digest tuần.
-   (Gắn vào cron qua cron_add + deliver_to, hoặc gọi trực tiếp từ scheduler.)
-3. CSV export khi doanh nghiệp cần: gen.export_csv(...)
+Usage cycle:
+1. Every group message passes through: gen.log_message(channel, group_id, ...)
+2. Cron runs `cron_daily_job(channel, group_id, send_fn)` at 7am to send
+   yesterday's summary, `cron_weekly_job(send_fn)` Monday morning for the
+   weekly digest. (Attach via cron_add + deliver_to, or call directly from
+   the scheduler.)
+3. CSV export when the business needs it: gen.export_csv(...)
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
 # ---------------------------------------------------------------------------
-# Stopwords: tách từ khóa ý nghĩa, bỏ từ chức năng Việt/Anh + từ ngắn < 3 ký tự
+# Stopwords: extract meaningful keywords, drop Vietnamese/English function
+# words + words shorter than 3 chars.
+# NOTE: the word list below is functional keyword data — kept as-is.
 # ---------------------------------------------------------------------------
 _STOPWORDS = frozenset("""
 của là và có trong với không được cho các đã đang một này những tôi bạn anh
@@ -40,13 +43,13 @@ she him also than then
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
-_TOP_SENDERS = 5   # số người nhắn nhiều nhất trong daily summary
-_TOP_KEYWORDS = 10  # số từ khóa trong daily summary
-_TOP_GROUPS = 10   # số group sôi nổi nhất trong weekly digest
+_TOP_SENDERS = 5   # most active senders in the daily summary
+_TOP_KEYWORDS = 10  # keywords in the daily summary
+_TOP_GROUPS = 10   # most active groups in the weekly digest
 
 
 def _as_date(d: Optional[Union[date, str]]) -> date:
-    """Chuẩn hoá tham số date: date | 'YYYY-MM-DD' | None -> date (None = hôm nay)."""
+    """Normalizes a date parameter: date | 'YYYY-MM-DD' | None -> date (None = today)."""
     if d is None:
         return date.today()
     if isinstance(d, date):
@@ -54,18 +57,18 @@ def _as_date(d: Optional[Union[date, str]]) -> date:
     try:
         return datetime.strptime(str(d), "%Y-%m-%d").date()
     except ValueError:
-        raise ValueError(f"date phải là datetime.date hoặc 'YYYY-MM-DD', nhận được {d!r}")
+        raise ValueError(f"date must be a datetime.date or 'YYYY-MM-DD', got {d!r}")
 
 
 def _day_bounds(d: date) -> tuple:
-    """Khoảng [start_ts, end_ts) của một ngày theo giờ local của host."""
+    """The [start_ts, end_ts) range of one day in the host's local time."""
     start = datetime(d.year, d.month, d.day)
     end = start + timedelta(days=1)
     return start.timestamp(), end.timestamp()
 
 
 class ReportGenerator:
-    """Log tin nhắn group vào SQLite và sinh báo cáo. Thread-safe."""
+    """Logs group messages to SQLite and generates reports. Thread-safe."""
 
     def __init__(self, db_path: Any) -> None:
         self.db_path = Path(db_path)
@@ -83,7 +86,7 @@ class ReportGenerator:
                        timestamp REAL NOT NULL
                    )"""
             )
-            # Index để truy vấn theo ngày/giờ của một group cho nhanh.
+            # Index for fast per-day/per-hour queries of one group.
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_day "
                 "ON messages (channel, group_id, timestamp)"
@@ -95,19 +98,19 @@ class ReportGenerator:
         conn.row_factory = sqlite3.Row
         return conn
 
-    # -- log tin nhắn --------------------------------------------------------
+    # -- log a message -------------------------------------------------------
     def log_message(self, channel: str, group_id: str, sender_id: str,
                     sender_name: str, text: str,
                     timestamp: Optional[float] = None) -> int:
-        """Ghi một tin nhắn vào log. Trả về id của dòng vừa ghi.
+        """Logs one message. Returns the id of the inserted row.
 
-        `timestamp`: epoch seconds; None = thời điểm hiện tại.
-        Không bao giờ raise: validation fail -> ValueError rõ ràng.
+        `timestamp`: epoch seconds; None = now.
+        Never raises on bad input: validation failures -> clear ValueError.
         """
         channel = (channel or "").strip()
         group_id = (group_id or "").strip()
         if not channel or not group_id:
-            raise ValueError("channel và group_id không được rỗng")
+            raise ValueError("channel and group_id must not be empty")
         ts = time.time() if timestamp is None else float(timestamp)
         with self._lock, self._connect() as conn:
             cur = conn.execute(
@@ -120,7 +123,7 @@ class ReportGenerator:
 
     def _fetch(self, channel: str, group_id: Optional[str],
                start_ts: float, end_ts: float) -> List[sqlite3.Row]:
-        """Lấy messages của một group (hoặc toàn channel) trong khoảng thời gian."""
+        """Fetches one group's messages (or a whole channel's) in a time range."""
         sql = ("SELECT * FROM messages WHERE timestamp >= ? AND timestamp < ?")
         params: List[Any] = [start_ts, end_ts]
         if channel is not None:
@@ -133,14 +136,14 @@ class ReportGenerator:
         with self._lock, self._connect() as conn:
             return conn.execute(sql, params).fetchall()
 
-    # -- báo cáo ngày --------------------------------------------------------
+    # -- daily report --------------------------------------------------------
     def daily_summary(self, channel: str, group_id: str,
                       d: Optional[Union[date, str]] = None) -> Dict[str, Any]:
-        """Tóm tắt một ngày của một group.
+        """Summarizes one day of one group.
 
-        Trả về dict: {date, total_messages, unique_senders,
+        Returns a dict: {date, total_messages, unique_senders,
         top_senders: [{sender_name, count}], top_keywords: [{word, count}],
-        hour_histogram: [24 số]}.
+        hour_histogram: [24 numbers]}.
         """
         day = _as_date(d)
         start_ts, end_ts = _day_bounds(day)
@@ -173,17 +176,17 @@ class ReportGenerator:
             "hour_histogram": hours,
         }
 
-    # -- digest tuần ----------------------------------------------------------
+    # -- weekly digest -------------------------------------------------------
     def weekly_digest(self, channel: Optional[str] = None) -> Dict[str, Any]:
-        """Tổng hợp 7 ngày gần nhất (tính cả hôm nay). channel=None -> gộp mọi channel.
+        """Aggregates the last 7 days (including today). channel=None -> all channels.
 
-        Trả về {week_start, week_end, total_messages, active_groups,
+        Returns {week_start, week_end, total_messages, active_groups,
         top_groups: [{channel, group_id, count}], total_senders}.
         """
         today = date.today()
         week_start = today - timedelta(days=6)
         start_ts, _ = _day_bounds(week_start)
-        _, end_ts = _day_bounds(today)  # hết hôm nay
+        _, end_ts = _day_bounds(today)  # through the end of today
         rows = self._fetch(channel, None, start_ts, end_ts)
 
         groups = Counter()
@@ -195,7 +198,7 @@ class ReportGenerator:
         return {
             "week_start": week_start.isoformat(),
             "week_end": today.isoformat(),
-            "channel": channel,  # None = mọi channel
+            "channel": channel,  # None = all channels
             "total_messages": len(rows),
             "active_groups": len(groups),
             "top_groups": [
@@ -205,13 +208,13 @@ class ReportGenerator:
             "total_senders": len(senders),
         }
 
-    # -- xuất CSV -------------------------------------------------------------
+    # -- CSV export ----------------------------------------------------------
     def export_csv(self, channel: str, group_id: str,
                    start_ts: float, end_ts: float,
                    path: Any) -> int:
-        """Xuất messages ra CSV. Columns: timestamp, sender_name, text.
+        """Exports messages to CSV. Columns: timestamp, sender_name, text.
 
-        `start_ts`/`end_ts`: epoch seconds. Trả về số dòng đã xuất (không tính header).
+        `start_ts`/`end_ts`: epoch seconds. Returns rows exported (excluding header).
         """
         path = Path(path)
         if path.parent != Path(".") and str(path.parent):
@@ -228,23 +231,23 @@ class ReportGenerator:
                 ])
         return len(rows)
 
-    # -- dọn dữ liệu cũ --------------------------------------------------------
+    # -- prune old data ------------------------------------------------------
     def prune_old(self, days: int = 90) -> int:
-        """Xoá messages cũ hơn `days` ngày. Trả về số dòng đã xoá."""
+        """Deletes messages older than `days` days. Returns rows deleted."""
         cutoff = time.time() - int(days) * 86400
         with self._lock, self._connect() as conn:
             cur = conn.execute("DELETE FROM messages WHERE timestamp < ?", (cutoff,))
             return int(cur.rowcount)
 
-    # -- đếm thô ---------------------------------------------------------------
+    # -- raw count -----------------------------------------------------------
     def count(self) -> int:
-        """Tổng số messages đang lưu (phục vụ test/giám sát)."""
+        """Total messages stored (for tests/monitoring)."""
         with self._lock, self._connect() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
 
 
 def _extract_keywords(text: str) -> List[str]:
-    """Tách từ, lowercase, bỏ stopwords Việt/Anh và từ < 3 ký tự."""
+    """Tokenizes, lowercases, drops Vietnamese/English stopwords and <3-char words."""
     out = []
     for w in _WORD_RE.findall((text or "").lower()):
         if len(w) >= 3 and w not in _STOPWORDS:
@@ -253,10 +256,12 @@ def _extract_keywords(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Render text tiếng Việt để gửi Telegram
+# Render Vietnamese text for Telegram.
+# NOTE: the exact wording below is pinned by evals/test_reports.py
+# ("BÁO CÁO NGÀY", "TỔNG KẾT TUẦN", ...) — keep as-is.
 # ---------------------------------------------------------------------------
 def format_daily_text(summary: Dict[str, Any]) -> str:
-    """Render dict của daily_summary thành text đẹp để gửi Telegram."""
+    """Renders a daily_summary dict into pretty text for Telegram."""
     day = summary.get("date", "")
     try:
         day_vn = datetime.strptime(day, "%Y-%m-%d").strftime("%d/%m/%Y")
@@ -287,7 +292,7 @@ def format_daily_text(summary: Dict[str, Any]) -> str:
 
 
 def format_weekly_text(digest: Dict[str, Any]) -> str:
-    """Render dict của weekly_digest thành text tiếng Việt để gửi Telegram."""
+    """Renders a weekly_digest dict into Vietnamese text for Telegram."""
     try:
         ws = datetime.strptime(digest["week_start"], "%Y-%m-%d").strftime("%d/%m")
         we = datetime.strptime(digest["week_end"], "%Y-%m-%d").strftime("%d/%m/%Y")
@@ -311,15 +316,15 @@ def format_weekly_text(digest: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tích hợp cron: hai job function, send_fn do caller truyền vào.
-# send_fn(text) -> bool. Job không bao giờ raise vì lỗi gửi: kết quả gửi được
-# ghi vào dict trả về, giống cách cron runner của repo ghi delivered.
+# Cron integration: two job functions, send_fn provided by the caller.
+# send_fn(text) -> bool. A job never raises on send errors: the send result is
+# recorded in the returned dict, like the repo's cron runner records delivery.
 # ---------------------------------------------------------------------------
 def cron_daily_job(channel: str, group_id: str,
                    send_fn: Callable[[str], Any],
                    db_path: Any,
                    d: Optional[Union[date, str]] = None) -> Dict[str, Any]:
-    """Job chạy mỗi sáng: sinh daily_summary của HÔM QUA rồi gửi qua send_fn."""
+    """Morning job: builds YESTERDAY's daily_summary and sends it via send_fn."""
     gen = ReportGenerator(db_path)
     yesterday = (_as_date(d) if d is not None else date.today()) - timedelta(days=1)
     summary = gen.daily_summary(channel, group_id, yesterday)
@@ -327,14 +332,14 @@ def cron_daily_job(channel: str, group_id: str,
     try:
         ok = bool(send_fn(text))
         return {"ok": True, "summary": summary, "sent": ok}
-    except Exception as e:  # lỗi gửi không fail job, giống repo pattern
+    except Exception as e:  # send errors don't fail the job, per repo pattern
         return {"ok": False, "summary": summary, "error": f"{type(e).__name__}: {e}"}
 
 
 def cron_weekly_job(send_fn: Callable[[str], Any],
                     db_path: Any,
                     channel: Optional[str] = None) -> Dict[str, Any]:
-    """Job chạy sáng thứ Hai: sinh weekly_digest rồi gửi qua send_fn."""
+    """Monday-morning job: builds the weekly_digest and sends it via send_fn."""
     gen = ReportGenerator(db_path)
     digest = gen.weekly_digest(channel)
     text = format_weekly_text(digest)

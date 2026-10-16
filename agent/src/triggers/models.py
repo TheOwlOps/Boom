@@ -1,7 +1,7 @@
-"""Trigger models cho Boom. Chỉ stdlib, JSON-serializable.
+"""Trigger models for Boom. Stdlib only, JSON-serializable.
 
-Trigger = điều kiện kiểm tra định kỳ (do worker checkers tự poll),
-khi điều kiện đúng thì thực hiện action (vd: gửi tin nhắn, chạy task).
+A trigger = a periodically-checked condition (polled by worker checkers);
+when the condition holds, an action runs (e.g. sends a message, runs a task).
 """
 
 from dataclasses import dataclass, field
@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 
-#: Các kind trigger hợp lệ. from_dict KHÔNG validate — checker tự xử.
+#: Valid trigger kinds. from_dict does NOT validate — checkers decide.
 VALID_KINDS = frozenset({"gmail_new", "price_below", "keyword_news", "webhook"})
 
 
@@ -26,7 +26,7 @@ class Trigger:
     created_at: str = ""
 
     def __post_init__(self) -> None:
-        # Mặc định created_at = thời điểm tạo mới (nếu rỗng).
+        # Defaults created_at to the creation moment (when empty).
         if not self.created_at:
             self.created_at = datetime.now().isoformat()
 
@@ -45,7 +45,7 @@ class Trigger:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Trigger":
-        # KHÔNG validate kind ở đây — checker tự quyết định xử lý.
+        # Kind is NOT validated here — the checker decides how to handle it.
         return cls(
             id=d.get("id", ""),
             name=d.get("name", ""),

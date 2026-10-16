@@ -1,76 +1,76 @@
 ---
 name: feature-watch
-description: "Theo dõi hệ sinh thái AI agent, báo tính năng/release mới có trích dẫn."
+description: "Watch the AI agent ecosystem, reporting new features/releases with citations."
 version: 0.1.0
 ---
 
 # Skill: feature-watch
 
-> Đây là **playbook cho agent** (LLM đọc và làm theo từng bước).
-> Không phải code thực thi — mọi hành động đều qua tool có sẵn của Boom.
+> This is a **playbook for the agent** (the LLM reads it and follows each step).
+> It is not executable code — every action goes through Boom's existing tools.
 
-## Khi nào dùng
+## When to use
 
-- User hỏi kiểu: "có gì mới không", "AI agent dạo này có tính năng gì mới", "framework nào vừa release".
-- Cron tick hàng ngày/tuần (job `feature-watch-daily`).
+- The user asks things like: "what's new", "what new features do AI agents have lately", "which framework just released".
+- Daily/weekly cron tick (job `feature-watch-daily`).
 
-## Nguồn nên quét
+## Sources to scan
 
-Hệ sinh thái AI agent: framework (openclaw, eliza/elizaOS, langchain,
-autogen, crewai, composio, browser-use, skyvern...), LLM release mới,
-paper/pattern mới (ReAct, DAG, memory, evals).
+The AI agent ecosystem: frameworks (openclaw, eliza/elizaOS, langchain,
+autogen, crewai, composio, browser-use, skyvern...), new LLM releases,
+new papers/patterns (ReAct, DAG, memory, evals).
 
-## Quy trình mỗi tick
+## Per-tick workflow
 
-### 1. Thu thập (collect)
+### 1. Collect
 
-- `news_search` với keyword: `AI`, `agent`, `LLM` trên feed `tin-moi-nhat`
-  (VnExpress — mảng news connector).
-- `web_search` cho release mới của framework agent, ví dụ:
+- `news_search` with keywords: `AI`, `agent`, `LLM` on the `tin-moi-nhat`
+  feed (VnExpress — the news connector array).
+- `web_search` for new releases of agent frameworks, e.g.
   `"openclaw release notes"`, `"elizaOS changelog"`, `"langchain release"`,
-  `"autogen new version"`, `"crewai release"`. Thêm GitHub releases/trending
-  khi cần (`site:github.com ... releases`).
-- `web_extract` vào URL release/changelog để đọc chi tiết khi cần verify.
+  `"autogen new version"`, `"crewai release"`. Add GitHub releases/trending
+  when needed (`site:github.com ... releases`).
+- `web_extract` into release/changelog URLs to read details when verification is needed.
 
-### 2. Lọc (filter)
+### 2. Filter
 
-- **CHỈ giữ cái VERIFY được**: mỗi item phải có URL thật (release page,
-  changelog, blog chính thức, hoặc bài báo). Không bịa tính năng,
-  không đoán ngày release — không verify được thì loại.
-- Đọc state file `memories/feature-watch.json` (danh sách URL đã báo).
-  Item nào URL đã có trong state → **bỏ qua**.
-- State file chưa tồn tại → coi như rỗng, tạo sau khi báo.
+- **Keep only what is VERIFIED**: every item must have a real URL (release page,
+  changelog, official blog, or news article). Never invent features,
+  never guess release dates — drop anything that can't be verified.
+- Read the state file `memories/feature-watch.json` (list of already-reported URLs).
+  Any item whose URL is already in the state → **skip**.
+- State file doesn't exist yet → treat as empty, create it after reporting.
 
-### 3. Xuất bản tin (report)
+### 3. Publish the briefing (report)
 
-- Bản tin ngắn: mỗi item **1–2 dòng + link trích dẫn** `[n]`.
-- Không dùng `digest_preview` khi item ít (dưới ~5) — trả text trực tiếp
-  cho gọn; nhiều item thì dùng `digest_preview` cho đồng nhất.
-- **Không có gì mới → trả đúng câu:** `Hôm nay không có tính năng mới đáng chú ý.`
-  Đừng bịa cho có.
+- Short briefing: each item **1–2 lines + citation link** `[n]`.
+- Don't use `digest_preview` when there are few items (~5 or fewer) — return plain
+  text directly to keep it short; with many items, use `digest_preview` for consistency.
+- **If there's nothing new, reply with exactly:** `No notable new features today.`
+  Don't make things up to fill space.
 
-### 4. Cập nhật state
+### 4. Update state
 
-- Sau khi báo, append các URL vừa báo vào `memories/feature-watch.json`
-  (array các URL, giữ tối đa ~500 URL gần nhất để file không phình).
-- Nếu không có gì mới → không ghi gì.
+- After reporting, append the reported URLs to `memories/feature-watch.json`
+  (an array of URLs, keeping at most the ~500 most recent so the file doesn't bloat).
+- If nothing new → write nothing.
 
-## Ví dụ bản tin
+## Briefing example
 
 ```
-🛰️ AI agent — cập nhật mới
+🛰️ AI agent — latest updates
 
-1. CrewAI 0.177.0 thêm native memory server, tách khỏi vòng loop
-   chính [1]
-2. ElizaOS mở plugin mới cho scheduled tasks chạy nền [2]
+1. CrewAI 0.177.0 adds a native memory server, detached from the main
+   loop [1]
+2. ElizaOS opens a new plugin for background scheduled tasks [2]
 
 [1] https://github.com/crewAIInc/crewAI/releases/tag/0.177.0
 [2] https://github.com/elizaOS/eliza/releases/tag/...
 ```
 
-## Quy tắc
+## Rules
 
-- Skill này khác `competitor-news-monitor`: skill kia theo dõi *công ty*,
-  skill này theo dõi *hệ sinh thái AI agent* (framework, release, pattern).
-- Tiếng Việt cho phần user-facing. Link trích dẫn bắt buộc với mọi item.
-- Dedupe bằng state file, không dựa vào trí nhớ.
+- This skill differs from `competitor-news-monitor`: that one watches *companies*,
+  this one watches the *AI agent ecosystem* (frameworks, releases, patterns).
+- Keep user-facing parts in English. Citation links are mandatory for every item.
+- Dedupe via the state file, never rely on memory.

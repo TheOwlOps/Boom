@@ -1,9 +1,9 @@
-"""Timeout guard cho Boom lifecycle (agent/src/lifecycle/timeout.py).
+"""Timeout guard for the Boom lifecycle (agent/src/lifecycle/timeout.py).
 
-Bọc các external call (Telegram API, LLM provider, ...) bằng decorator
-@with_timeout để tránh treo vô hạn khi dependency bên ngoài không phản hồi.
+Wraps external calls (Telegram API, LLM providers, ...) with a @with_timeout
+decorator so a non-responsive outside dependency can't hang forever.
 
-Chỉ dùng stdlib: asyncio, functools, concurrent.futures, inspect.
+Stdlib only: asyncio, functools, concurrent.futures, inspect.
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ __all__ = ["with_timeout"]
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-# Pool dùng chung cho mọi sync function được bọc: giới hạn số thread, tái sử
-# dụng thread thay vì spawn mới mỗi lần gọi.
+# Shared pool for every wrapped sync function: bounded threads, reused
+# instead of spawning new ones per call.
 #
-# LÝ DO KHÔNG DÙNG signal.alarm:
-#   - signal chỉ chạy được trên MAIN thread của process. Boom chạy agent loop
-#     trên worker thread / async task → đặt signal.alarm ở đó sẽ raise
-#     ValueError ("signal only works in main thread"), hoặc tệ hơn: alarm của
-#     thread này bắn vào thread khác.
-#   - signal.alarm là global state của process: 2 decorator chồng lên nhau sẽ
-#     ghi đè alarm của nhau.
-# ThreadPoolExecutor + concurrent.futures.wait(timeout) an toàn trên mọi
-# thread, không can thiệp global state, và vẫn dùng được khi gọi từ async code.
+# WHY NOT signal.alarm:
+#   - signals only work on the process's MAIN thread. Boom runs the agent loop
+#     on worker threads / async tasks → signal.alarm there raises ValueError
+#     ("signal only works in main thread"), or worse: this thread's alarm
+#     fires into another thread.
+#   - signal.alarm is process-global state: 2 stacked decorators would
+#     overwrite each other's alarm.
+# ThreadPoolExecutor + concurrent.futures.wait(timeout) is safe on every
+# thread, touches no global state, and still works when called from async code.
 _SYNC_POOL = concurrent.futures.ThreadPoolExecutor(
     max_workers=16,
     thread_name_prefix="boom-timeout-guard",
@@ -41,20 +41,20 @@ def _timeout_message(seconds: float, func_name: str) -> str:
 
 
 def with_timeout(seconds: float) -> Callable[[F], F]:
-    """Decorator giới hạn thời gian chạy của function.
+    """Decorator limiting a function's runtime.
 
-    Dùng cho CẢ sync và async function:
+    Works for BOTH sync and async functions:
       - async: asyncio.wait_for
-      - sync:  submit vào ThreadPoolExecutor + concurrent.futures.wait(timeout)
+      - sync:  submits to a ThreadPoolExecutor + concurrent.futures.wait(timeout)
 
-    Hết timeout → raise TimeoutError (builtin) với message rõ ràng.
-    Exception do function tự raise thì lan truyền nguyên vẹn (không bị nuốt).
+    On timeout → raises TimeoutError (builtin) with a clear message.
+    Exceptions raised by the function itself propagate untouched (never swallowed).
 
     Raises:
-        ValueError: nếu timeout <= 0 (ngay lúc decorate).
+        ValueError: when timeout <= 0 (at decoration time).
     """
     if seconds <= 0:
-        raise ValueError(f"timeout phải là số dương, nhận được: {seconds!r}")
+        raise ValueError(f"timeout must be a positive number, got: {seconds!r}")
 
     def decorator(func: F) -> F:
         if inspect.iscoroutinefunction(func):
@@ -64,10 +64,10 @@ def with_timeout(seconds: float) -> Callable[[F], F]:
                 try:
                     return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
                 except asyncio.TimeoutError as exc:
-                    # Python 3.11+: asyncio.TimeoutError CHÍNH LÀ builtin
-                    # TimeoutError. Nếu function TỰ raise TimeoutError có message
-                    # riêng (wait_for không bao giờ tự sinh message) thì giữ
-                    # nguyên, không bọc lại.
+                    # Python 3.11+: asyncio.TimeoutError IS the builtin
+                    # TimeoutError. When the function ITSELF raised TimeoutError
+                    # with its own message (wait_for never generates one itself),
+                    # keep it as-is, don't rewrap.
                     if str(exc):
                         raise
                     raise TimeoutError(
@@ -81,11 +81,11 @@ def with_timeout(seconds: float) -> Callable[[F], F]:
             future = _SYNC_POOL.submit(func, *args, **kwargs)
             done, _not_done = concurrent.futures.wait([future], timeout=seconds)
             if not done:
-                # Thread vẫn chạy nền cho tới khi xong (Python không kill được
-                # thread), nhưng caller đã được giải phóng đúng hạn. Pool giới
-                # hạn max_workers nên không leak vô hạn.
+                # The thread keeps running in the background until done (Python
+                # can't kill threads), but the caller is released on time. The
+                # pool caps max_workers so there's no unbounded leak.
                 raise TimeoutError(_timeout_message(seconds, func.__name__))
-            # future.result() raise lại ĐÚNG exception gốc của function.
+            # future.result() re-raises the function's ORIGINAL exception.
             return future.result()
 
         return sync_wrapper  # type: ignore[return-value]

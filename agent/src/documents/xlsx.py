@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""XlsxBuilder — fluent API tạo file XLSX dùng trực tiếp từ Python.
+"""XlsxBuilder — fluent API for creating XLSX files straight from Python.
 
-openpyxl là OPTIONAL:
-  - Có openpyxl  -> workbook thật: sheet, công thức, style, chart.
-  - Không có      -> không crash. Dữ liệu vẫn được giữ trong bộ nhớ
-                    (chế độ CSV fallback, lưu thành CSV kèm warning);
-                    báo rõ "cần pip install openpyxl" cho các tính năng
-                    nâng cao (công thức, style, chart).
+openpyxl is OPTIONAL:
+  - With openpyxl  -> a real workbook: sheets, formulas, styles, charts.
+  - Without         -> no crash. Data is still kept in memory
+                    (CSV fallback mode, saved as CSV with a warning);
+                    clearly reports "needs pip install openpyxl" for the
+                    advanced features (formulas, styles, charts).
 
-Ví dụ:
+Example:
     b = XlsxBuilder()
     (b.add_sheet("Sales")
-      .set_cell("Sales", 1, 1, "Tháng")
-      .set_cell("Sales", 1, 2, "Doanh thu")
+      .set_cell("Sales", 1, 1, "Month")
+      .set_cell("Sales", 1, 2, "Revenue")
       .set_cell("Sales", 2, 2, 1200)
       .set_formula("Sales", 4, 2, "=SUM(B2:B3)")
       .style_cell("Sales", 1, 1, bold=True, color="FF0000", border=True)
@@ -27,8 +27,8 @@ import sys
 import warnings
 from typing import Any, Dict, List, Optional
 
-# openpyxl OPTIONAL — import lồng trong try để module này import được
-# kể cả trên máy chưa cài lib.
+# openpyxl OPTIONAL — nested import in try so this module stays importable
+# even on machines without the lib.
 try:
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, LineChart, PieChart, Reference
@@ -42,54 +42,54 @@ _WARN_ONCE = set()
 
 
 def _warn(msg: str) -> None:
-    """Ghi warning 1 lần duy nhất cho mỗi msg (tránh spam log)."""
+    """Logs each warning once per msg (avoids log spam)."""
     if msg not in _WARN_ONCE:
         _WARN_ONCE.add(msg)
         warnings.warn(msg, UserWarning, stacklevel=3)
 
 
 class XlsxBuilder:
-    """Fluent builder tạo file XLSX. Không crash khi thiếu openpyxl."""
+    """Fluent builder for XLSX files. Doesn't crash without openpyxl."""
 
     def __init__(self):
         self._has_openpyxl = _HAS_OPENPYXL
         if self._has_openpyxl:
-            # Bỏ sheet mặc định để sheet đầu tiên do user tạo.
+            # Drop the default sheet so the user's first sheet comes first.
             self._wb = Workbook()
             self._wb.remove(self._wb.active)
             self._charts: Dict[str, list] = {}
         else:
-            # Fallback: lưu data dạng dict {sheet: {(row, col): value}}
-            # để vẫn lưu được CSV / báo cáo mà không crash.
+            # Fallback: stores data as {sheet: {(row, col): value}}
+            # so CSV export / reports still work without crashing.
             self._cells: Dict[str, Dict[tuple, Any]] = {}
             self._sheet_order: List[str] = []
             _warn(
-                "openpyxl chưa được cài — XlsxBuilder chạy ở chế độ fallback "
-                "CSV (không hỗ trợ công thức/style/chart). "
-                "Cài bằng: pip install openpyxl"
+                "openpyxl is not installed — XlsxBuilder is running in CSV "
+                "fallback mode (no formula/style/chart support). "
+                "Install with: pip install openpyxl"
             )
 
-    # ---------- tiện ích nội bộ ----------
+    # ---------- internal helpers ----------
     def _ensure_sheet(self, name: str):
-        """Lấy sheet, tự tạo nếu chưa có (mặc định: workbook sheet)."""
+        """Gets a sheet, creating it when missing (defaults to the workbook sheet)."""
         if self._has_openpyxl:
             if name not in self._wb.sheetnames:
                 self._wb.create_sheet(name)
                 self._charts.setdefault(name, [])
             return self._wb[name]
-        # fallback: chỉ ghi nhớ thứ tự sheet
+        # fallback: just remember the sheet order
         if name not in self._sheet_order:
             self._sheet_order.append(name)
             self._cells[name] = {}
         return None
 
-    # ---------- API chính (fluent, trả về self) ----------
+    # ---------- main API (fluent, returns self) ----------
     def add_sheet(self, name: str) -> "XlsxBuilder":
         self._ensure_sheet(name)
         return self
 
     def set_cell(self, sheet: str, row: int, col: int, value: Any) -> "XlsxBuilder":
-        """Gán giá trị cho ô (row, col đều 1-based)."""
+        """Sets a cell value (row and col are both 1-based)."""
         if self._has_openpyxl:
             self._ensure_sheet(sheet).cell(row=row, column=col, value=value)
         else:
@@ -98,23 +98,23 @@ class XlsxBuilder:
         return self
 
     def set_formula(self, sheet: str, row: int, col: int, formula: str) -> "XlsxBuilder":
-        """Gán công thức, vd: '=SUM(A1:A10)'. openpyxl hỗ trợ native."""
+        """Sets a formula, e.g. '=SUM(A1:A10)'. Native with openpyxl."""
         if not formula.startswith("="):
             formula = "=" + formula
         if self._has_openpyxl:
-            # openpyxl lưu chuỗi công thức nguyên vẹn; Excel tính khi mở.
+            # openpyxl stores the formula string verbatim; Excel evaluates on open.
             self._ensure_sheet(sheet).cell(row=row, column=col, value=formula)
         else:
             self._ensure_sheet(sheet)
             self._cells[sheet][(row, col)] = formula
-            _warn("set_formula cần openpyxl để Excel hiểu công thức — "
-                  "hiện chỉ lưu dạng text.")
+            _warn("set_formula needs openpyxl for Excel to understand the formula — "
+                  "currently stored as plain text.")
         return self
 
     def style_cell(self, sheet: str, row: int, col: int,
                    bold: bool = False, color: Optional[str] = None,
                    border: bool = False) -> "XlsxBuilder":
-        """Style ô: bold / màu chữ (hex RGB, vd 'FF0000') / viền mỏng."""
+        """Styles a cell: bold / font color (hex RGB, e.g. 'FF0000') / thin border."""
         if self._has_openpyxl:
             cell = self._ensure_sheet(sheet).cell(row=row, column=col)
             cell.font = Font(bold=bold, color=color) if (bold or color) else cell.font
@@ -122,11 +122,11 @@ class XlsxBuilder:
                 side = Side(style="thin")
                 cell.border = Border(left=side, right=side, top=side, bottom=side)
         else:
-            _warn("style_cell cần openpyxl — fallback bỏ qua style.")
+            _warn("style_cell needs openpyxl — style skipped in fallback.")
         return self
 
     def auto_width(self, sheet: str) -> "XlsxBuilder":
-        """Tự chỉnh độ rộng cột theo độ dài nội dung dài nhất của cột đó."""
+        """Auto-sizes column widths to each column's longest content."""
         if self._has_openpyxl:
             ws = self._ensure_sheet(sheet)
             for col in ws.columns:
@@ -135,53 +135,53 @@ class XlsxBuilder:
                 for cell in col:
                     if cell.value is not None:
                         max_len = max(max_len, len(str(cell.value)))
-                # +2 padding để chữ không bị dính mép; giới hạn 50.
+                # +2 padding so text doesn't touch the edge; capped at 50.
                 ws.column_dimensions[letter].width = min(max_len + 2, 50)
         else:
-            _warn("auto_width cần openpyxl — fallback bỏ qua.")
+            _warn("auto_width needs openpyxl — skipped in fallback.")
         return self
 
     def add_chart(self, sheet: str, chart_type: str = "bar",
                   data_range: str = "", title: str = "") -> "XlsxBuilder":
-        """Thêm chart. Nếu thiếu openpyxl: bỏ qua + warning."""
+        """Adds a chart. Without openpyxl: skipped + warning."""
         if not self._has_openpyxl:
-            _warn("add_chart cần openpyxl — chart đã bị bỏ qua.")
+            _warn("add_chart needs openpyxl — chart skipped.")
             return self
         ws = self._ensure_sheet(sheet)
         chart_cls = {"bar": BarChart, "line": LineChart, "pie": PieChart}.get(
             chart_type.lower())
         if chart_cls is None:
-            raise ValueError(f"chart_type không hợp lệ: {chart_type} "
+            raise ValueError(f"invalid chart_type: {chart_type} "
                              "(bar | line | pie)")
         chart = chart_cls()
         if title:
             chart.title = title
         if data_range:
-            # data_range dạng "B2:B10": tạo Reference từ range text.
+            # data_range like "B2:B10": builds a Reference from the range text.
             from openpyxl.utils import range_boundaries
             min_col, min_row, max_col, max_row = range_boundaries(data_range)
             ref = Reference(ws, min_col=min_col, min_row=min_row,
                             max_col=max_col, max_row=max_row)
             chart.add_data(ref, titles_from_data=True)
-        # Neo chart ở góc H2 để không đè lên data.
+        # Anchors the chart at H2 so it doesn't cover the data.
         ws.add_chart(chart, "H2")
         return self
 
-    # ---------- xuất ----------
+    # ---------- export ----------
     def save(self, path: str) -> str:
-        """Lưu workbook. Trả về path đã lưu."""
+        """Saves the workbook. Returns the saved path."""
         if self._has_openpyxl:
             self._wb.save(path)
         else:
-            # Fallback CSV: mỗi sheet 1 file "<path>_sheetN.csv".
-            # Nếu chỉ có 1 sheet, lưu thẳng vào path đổi đuôi .csv.
+            # CSV fallback: one file per sheet, "<path>_sheetN.csv".
+            # Single sheet: save straight to path with a .csv extension.
             sheets = self._sheet_order or ["Sheet1"]
             if len(sheets) == 1 and path.lower().endswith((".xlsx", ".xls")):
                 self._save_csv(sheets[0], path.rsplit(".", 1)[0] + ".csv")
                 return path.rsplit(".", 1)[0] + ".csv"
             for i, name in enumerate(sheets):
                 self._save_csv(name, f"{path}_sheet{i + 1}.csv")
-            _warn("Lưu ở chế độ CSV fallback (thiếu openpyxl).")
+            _warn("Saved in CSV fallback mode (openpyxl missing).")
         return path
 
     def _save_csv(self, sheet: str, csv_path: str) -> None:
@@ -197,12 +197,12 @@ class XlsxBuilder:
                 w.writerow([cells.get((r, c), "") for c in range(1, max_col + 1)])
 
     def to_bytes(self) -> bytes:
-        """Trả về binary XLSX (để gửi qua Telegram/API)."""
+        """Returns the XLSX as bytes (for sending via Telegram/API)."""
         if self._has_openpyxl:
             buf = io.BytesIO()
             self._wb.save(buf)
             return buf.getvalue()
-        # Fallback: CSV của sheet đầu tiên.
+        # Fallback: CSV of the first sheet.
         cells = self._cells.get(self._sheet_order[0], {}) if self._sheet_order else {}
         buf = io.StringIO()
         if cells:
@@ -215,7 +215,7 @@ class XlsxBuilder:
 
 
 def main() -> int:
-    """CLI demo nhanh: tạo 1 file mẫu."""
+    """Quick CLI demo: creates a sample file."""
     out = sys.argv[1] if len(sys.argv) > 1 else "demo.xlsx"
     b = XlsxBuilder()
     (b.add_sheet("Data")

@@ -1,6 +1,6 @@
 ---
 name: db-helper
-description: "Wrap SQLite an toàn: query/insert/migrate với whitelist bảng, parameterized query, chặn DROP và DELETE/UPDATE thiếu WHERE."
+description: "Safe SQLite wrapper: query/insert/migrate with a table whitelist, parameterized queries, blocking DROP and DELETE/UPDATE without WHERE."
 version: 1.0.0
 author: Boom Agent
 license: MIT
@@ -13,90 +13,90 @@ metadata:
 
 # DB Helper
 
-Wrapper SQLite an toàn cho agent: mọi thao tác đều đi qua lớp kiểm tra
-bảo mật trước khi chạm vào database. Triết lý **fail-closed** — cái gì
-không rõ ràng an toàn thì từ chối, không đoán mò.
+A safe SQLite wrapper for agents: every operation passes through a security
+check before touching the database. The philosophy is **fail-closed** — anything
+not clearly safe is rejected, never guessed.
 
-## Khi nào dùng
+## When to use
 
-- Agent cần đọc/ghi SQLite (job store, cache, memory local...) mà không
-  muốn tự viết SQL thô dễ dính injection
-- Chạy file migrate `.sql` nhưng sợ trong file có lệnh nguy hiểm
-- Khi user nói "đọc db", "lưu vào sqlite", "chạy migration"
+- An agent needs to read/write SQLite (job store, cache, local memory...) without
+  hand-writing raw SQL that's prone to injection
+- Running a `.sql` migrate file but worried it contains dangerous statements
+- When the user says "read the db", "save to sqlite", "run the migration"
 
-**Không dùng cho:** database server (Postgres/MySQL) — skill chỉ wrap
-sqlite3 của stdlib.
+**Not for:** database servers (Postgres/MySQL) — this skill only wraps the
+stdlib's sqlite3.
 
-## Quy tắc an toàn
+## Safety rules
 
-| Quy tắc | Ý nghĩa |
+| Rule | Meaning |
 |---------|---------|
-| Whitelist bảng | Bảng không nằm trong `allowed_tables` → `UnsafeSQLError` ngay |
-| Identifier nghiêm ngặt | Tên bảng/cột phải khớp `[A-Za-z_][A-Za-z0-9_]*` |
-| Parameterized query | Mọi **giá trị** đi qua placeholder `?`, không nối chuỗi |
-| `delete()` bắt buộc WHERE | `filters` rỗng → từ chối (tránh xóa cả bảng) |
-| `migrate()` quét trước | Cấm `DROP/TRUNCATE/ATTACH/...`; cấm `DELETE/UPDATE` thiếu `WHERE` |
+| Table whitelist | A table not in `allowed_tables` → `UnsafeSQLError` immediately |
+| Strict identifiers | Table/column names must match `[A-Za-z_][A-Za-z0-9_]*` |
+| Parameterized queries | All **values** go through `?` placeholders, no string concatenation |
+| `delete()` requires WHERE | Empty `filters` → rejected (avoids wiping the whole table) |
+| `migrate()` pre-scan | Blocks `DROP/TRUNCATE/ATTACH/...`; blocks `DELETE/UPDATE` without `WHERE` |
 
 ## Input
 
-- **db_path:** đường dẫn file `.db` (tự tạo mới nếu chưa có)
-- **allowed_tables:** list tên bảng được phép (rỗng = cấm tất cả)
-- **query(table, filters, columns, limit):** `filters` là dict `{cột: giá trị}`
-- **insert(table, data):** `data` là dict `{cột: giá trị}`
-- **delete(table, filters):** `filters` bắt buộc không rỗng
-- **migrate(sql_file):** đường dẫn file `.sql`
+- **db_path:** path to the `.db` file (created automatically if missing)
+- **allowed_tables:** list of permitted table names (empty = forbid everything)
+- **query(table, filters, columns, limit):** `filters` is a dict `{column: value}`
+- **insert(table, data):** `data` is a dict `{column: value}`
+- **delete(table, filters):** `filters` must not be empty
+- **migrate(sql_file):** path to a `.sql` file
 
 ## Output
 
-- `query()` → `list[dict]`, mỗi dict là một dòng (key = tên cột)
+- `query()` → `list[dict]`, each dict is a row (keys = column names)
 - `insert()` → `InsertResult{table, rowid, rows_affected}`
-- `delete()` → `int` (số dòng đã xóa)
+- `delete()` → `int` (number of rows deleted)
 - `migrate()` → `MigrationReport{file, applied, statements, message}`
 
-Lỗi bảo mật ném `UnsafeSQLError` (kế thừa `ValueError`); migrate lỗi cú
-pháp SQL thì trả `applied=False` kèm `message` thay vì raise.
+Security violations raise `UnsafeSQLError` (subclasses `ValueError`); a migrate
+with SQL syntax errors returns `applied=False` with a `message` instead of raising.
 
-## Ví dụ
+## Example
 
 ### Python API
 
 ```python
 import sys
-sys.path.insert(0, "skills/db-helper")  # trỏ vào thư mục của skill
+sys.path.insert(0, "skills/db-helper")  # point to the skill's directory
 from helper import DBHelper, UnsafeSQLError
 
 with DBHelper("app.db", allowed_tables=["users", "jobs"]) as db:
-    # Đọc có điều kiện
+    # Conditional read
     admins = db.query("users", {"role": "admin"}, limit=10)
 
-    # Ghi an toàn (giá trị có quote cũng không phá được câu lệnh)
+    # Safe write (quoted values can't break the statement)
     res = db.insert("users", {"name": "O'Brien", "role": "user"})
     print(res.rowid)
 
-    # Xóa bắt buộc có WHERE
+    # Delete requires WHERE
     db.delete("users", {"name": "spam-bot"})
 
-    # Chạy migration (tự chặn DROP / DELETE không WHERE)
+    # Run migration (auto-blocks DROP / WHERE-less DELETE)
     report = db.migrate("migrations/001_init.sql")
     print(report.applied, report.statements)
 
-    # Bảng ngoài whitelist -> bị từ chối ngay
+    # Table outside the whitelist -> rejected immediately
     try:
         db.query("sqlite_master")
     except UnsafeSQLError as e:
-        print("Chặn:", e)
+        print("Blocked:", e)
 ```
 
 ### CLI
 
 ```bash
-# Đọc (whitelist bắt buộc, fail-closed)
+# Read (whitelist mandatory, fail-closed)
 python3 skills/db-helper/helper.py --db app.db --tables users,jobs query users --where role=admin --limit 5
 
-# Ghi
+# Write
 python3 skills/db-helper/helper.py --db app.db --tables users insert users --data '{"name":"An","role":"admin"}'
 
-# Xóa (bắt buộc --where)
+# Delete (--where mandatory)
 python3 skills/db-helper/helper.py --db app.db --tables users delete users --where name=spam-bot
 
 # Migrate
@@ -105,10 +105,10 @@ python3 skills/db-helper/helper.py --db app.db --tables users,jobs migrate migra
 
 ## Pitfalls
 
-- Whitelist rỗng là **cố ý**: fail-closed, mọi thao tác đều bị từ chối
-  cho tới khi bạn truyền `allowed_tables` rõ ràng
-- `query()` giới hạn tối đa 10.000 dòng/lần để agent không đọc sập RAM
-- `migrate()` dùng `executescript`: nếu 1 câu lỗi cú pháp, các câu trước
-  đó trong file có thể đã chạy — luôn kiểm tra `MigrationReport.applied`
-- Bộ tách câu lệnh xử lý được `;` trong quote và comment `--`, nhưng SQL
-  quá "dị" (vd: trigger nhiều dòng phức tạp) nên test trước trên db rỗng
+- An empty whitelist is **intentional**: fail-closed, every operation is rejected
+  until you pass an explicit `allowed_tables`
+- `query()` caps at 10,000 rows per call so an agent can't OOM the machine
+- `migrate()` uses `executescript`: if one statement has a syntax error, earlier
+  statements in the file may have already run — always check `MigrationReport.applied`
+- The statement splitter handles `;` inside quotes and `--` comments, but very
+  "exotic" SQL (e.g. complex multi-line triggers) should be tested on an empty db first

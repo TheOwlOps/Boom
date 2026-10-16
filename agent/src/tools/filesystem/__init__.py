@@ -1,6 +1,6 @@
-"""tools.filesystem — thao tác file/thư mục an toàn cho Boom.
+"""tools.filesystem — safe file/dir operations for Boom.
 
-Re-export từ .ops để backward-compat: các tool dùng
+Re-exported from .ops for backward-compat: tools use
 `from agent.src.tools.filesystem import read, write, ...`
 """
 
@@ -14,8 +14,8 @@ from agent.src.tools.filesystem.ops import (
     write,
 )
 
-# Alias đúng tên yêu cầu trong spec ("list"); list_dir là tên chính
-# để tránh đè builtin list trong code nội bộ module.
-list = list_dir  # noqa: A001 - alias có chủ đích theo spec
+# Alias with the spec-required name ("list"); list_dir is the canonical name
+# to avoid shadowing the builtin list inside module code.
+list = list_dir  # noqa: A001 - deliberate alias per spec
 
 __all__ = ["read", "write", "edit", "append", "delete", "list", "list_dir", "info"]

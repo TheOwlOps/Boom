@@ -1,17 +1,18 @@
-"""Rate limit theo user (token bucket) cho Boom.
+"""Per-user rate limiting (token bucket) for Boom.
 
-Module này nằm ở ``agent/src/security/ratelimit.py`` — dùng khi muốn giới
-hạn riêng từng người dùng (user_id hoặc "channel:user_id"), khác với
-``agent/src/lifecycle/ratelimit.py`` (rate limit global/theo-IP ở tầng
-HTTP gateway, tính rate theo phút).
+This module lives at ``agent/src/security/ratelimit.py`` — use it to limit
+individual users (user_id or "channel:user_id"), unlike
+``agent/src/lifecycle/ratelimit.py`` (global/per-IP rate limiting at the
+HTTP gateway layer, counted per minute).
 
-- Token bucket per key: mỗi user có bucket riêng, ``allow(key)`` tiêu 1 token.
-- Refill tuyến tính theo thời gian: ``refill`` token mỗi giây.
-- Thread-safe: mọi truy cập state đều bọc trong ``threading.Lock``.
-- Tự cleanup key không dùng > 1h để không rò rỉ RAM.
+- Per-key token bucket: each user has their own bucket, ``allow(key)``
+  consumes 1 token.
+- Linear time-based refill: ``refill`` tokens per second.
+- Thread-safe: all state access wrapped in ``threading.Lock``.
+- Auto-cleans keys idle for > 1h to avoid RAM leaks.
 
-Chỉ dùng stdlib (time, threading). Deploy: copy file này vào
-``agent/src/security/ratelimit.py`` của repo.
+Stdlib only (time, threading). Deploy: copy this file into the repo's
+``agent/src/security/ratelimit.py``.
 """
 
 from __future__ import annotations
@@ -20,55 +21,55 @@ import threading
 import time
 
 # ---------------------------------------------------------------------------
-# Preset cấu hình
+# Config presets
 # ---------------------------------------------------------------------------
-# DEFAULT: 30 token burst, refill 0.5 token/giây (~1 request/2s đều đặn).
-#   Phù hợp cho user tương tác thông thường.
+# DEFAULT: 30 token burst, 0.5 token/sec refill (~1 request per 2s steady).
+#   Fits normal interactive users.
 DEFAULT = {"capacity": 30, "refill": 0.5}
 
-# STRICT: 5 token burst, refill 0.1 token/giây (~1 request/10s đều đặn).
-#   Dùng cho tool nguy hiểm (gửi tin, thao tác tiền, xóa dữ liệu...) để
-#   người dùng (hoặc tool agent) không thể spam hàng loạt.
+# STRICT: 5 token burst, 0.1 token/sec refill (~1 request per 10s steady).
+#   For dangerous tools (sending messages, money ops, data deletion...) so a
+#   user (or an agent tool) can't spam in bulk.
 STRICT = {"capacity": 5, "refill": 0.1}
 
-# Key không chạm tới quá thời gian này sẽ bị xóa khỏi bộ nhớ (tránh RAM
-# phình khi có nhiều user thoáng qua). Mặc định 3600 giây = 1 giờ.
+# Keys idle longer than this are dropped from memory (avoids RAM growth
+# with many transient users). Default 3600 seconds = 1 hour.
 IDLE_TTL = 3600.0
 
 
 class RateLimitError(Exception):
-    """Ném ra khi user vượt giới hạn rate limit.
+    """Raised when a user exceeds the rate limit.
 
-    Thuộc tính:
-    - ``retry_after``: số giây nên chờ trước khi thử lại (>= 0).
-    - ``key``: key (user) bị chặn, để log/ghi audit.
+    Attributes:
+    - ``retry_after``: seconds to wait before retrying (>= 0).
+    - ``key``: the blocked key (user), for logging/audit.
     """
 
     def __init__(self, key, retry_after: float) -> None:
         self.key = key
         self.retry_after = float(max(0.0, retry_after))
-        # Message tiếng Việt để hiển thị trực tiếp cho user cuối.
+        # Message shown directly to the end user.
         super().__init__(
-            "Bạn thao tác quá nhanh, vui lòng thử lại sau "
-            f"{self.retry_after:.1f} giây."
+            "You're going too fast, please try again in "
+            f"{self.retry_after:.1f} seconds."
         )
 
 
 class UserRateLimiter:
-    """Token bucket rate limiter, độc lập theo từng user.
+    """Token bucket rate limiter, independent per user.
 
-    ``capacity``: số token tối đa (burst cho phép tức thời).
-    ``refill``: số token nạp lại mỗi giây (có thể là số lẻ, vd 0.5).
-    ``idle_ttl``: key không dùng quá lâu này (giây) sẽ bị xóa — tránh rò RAM.
+    ``capacity``: max tokens (instant burst allowed).
+    ``refill``: tokens refilled per second (may be fractional, e.g. 0.5).
+    ``idle_ttl``: keys idle longer than this (seconds) are dropped — no RAM leak.
 
-    Ví dụ:
+    Example:
         limiter = UserRateLimiter(**UserRateLimiter.PRESET_DEFAULT)
-        key = f"telegram:{user_id}"   # hoặc chỉ user_id nếu single-channel
+        key = f"telegram:{user_id}"   # or just user_id for single-channel
         if limiter.allow(key):
-            ... xử lý ...
+            ... handle ...
     """
 
-    # Preset gắn vào class để caller dùng nhanh: UserRateLimiter(**UserRateLimiter.DEFAULT)
+    # Class-level presets for quick use: UserRateLimiter(**UserRateLimiter.DEFAULT)
     PRESET_DEFAULT = dict(DEFAULT)
     PRESET_STRICT = dict(STRICT)
 
@@ -76,33 +77,33 @@ class UserRateLimiter:
                  refill: float = DEFAULT["refill"],
                  idle_ttl: float = IDLE_TTL) -> None:
         if capacity <= 0:
-            raise ValueError("capacity phải > 0")
+            raise ValueError("capacity must be > 0")
         if refill <= 0:
-            raise ValueError("refill phải > 0")
+            raise ValueError("refill must be > 0")
         if idle_ttl <= 0:
-            raise ValueError("idle_ttl phải > 0")
+            raise ValueError("idle_ttl must be > 0")
         self.capacity = float(capacity)
         self.refill = float(refill)
         self.idle_ttl = float(idle_ttl)
         # key -> [tokens, last_update_monotonic]
-        # Dùng time.monotonic() để đo khoảng thời gian: không bị ảnh hưởng
-        # khi đồng hồ hệ thống nhảy (NTP chỉnh giờ, đổi múi giờ...).
+        # time.monotonic() measures durations: immune to system clock jumps
+        # (NTP corrections, timezone changes...).
         self._buckets: dict = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ api
 
     def allow(self, key) -> bool:
-        """True nếu user còn token (trừ 1), False nếu hết — không ném lỗi."""
+        """True if the user still has a token (consumes 1), False if empty — never raises."""
         now = time.monotonic()
         with self._lock:
             bucket = self._buckets.get(key)
             if bucket is None:
-                # User mới: bucket đầy, trừ 1 token ngay.
+                # New user: full bucket, consume 1 token immediately.
                 self._buckets[key] = [self.capacity - 1.0, now]
                 self._maybe_cleanup_locked(now)
                 return True
-            # Nạp token theo thời gian đã trôi qua, không vượt capacity.
+            # Refill by elapsed time, never exceeding capacity.
             elapsed = now - bucket[1]
             if elapsed > 0:
                 bucket[0] = min(self.capacity, bucket[0] + elapsed * self.refill)
@@ -116,21 +117,21 @@ class UserRateLimiter:
             return ok
 
     def allow_or_raise(self, key) -> None:
-        """Giống ``allow`` nhưng ném ``RateLimitError`` khi hết token.
+        """Like ``allow`` but raises ``RateLimitError`` when out of tokens.
 
-        Dùng cho code path muốn fail-fast: bắt exception ở tầng trên rồi
-        báo lại user bằng chính message tiếng Việt của exception.
+        For fail-fast code paths: catch the exception one layer up and report
+        back to the user with the exception's own message.
         """
         if not self.allow(key):
             raise RateLimitError(key, self.get_state(key)["retry_after"])
 
     def get_state(self, key) -> dict:
-        """Trạng thái hiện tại của key, không tiêu token.
+        """Current state of a key, without consuming a token.
 
-        Trả dict: {"tokens": float, "capacity": float, "retry_after": float}
-        - ``tokens``: số token còn lại (đã refill tới thời điểm gọi).
-        - ``retry_after``: 0.0 nếu đang được phép, ngược lại số giây cần chờ
-          để có đủ 1 token.
+        Returns {"tokens": float, "capacity": float, "retry_after": float}
+        - ``tokens``: tokens remaining (refilled up to call time).
+        - ``retry_after``: 0.0 when currently allowed, otherwise seconds to
+          wait for 1 full token.
         """
         now = time.monotonic()
         with self._lock:
@@ -144,16 +145,16 @@ class UserRateLimiter:
                 tokens = min(self.capacity, bucket[0] + elapsed * self.refill)
             retry_after = 0.0
             if tokens < 1.0:
-                # Thời gian để nạp đủ 1 token đầy.
+                # Time to refill one full token.
                 retry_after = (1.0 - tokens) / self.refill
             return {"tokens": tokens, "capacity": self.capacity,
                     "retry_after": retry_after}
 
     def reset(self, key=None) -> None:
-        """Reset manual — cho admin/unban.
+        """Manual reset — for admin/unban.
 
-        ``reset(key)``: xóa bucket của 1 user (lần gọi sau được full token).
-        ``reset()``: xóa toàn bộ (dùng khi đổi cấu hình hoặc sự cố).
+        ``reset(key)``: drops one user's bucket (next call gets full tokens).
+        ``reset()``: drops everything (config changes or incidents).
         """
         with self._lock:
             if key is None:
@@ -162,22 +163,22 @@ class UserRateLimiter:
                 self._buckets.pop(key, None)
 
     def key_count(self) -> int:
-        """Số key đang lưu — để monitor/debug xem có rò rỉ RAM không."""
+        """Number of keys stored — for monitoring/debugging RAM leaks."""
         with self._lock:
             return len(self._buckets)
 
     # -------------------------------------------------------------- internal
 
     def _maybe_cleanup_locked(self, now: float) -> None:
-        """Xóa key đã quá ``idle_ttl`` không chạm tới — chống rò rỉ RAM.
+        """Drops keys idle past ``idle_ttl`` — anti RAM leak.
 
-        Lazy cleanup: chỉ quét khi đã quá ``idle_ttl`` kể từ lần quét trước,
-        và quét ngay trong ``allow()`` nên không cần thread nền riêng (đỡ
-        phức tạp lifecycle, không tốn tài nguyên khi idle).
+        Lazy cleanup: only scans when ``idle_ttl`` has passed since the last
+        scan, and runs inline in ``allow()`` so no background thread is needed
+        (simpler lifecycle, no resources spent while idle).
 
-        Chỉ xóa key đã lâu không dùng; key đang bị throttle (token < 1)
-        nhưng vẫn gọi liên tục thì ``last_update`` mới liên tục nên không
-        bị xóa nhầm — không có kẽ hở để lách limit.
+        Only long-idle keys are dropped; a key being throttled (tokens < 1)
+        but called continuously keeps getting fresh ``last_update`` timestamps,
+        so it's never wrongly dropped — no loophole to dodge the limit.
         """
         last = getattr(self, "_last_cleanup", 0.0)
         if now - last < self.idle_ttl:
@@ -190,6 +191,7 @@ class UserRateLimiter:
 
 
 def make_key(channel: str, user_id) -> str:
-    """Ghép key chuẩn ``"channel:user_id"`` — cùng user trên 2 kênh khác
-    nhau sẽ có limit riêng (tránh 1 kênh spam làm khóa cả kênh còn lại)."""
+    """Builds the canonical ``"channel:user_id"`` key — the same user on 2
+    different channels gets separate limits (one spamming channel can't lock
+    out the other)."""
     return f"{channel}:{user_id}"

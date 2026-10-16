@@ -1,18 +1,18 @@
-"""Refactor engine cho Boom: refactor đa file dùng AST thật, không regex mù.
+"""Refactor engine for Boom: multi-file AST-based refactoring, no blind regex.
 
-Ba thao tác chính:
-  - rename_symbol:    đổi tên biến/hàm/class xuyên nhiều file
-  - extract_function: tách đoạn code thành hàm mới (tự suy params/return)
-  - move_symbol:      chuyển 1 hàm/class top-level sang file khác
+Three main operations:
+  - rename_symbol:    rename a variable/function/class across many files
+  - extract_function: extract a code block into a new function (params/return inferred)
+  - move_symbol:      move one top-level function/class to another file
 
-Quy ước an toàn (tái dùng pattern của agent/src/autonomous/surgery.py):
-  - backup  : copy mỗi file thành "<path>.bak-<timestamp>" trước khi sửa
-  - validate: ast.parse lại sau khi sửa; lỗi syntax -> rollback toàn bộ file
-  - rollback: khôi phục nội dung từ file .bak
+Safety conventions (reusing the pattern from agent/src/autonomous/surgery.py):
+  - backup  : copy each file to "<path>.bak-<timestamp>" before editing
+  - validate: re-parse with ast.parse after editing; syntax error -> roll back the whole file
+  - rollback: restore content from the .bak file
 
-Mọi thao tác đều hỗ trợ dry_run=True để preview diff mà không ghi file.
+Every operation supports dry_run=True to preview the diff without writing files.
 
-Chỉ dùng stdlib: ast, builtins, difflib, keyword, shutil, textwrap, time, pathlib.
+Stdlib only: ast, builtins, difflib, keyword, shutil, textwrap, time, pathlib.
 """
 
 import ast
@@ -26,23 +26,23 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# helper nội bộ
+# internal helpers
 # ---------------------------------------------------------------------------
 
 def _la_ten_hop_le(name):
-    """Tên Python hợp lệ và không phải keyword (chặn new_name bậy)."""
+    """A valid Python name that is not a keyword (guards against junk new_name)."""
     return isinstance(name, str) and name.isidentifier() \
         and not keyword.iskeyword(name)
 
 
 def _doc(path):
-    """Đọc file, trả về (text, list_dong_giu_newline)."""
+    """Read a file, return (text, list_of_lines_with_newlines)."""
     text = Path(path).read_text(encoding="utf-8")
     return text, text.splitlines(keepends=True)
 
 
 def _offset_dong(lines):
-    """Map lineno (1-based) -> offset ký tự bắt đầu dòng trong text."""
+    """Map lineno (1-based) -> character offset where the line starts in text."""
     offsets = {}
     pos = 0
     for i, line in enumerate(lines, start=1):
@@ -65,11 +65,11 @@ def _newline_cua(text):
 
 
 def _span_ten_def(lines, node, old_name):
-    """Span chính xác của tên trong dòng 'def old_name'/'class old_name'.
+    """Exact span of the name on a 'def old_name'/'class old_name' line.
 
-    ast không cho sẵn col của tên def/class; dùng text thật của dòng tìm
-    từ khóa def/class rồi tên ngay sau — đúng cả khi có decorator
-    hoặc 'async def'.
+    ast doesn't provide the col of a def/class name; search the actual line
+    text for the def/class keyword and the name right after it — works with
+    decorators and 'async def' too.
     """
     line = lines[node.lineno - 1]
     for kw in ("def ", "class "):
@@ -78,14 +78,14 @@ def _span_ten_def(lines, node, old_name):
             start = idx + len(kw)
             if line[start:start + len(old_name)] == old_name:
                 return (node.lineno, start, node.lineno, start + len(old_name))
-    raise ValueError("không tìm thấy tên def/class trong dòng: %r" % line)
+    raise ValueError("def/class name not found in line: %r" % line)
 
 
 class _TimViTriDoiTen(ast.NodeVisitor):
-    """Thu thập span (l1, c1, l2, c2) của mọi chỗ cần đổi tên.
+    """Collects (l1, c1, l2, c2) spans of every place to rename.
 
-    BỎ QUA Attribute: Attribute.attr không phải node Name nên
-    obj.old_name tự động không bị đụng — an toàn nhất.
+    SKIPS Attribute: Attribute.attr is not a Name node, so
+    obj.old_name is automatically left alone — the safest behavior.
     """
 
     def __init__(self, old_name, lines):
@@ -99,7 +99,7 @@ class _TimViTriDoiTen(ast.NodeVisitor):
         )
 
     def visit_Name(self, node):
-        # Name gồm cả Load và Store.
+        # Name covers both Load and Store.
         if node.id == self.old:
             self._ghi(node)
         self.generic_visit(node)
@@ -125,7 +125,7 @@ class _TimViTriDoiTen(ast.NodeVisitor):
 
 
 def _tim_scope_bao(tree, start_line, end_line):
-    """Scope (FunctionDef/ClassDef) nhỏ nhất chứa trọn đoạn; không có -> module."""
+    """Smallest (FunctionDef/ClassDef) scope fully containing the span; module if none."""
     ung_vien = None
 
     class _Tim(ast.NodeVisitor):
@@ -154,9 +154,10 @@ def _tim_scope_bao(tree, start_line, end_line):
 
 
 class _ThuThapDoan(ast.NodeVisitor):
-    """Thu thập tên load/store trong đoạn code (đã dedent + parse riêng).
+    """Collects loaded/stored names in a code block (dedented + parsed separately).
 
-    Hàm lồng bên trong: chỉ lấy tên hàm, không đi vào thân (scope riêng).
+    Nested functions: only the function name is taken; its body is not visited
+    (separate scope).
     """
 
     def __init__(self):
@@ -178,7 +179,7 @@ class _ThuThapDoan(ast.NodeVisitor):
         self.stored.add(node.name)
         for dec in node.decorator_list:
             self.visit(dec)
-        # không visit thân: tên bên trong thuộc scope riêng của hàm lồng
+        # body not visited: names inside belong to the nested function's own scope
 
     def visit_FunctionDef(self, node):
         self._ham_long(node)
@@ -207,17 +208,17 @@ class _ThuThapDoan(ast.NodeVisitor):
 # ---------------------------------------------------------------------------
 
 class RefactorEngine:
-    """Engine refactor dùng AST. root_dir: thư mục gốc để resolve path."""
+    """AST-based refactor engine. root_dir: base directory for path resolution."""
 
     def __init__(self, root_dir="."):
         self.root = Path(root_dir).resolve()
-        # backup của thao tác gần nhất: {path_str: backup_path_str}
+        # backups of the most recent operation: {path_str: backup_path_str}
         self._backups = {}
 
-    # -- backup / rollback (pattern của surgery.py) ------------------------
+    # -- backup / rollback (surgery.py pattern) -----------------------------
 
     def _backup(self, path):
-        """Copy file thành '<path>.bak-<timestamp>'. Trả về đường dẫn backup."""
+        """Copy the file to '<path>.bak-<timestamp>'. Returns the backup path."""
         p = Path(path)
         if not p.is_file():
             raise FileNotFoundError("file not found: %s" % path)
@@ -232,7 +233,7 @@ class RefactorEngine:
         return str(bak)
 
     def rollback(self):
-        """Khôi phục toàn bộ file đã backup trong thao tác gần nhất."""
+        """Restore every file backed up by the most recent operation."""
         ket_qua = {}
         for path, bak in self._backups.items():
             if Path(bak).is_file():
@@ -244,13 +245,13 @@ class RefactorEngine:
         return ket_qua
 
     def _ghi_va_validate(self, path, content_moi):
-        """Ghi file rồi validate syntax; lỗi -> raise để caller rollback."""
+        """Write the file then validate syntax; error -> raise so caller rolls back."""
         Path(path).write_text(content_moi, encoding="utf-8")
         try:
             ast.parse(content_moi, filename=str(path))
         except SyntaxError as exc:
             raise SyntaxError(
-                "syntax lỗi sau khi sửa %s dòng %s: %s"
+                "syntax error after editing %s line %s: %s"
                 % (path, exc.lineno, exc.msg)
             )
 
@@ -261,61 +262,61 @@ class RefactorEngine:
     # -- rename_symbol -----------------------------------------------------
 
     def rename_symbol(self, old_name, new_name, files, dry_run=False):
-        """Đổi tên biến/hàm/class xuyên nhiều file bằng AST.
+        """Rename a variable/function/class across many files using AST.
 
-        - Tìm: Name(id=old), FunctionDef/AsyncFunctionDef/ClassDef(name=old),
-          arg(arg=old). Attribute KHÔNG đổi (bỏ qua an toàn).
-        - Rewrite theo vị trí token, từ cuối file lên đầu (không lệch offset).
-        - Validate: parse lại sau khi sửa, lỗi -> rollback toàn bộ file.
-        - Trả về {"ok", "renamed_files", "occurrences", "diffs", ...}.
+        - Finds: Name(id=old), FunctionDef/AsyncFunctionDef/ClassDef(name=old),
+          arg(arg=old). Attribute is NOT renamed (safely skipped).
+        - Rewrites by token position, from end of file backwards (no offset drift).
+        - Validates: re-parses after editing, errors -> roll back every file.
+        - Returns {"ok", "renamed_files", "occurrences", "diffs", ...}.
         """
         if not _la_ten_hop_le(old_name) or not _la_ten_hop_le(new_name):
-            return {"ok": False, "error": "tên không hợp lệ"}
+            return {"ok": False, "error": "invalid name"}
         if old_name == new_name:
-            return {"ok": False, "error": "tên cũ và mới trùng nhau"}
+            return {"ok": False, "error": "old and new names are identical"}
 
-        ke_hoach = {}  # path -> (content_moi, so_luong, diff)
+        ke_hoach = {}  # path -> (new_content, count, diff)
         for f in files:
             path = self._resolve(f)
             try:
                 text, lines = _doc(path)
             except OSError as exc:
                 return {"ok": False,
-                        "error": "không đọc được %s: %s" % (f, exc)}
+                        "error": "could not read %s: %s" % (f, exc)}
             try:
                 tree = ast.parse(text, filename=path)
             except SyntaxError as exc:
                 return {"ok": False,
-                        "error": "syntax lỗi sẵn ở %s dòng %s: %s"
+                        "error": "pre-existing syntax error in %s line %s: %s"
                                  % (f, exc.lineno, exc.msg)}
 
             visitor = _TimViTriDoiTen(old_name, lines)
             visitor.visit(tree)
             spans = sorted(set(visitor.spans), key=lambda s: (s[0], s[1]))
             if not spans:
-                continue  # file này không có occurrence nào
+                continue  # this file has no occurrences
 
             offsets = _offset_dong(lines)
-            # Kiểm tra text tại mỗi span phải đúng là old_name (an toàn)
+            # The text at every span must be exactly old_name (safety check)
             abs_spans = []
             for (l1, c1, l2, c2) in spans:
                 doan = text[offsets[l1] + c1: offsets[l2] + c2]
                 if doan != old_name:
                     return {"ok": False,
-                            "error": "span không khớp tên ở %s:%d" % (f, l1)}
+                            "error": "span name mismatch at %s:%d" % (f, l1)}
                 abs_spans.append((offsets[l1] + c1, offsets[l2] + c2))
 
-            # Thay từ cuối file lên đầu để không lệch offset
+            # Replace from end of file backwards so offsets don't shift
             moi = text
             for bat_dau, ket_thuc in sorted(abs_spans, reverse=True):
                 moi = moi[:bat_dau] + new_name + moi[ket_thuc:]
 
-            # Validate trước khi ghi (kể cả dry_run cũng check)
+            # Validate before writing (checked even for dry_run)
             try:
                 ast.parse(moi, filename=path)
             except SyntaxError as exc:
                 return {"ok": False,
-                        "error": "rename làm hỏng syntax %s dòng %s"
+                        "error": "rename broke syntax in %s line %s"
                                  % (f, exc.lineno)}
             ke_hoach[path] = (moi, len(spans), _unified_diff(path, text, moi))
 
@@ -327,11 +328,11 @@ class RefactorEngine:
         }
         if dry_run:
             ket_qua["dry_run"] = True
-            # check syntax ở trên đã pass cho mọi file trong kế hoạch
+            # the syntax check above already passed for every file in the plan
             ket_qua["syntax_ok"] = True
             return ket_qua
 
-        # Ghi thật: backup từng file trước, lỗi ở file nào -> rollback hết
+        # Real write: back up each file first; any error -> roll everything back
         self._backups = {}
         da_ghi = []
         try:
@@ -342,7 +343,7 @@ class RefactorEngine:
         except (OSError, SyntaxError) as exc:
             self.rollback()
             return {"ok": False,
-                    "error": "lỗi khi ghi, đã rollback: %s" % exc,
+                    "error": "write error, rolled back: %s" % exc,
                     "rolled_back": da_ghi}
         ket_qua["backups"] = dict(self._backups)
         return ket_qua
@@ -351,49 +352,49 @@ class RefactorEngine:
 
     def extract_function(self, source_path, start_line, end_line, new_name,
                          dry_run=False):
-        """Tách dòng [start_line, end_line] thành hàm mới tên new_name.
+        """Extract lines [start_line, end_line] into a new function new_name.
 
-        - Biến dùng trong đoạn nhưng định nghĩa ở ngoài -> parameters
-          (theo thứ tự xuất hiện, bỏ builtin).
-        - Biến gán trong đoạn và còn dùng sau đoạn -> return.
-        - Chèn 'def new_name(...)' ngay trước start_line, thay đoạn cũ
-          bằng lời gọi hàm (gán kết quả nếu có return).
+        - Variables used in the block but defined outside -> parameters
+          (in order of appearance, excluding builtins).
+        - Variables assigned in the block and still used after it -> return.
+        - Inserts 'def new_name(...)' right before start_line, replacing the
+          old block with a call (assigning the result if there is a return).
         """
         if not _la_ten_hop_le(new_name):
-            return {"ok": False, "error": "tên hàm không hợp lệ"}
+            return {"ok": False, "error": "invalid function name"}
         if start_line < 1 or end_line < start_line:
-            return {"ok": False, "error": "khoảng dòng không hợp lệ"}
+            return {"ok": False, "error": "invalid line range"}
 
         path = self._resolve(source_path)
         try:
             text, lines = _doc(path)
         except OSError as exc:
-            return {"ok": False, "error": "không đọc được file: %s" % exc}
+            return {"ok": False, "error": "could not read file: %s" % exc}
         if end_line > len(lines):
-            return {"ok": False, "error": "end_line vượt quá số dòng file"}
+            return {"ok": False, "error": "end_line exceeds file line count"}
 
         try:
             tree = ast.parse(text, filename=path)
         except SyntaxError as exc:
             return {"ok": False,
-                    "error": "syntax lỗi sẵn dòng %s: %s" % (exc.lineno, exc.msg)}
+                    "error": "pre-existing syntax error at line %s: %s" % (exc.lineno, exc.msg)}
 
         doan_lines = lines[start_line - 1:end_line]
         if not any(dl.strip() for dl in doan_lines):
-            return {"ok": False, "error": "đoạn chọn toàn dòng trống"}
-        # Đoạn phải là code hoàn chỉnh -> dedent rồi parse thử
+            return {"ok": False, "error": "selected block is all blank lines"}
+        # The block must be complete code -> dedent and try parsing
         doan_text = textwrap.dedent("".join(doan_lines))
         try:
             doan_tree = ast.parse(doan_text)
         except SyntaxError as exc:
             return {"ok": False,
-                    "error": "đoạn chọn không phải code hoàn chỉnh: %s" % exc.msg}
+                    "error": "selected block is not complete code: %s" % exc.msg}
 
         thu = _ThuThapDoan()
         thu.visit(doan_tree)
         ten_builtin = set(dir(builtins))
 
-        # Free variables theo thứ tự xuất hiện -> parameters
+        # Free variables in order of appearance -> parameters
         params = []
         for node in ast.walk(doan_tree):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) \
@@ -402,7 +403,8 @@ class RefactorEngine:
                     and node.id not in params:
                 params.append(node.id)
 
-        # Biến gán trong đoạn mà còn dùng SAU đoạn (trong scope bao) -> return
+        # Variables assigned in the block and still used AFTER it (in the
+        # enclosing scope) -> return values
         scope_bao = _tim_scope_bao(tree, start_line, end_line)
         dung_sau = set()
         for node in ast.walk(scope_bao):
@@ -411,7 +413,7 @@ class RefactorEngine:
                 dung_sau.add(node.id)
         can_return = sorted((thu.stored & dung_sau) - set(params))
 
-        # Dựng hàm mới, indent theo dòng đầu của đoạn
+        # Build the new function, indenting to the block's first line
         dong_dau = doan_lines[0]
         indent_goc = dong_dau[:len(dong_dau) - len(dong_dau.lstrip())]
         nl = _newline_cua(text)
@@ -426,7 +428,7 @@ class RefactorEngine:
         ham_moi = "%sdef %s(%s):%s%s%s%s" % (
             indent_goc, new_name, ", ".join(params), nl, than_ham, tra_ve, nl)
 
-        # Lời gọi thay thế đoạn cũ
+        # The call replacing the old block
         doi_so = ", ".join(params)
         if can_return:
             goi = "%s%s = %s(%s)%s" % (
@@ -441,7 +443,7 @@ class RefactorEngine:
             ast.parse(text_moi, filename=path)
         except SyntaxError as exc:
             return {"ok": False,
-                    "error": "extract làm hỏng syntax dòng %s: %s"
+                    "error": "extract broke syntax at line %s: %s"
                              % (exc.lineno, exc.msg)}
 
         diff = _unified_diff(path, text, text_moi)
@@ -456,44 +458,46 @@ class RefactorEngine:
             self._ghi_va_validate(path, text_moi)
         except (OSError, SyntaxError) as exc:
             self.rollback()
-            return {"ok": False, "error": "lỗi khi ghi, đã rollback: %s" % exc}
+            return {"ok": False, "error": "write error, rolled back: %s" % exc}
         return {"ok": True, "diff": diff, "params": params,
                 "returns": can_return, "backups": dict(self._backups)}
 
     # -- move_symbol -------------------------------------------------------
 
     def move_symbol(self, source_path, dest_path, symbol_name, dry_run=False):
-        """Chuyển 1 hàm/class top-level sang file khác.
+        """Move one top-level function/class to another file.
 
-        - Cắt source segment bằng ast.get_source_segment (giữ decorator).
-        - Xóa khỏi file nguồn, append vào file đích kèm comment nguồn gốc.
-        - Validate cả 2 file; lỗi -> rollback cả 2.
+        - Cuts the source segment with ast.get_source_segment (keeps decorators).
+        - Removes it from the source file, appends to the destination with an
+          origin comment.
+        - Validates both files; error -> roll back both.
         """
         if not _la_ten_hop_le(symbol_name):
-            return {"ok": False, "error": "tên symbol không hợp lệ"}
+            return {"ok": False, "error": "invalid symbol name"}
 
         src = self._resolve(source_path)
         dst = self._resolve(dest_path)
         if src == dst:
-            return {"ok": False, "error": "file nguồn và đích trùng nhau"}
+            return {"ok": False, "error": "source and destination are the same file"}
         try:
             text_src, lines_src = _doc(src)
             text_dst, _lines_dst = _doc(dst)
         except OSError as exc:
-            return {"ok": False, "error": "không đọc được file: %s" % exc}
+            return {"ok": False, "error": "could not read file: %s" % exc}
         try:
             tree_src = ast.parse(text_src, filename=src)
         except SyntaxError as exc:
             return {"ok": False,
-                    "error": "syntax lỗi sẵn ở nguồn dòng %s" % exc.lineno}
+                    "error": "pre-existing syntax error in source at line %s" % exc.lineno}
         try:
             ast.parse(text_dst, filename=dst)
         except SyntaxError as exc:
             return {"ok": False,
-                    "error": "syntax lỗi sẵn ở đích dòng %s" % exc.lineno}
+                    "error": "pre-existing syntax error in destination at line %s" % exc.lineno}
 
-        # Tìm def/class top-level trùng tên. Lưu ý: FunctionDef.lineno
-        # trỏ tới dòng 'def', KHÔNG gồm decorator -> tự tính dòng bắt đầu.
+        # Find the top-level def/class with the matching name. Note:
+        # FunctionDef.lineno points at the 'def' line, NOT including
+        # decorators -> compute the start line manually.
         node = None
         for item in tree_src.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -502,7 +506,7 @@ class RefactorEngine:
                 break
         if node is None:
             return {"ok": False,
-                    "error": "không tìm thấy hàm/class top-level '%s'"
+                    "error": "top-level function/class '%s' not found"
                              % symbol_name}
 
         dong_bat_dau = node.lineno
@@ -510,29 +514,30 @@ class RefactorEngine:
             dong_bat_dau = min(d.lineno for d in node.decorator_list)
         segment = "".join(lines_src[dong_bat_dau - 1:node.end_lineno])
         if not segment.strip():
-            return {"ok": False, "error": "không lấy được source segment"}
+            return {"ok": False, "error": "could not capture source segment"}
 
-        # Xóa khỏi nguồn theo dòng [dong_bat_dau, end_lineno],
-        # dọn dòng trống thừa
+        # Remove from source by line range [dong_bat_dau, end_lineno],
+        # cleaning up leftover blank lines
         text_src_moi = "".join(lines_src[:dong_bat_dau - 1]
                                + lines_src[node.end_lineno:])
         while "\n\n\n" in text_src_moi:
             text_src_moi = text_src_moi.replace("\n\n\n", "\n\n")
 
-        # Append vào đích kèm comment nguồn gốc (tối thiểu thay cho import
-        # tự động — import đầy đủ cần phân tích dependency, ngoài phạm vi)
+        # Append to the destination with an origin comment (a minimal stand-in
+        # for automatic imports — full import handling needs dependency
+        # analysis, out of scope)
         nl = _newline_cua(text_dst)
         comment = "# moved from %s by RefactorEngine%s" % (src, nl)
         text_dst_moi = text_dst.rstrip("\n") + nl + nl + comment \
             + segment.rstrip("\n") + nl
 
-        for label, p, t in (("nguồn", src, text_src_moi),
-                            ("đích", dst, text_dst_moi)):
+        for label, p, t in (("source", src, text_src_moi),
+                            ("destination", dst, text_dst_moi)):
             try:
                 ast.parse(t, filename=p)
             except SyntaxError as exc:
                 return {"ok": False,
-                        "error": "move làm hỏng syntax file %s dòng %s"
+                        "error": "move broke syntax in %s file at line %s"
                                  % (label, exc.lineno)}
 
         diff_src = _unified_diff(src, text_src, text_src_moi)
@@ -550,6 +555,6 @@ class RefactorEngine:
             self._ghi_va_validate(dst, text_dst_moi)
         except (OSError, SyntaxError) as exc:
             self.rollback()
-            return {"ok": False, "error": "lỗi khi ghi, đã rollback: %s" % exc}
+            return {"ok": False, "error": "write error, rolled back: %s" % exc}
         return {"ok": True, "diff_source": diff_src, "diff_dest": diff_dst,
                 "backups": dict(self._backups)}

@@ -1,4 +1,4 @@
-"""plannerv2 — TaskPlanner repo-aware cho Boom (hiểu codebase thật qua depgraph)."""
+"""plannerv2 — repo-aware TaskPlanner for Boom (understands the real codebase via depgraph)."""
 
 from .planner_v2 import RepoAwarePlanner, PlanStep, PlanResult, plan_task
 

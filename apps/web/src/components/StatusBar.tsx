@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 import { API_BASE, getHealth } from "../lib/api";
 import type { Health } from "../lib/types";
 
-/** Số tool của Boom (đếm từ agent/src/environment.py, chốt 2026-10-16). */
+/** Number of Boom tools (counted from agent/src/environment.py, as of 2026-10-16). */
 const TOOL_COUNT = 139;
-/** Fallback khi /api/skills chưa có — đếm thư mục skills/ trong repo. */
+/** Fallback when /api/skills is unavailable — count of skills/ folders in the repo. */
 const SKILL_FALLBACK = 25;
-/** Poll health mỗi 5 giây. */
+/** Poll health every 5 seconds. */
 const POLL_MS = 5_000;
 
-/** Giây -> "1h 23m" / "12m 5s" / "45s" */
+/** Seconds -> "1h 23m" / "12m 5s" / "45s" */
 function formatUptime(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -19,13 +19,13 @@ function formatUptime(sec: number): string {
   return `${s}s`;
 }
 
-/** Thanh trạng thái real-time: API online/offline, tools, skills, uptime. */
+/** Real-time status bar: API online/offline, tools, skills, uptime. */
 export default function StatusBar() {
   const [health, setHealth] = useState<Health | null>(null);
   const [online, setOnline] = useState(false);
   const [skills, setSkills] = useState<number>(SKILL_FALLBACK);
-  const [since, setSince] = useState<number | null>(null); // lần đầu poll OK (ms)
-  const [, tick] = useState(0); // buộc render lại mỗi giây để cập nhật uptime
+  const [since, setSince] = useState<number | null>(null); // first successful poll (ms)
+  const [, tick] = useState(0); // force a re-render every second to update uptime
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +36,7 @@ export default function StatusBar() {
         setHealth(h);
         setOnline(true);
         setSince((prev) => prev ?? Date.now());
-        // Lấy số skills; API chưa có thì giữ fallback.
+        // Fetch the skill count; keep the fallback when the API is unavailable.
         try {
           const res = await fetch(`${API_BASE}/api/skills`);
           if (res.ok) {
@@ -46,7 +46,7 @@ export default function StatusBar() {
               : (body as { skills?: unknown[] }).skills;
             if (Array.isArray(arr)) setSkills(arr.length);
           }
-        } catch { /* bỏ qua, giữ fallback */ }
+        } catch { /* ignore, keep the fallback */ }
       } catch {
         if (!cancelled) {
           setOnline(false);
@@ -59,7 +59,7 @@ export default function StatusBar() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Cập nhật đồng hồ uptime mỗi giây khi đang online.
+  // Update the uptime clock every second while online.
   useEffect(() => {
     if (!online) return;
     const id = setInterval(() => tick((n) => n + 1), 1_000);
@@ -70,8 +70,8 @@ export default function StatusBar() {
 
   return (
     <div className="flex items-center gap-4 rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-2 text-sm text-neutral-300">
-      {/* Dot trạng thái: xanh = online, đỏ = offline */}
-      <span className="flex items-center gap-2" title={online ? "API đang online" : "API offline"}>
+      {/* Status dot: green = online, red = offline */}
+      <span className="flex items-center gap-2" title={online ? "API online" : "API offline"}>
         <span
           className={`inline-block h-2.5 w-2.5 rounded-full ${online ? "bg-green-500" : "bg-red-500"}`}
         />

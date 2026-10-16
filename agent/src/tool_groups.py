@@ -1,40 +1,42 @@
-"""Tool groups cho AgentEnvironment — tách hàm `_init_tools` khổng lồ.
+"""Tool groups for AgentEnvironment — splits the giant `_init_tools` function.
 
-Module này là bản tách của `AgentEnvironment._init_tools` trong
-`agent/src/environment.py` (commit bf171b9) thành 7 hàm nhỏ theo nhóm chức năng.
-Mỗi hàm nhận một `env` (instance của AgentEnvironment) và trả về
-`dict {tool_name: tool_spec}` — spec giữ nguyên 100% logic đăng ký gốc:
-cùng tên tool, cùng schema, cùng handler.
+This module splits `AgentEnvironment._init_tools` from
+`agent/src/environment.py` (commit bf171b9) into 7 smaller functions by
+functional group. Each takes an `env` (an AgentEnvironment instance) and returns
+a `dict {tool_name: tool_spec}` — specs preserve 100% of the original
+registration logic: same tool names, same schemas, same handlers.
 
-Quy ước để tránh import cycle (environment.py sẽ import module này):
-- MỌI import của handler/module tool đều là LAZY (nằm trong thân hàm),
-  không import ở top-level ngoài `typing`.
-- Handler gắn với instance (skill_loader, process_manager, ...) được truy cập
-  qua tham số `env` truyền vào, dưới dạng closure/lambda — y hệt bản gốc.
+Convention to avoid import cycles (environment.py imports this module):
+- ALL handler/tool-module imports are LAZY (inside function bodies),
+  no top-level imports besides `typing`.
+- Handlers bound to the instance (skill_loader, process_manager, ...) are
+  accessed through the `env` argument as closures/lambdas — exactly like the
+  original.
 
-Thứ tự đăng ký & ghi đè được giữ nguyên như bản gốc:
-- Trong group web: factories (web_tools -> ... -> tools.web) chạy trước,
-  3 tool legacy web_search/web_fetch/web_extract đăng ký SAU để ghi đè.
-- Trong group code: factory tools.code chạy trước, code_review/dep_cycles
-  legacy (section 13) đăng ký sau để ghi đè.
-- Trong group security: factory tools.security chạy trước, secret_scan
-  legacy đăng ký sau; connector registry (5g) chạy trước, 5 tool gmail
-  legacy (section 12) đăng ký sau để ghi đè.
-- Plugins (section 3 gốc) nằm trong code group, ngay sau skill tools —
-  giữ đúng thứ tự gốc (plugins ghi đè skill tools nếu trùng tên).
-  Lưu ý: trong bản gốc, plugins (sec 3) còn đứng trước MỌI section sau đó;
-  ở bản tách, các group merge TRƯỚC code group (filesystem/terminal/git/web)
-  sẽ ghi đè plugin nếu trùng tên — trường hợp plugin trùng tên core tool
-  vốn đã là pathological, khác biệt này được ghi nhận và chấp nhận.
+Registration order & overrides are preserved from the original:
+- In the web group: factories (web_tools -> ... -> tools.web) run first,
+  then the 3 legacy tools web_search/web_fetch/web_extract register LAST to
+  override.
+- In the code group: the tools.code factory runs first, then legacy
+  code_review/dep_cycles (section 13) register to override.
+- In the security group: the tools.security factory runs first, then legacy
+  secret_scan; the connector registry (5g) runs first, then the 5 legacy gmail
+  tools (section 12) register to override.
+- Plugins (original section 3) live in the code group, right after skill tools —
+  matching the original position (plugins override skill tools on name clash).
+  Note: in the original, plugins (sec 3) also stood before EVERY later section;
+  in this split, groups merged BEFORE the code group (filesystem/terminal/git/web)
+  override plugins on name clash — a plugin colliding with a core tool name was
+  already pathological; this difference is documented and accepted.
 
-Số tool kỳ vọng (đếm trên env thật, commit bf171b9): 159.
+Expected tool count (counted on a real env, commit bf171b9): 159.
 """
 
 from typing import Any, Dict, List
 
 
 def _schema(properties: Dict[str, Any] = None, required: List[str] = None) -> Dict[str, Any]:
-    """Helper dựng JSON schema — copy y nguyên từ environment.py."""
+    """JSON schema builder — copied verbatim from environment.py."""
     return {
         "type": "object",
         "properties": properties or {},
@@ -43,18 +45,18 @@ def _schema(properties: Dict[str, Any] = None, required: List[str] = None) -> Di
 
 
 def _init_filesystem_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm file: file ops cơ bản + unified fileops + package tools.filesystem.
+    """File group: basic file ops + unified fileops + tools.filesystem package.
 
-    Gồm: section 1 (read_file/write_file/patch_file), section 3 (plugins),
+    Covers: section 1 (read_file/write_file/patch_file), section 3 (plugins),
     unified tools (edit_file/append_file/file_info), section 14 (fs_*).
-    Kỳ vọng: 13 tools.
+    Expected: 13 tools.
     """
     from tools.file_ops import read_file, write_file, patch_file
     from tools.fileops import edit_file, append_file, file_info
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 1. File ops (bản gốc section 1)
+    # 1. File ops (original section 1)
     tools["read_file"] = {
         "name": "read_file",
         "func": read_file,
@@ -95,12 +97,12 @@ def _init_filesystem_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 3. Dynamic plugins (bản gốc section 3) — giữ đúng vị trí sau file ops.
+    # 3. Dynamic plugins (original section 3) — kept right after file ops.
     plugin_ctx = env.plugin_registry.scan_and_load()
     for name, tool_meta in plugin_ctx.tools.items():
         tools[name] = tool_meta
 
-    # Unified fileops tools (bản gốc, sau section 12)
+    # Unified fileops tools (original, after section 12)
     tools["edit_file"] = {
         "name": "edit_file",
         "func": edit_file,
@@ -132,8 +134,8 @@ def _init_filesystem_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 14. Refactored package tools.filesystem (bản gốc section 14, phần fs_*).
-    #     Prefix fs_ để không đụng legacy tools (read_file, ...).
+    # 14. Refactored tools.filesystem package (original section 14, fs_* part).
+    #     fs_ prefix to avoid colliding with legacy tools (read_file, ...).
     def _pkg_guard(fn):
         try:
             return fn()
@@ -211,18 +213,18 @@ def _init_filesystem_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm terminal: sandbox IPC, shell, process manager, code execution.
+    """Terminal group: sandbox IPC, shell, process manager, code execution.
 
-    Gồm: section 4 (sandbox_exec), section 6 (process_*), section 10
+    Covers: section 4 (sandbox_exec), section 6 (process_*), section 10
     (execute_code), unified shell tools, section 14 (shell_forget).
-    Kỳ vọng: 11 tools.
+    Expected: 11 tools.
     """
     from tools.code_execution import CodeExecutionKernel
     from tools.shell import run as shell_run, run_bg, job_status, job_kill
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 4. IPC Sandbox execution (bản gốc section 4)
+    # 4. IPC Sandbox execution (original section 4)
     async def _sandbox_exec(cmd: str, args: List[str] = None):
         return await env.ipc_bridge.execute(cmd, args)
 
@@ -239,7 +241,7 @@ def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 6. Process management (bản gốc section 6)
+    # 6. Process management (original section 6)
     tools["process_list"] = {
         "name": "process_list",
         "func": env.process_manager.list_processes,
@@ -281,9 +283,10 @@ def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 10. Programmatic Code Execution Kernel (bản gốc section 10).
-    #     Bản gốc truyền self._tools (dict live — kernel thấy đủ tools sau khi
-    #     merge xong vì cùng object). Giữ nguyên bằng env._tools.
+    # 10. Programmatic Code Execution Kernel (original section 10).
+    #     The original passed self._tools (a live dict — the kernel sees all
+    #     tools once merging finishes because it's the same object). Kept via
+    #     env._tools.
     kernel = CodeExecutionKernel(env._tools)
     tools["execute_code"] = {
         "name": "execute_code",
@@ -292,7 +295,7 @@ def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
         "schema": _schema({"code": {"type": "string", "description": "Python source to execute."}}, ["code"]),
     }
 
-    # Unified shell tools (bản gốc, sau section 12)
+    # Unified shell tools (original, after section 12)
     tools["shell_run"] = {
         "name": "shell_run",
         "func": shell_run,
@@ -332,7 +335,7 @@ def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 14. Refactored package tools.terminal (bản gốc section 14, phần shell_forget)
+    # 14. Refactored tools.terminal package (original section 14, shell_forget part)
     def _pkg_guard(fn):
         try:
             return fn()
@@ -357,11 +360,11 @@ def _init_terminal_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_git_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm git: legacy gitops + package tools.git.
+    """Git group: legacy gitops + tools.git package.
 
-    Gồm: section 13 (git_status/git_diff_summary/git_safe_commit/
+    Covers: section 13 (git_status/git_diff_summary/git_safe_commit/
     git_branch_guard), section 14 (git_diff/git_log).
-    Kỳ vọng: 6 tools.
+    Expected: 6 tools.
     """
     from autonomous.gitops import (
         status as git_status_fn,
@@ -372,7 +375,7 @@ def _init_git_tools(env) -> Dict[str, Dict[str, Any]]:
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 13. Git legacy (bản gốc section 13, phần git)
+    # 13. Legacy git (original section 13, git part)
     tools["git_status"] = {
         "name": "git_status",
         "func": lambda repo: git_status_fn(repo or "."),
@@ -411,7 +414,7 @@ def _init_git_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 14. Refactored package tools.git (bản gốc section 14, phần git_diff/git_log)
+    # 14. Refactored tools.git package (original section 14, git_diff/git_log part)
     def _pkg_guard(fn):
         try:
             return fn()
@@ -449,20 +452,20 @@ def _init_git_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_web_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm web: search/fetch/extract, scraper, browser, deepsearch/deepthink.
+    """Web group: search/fetch/extract, scraper, browser, deepsearch/deepthink.
 
-    Gồm: factories 5e (web_tools, browser_tool, deepsearch, deepthink,
-    scraper, tools.web — đúng thứ tự tuple gốc) rồi 3 tool legacy
-    web_search/web_fetch/web_extract đăng ký SAU để ghi đè factory.
-    Kỳ vọng: 25 tools (unique).
+    Covers: factories 5e (web_tools, browser_tool, deepsearch, deepthink,
+    scraper, tools.web — in the original tuple order) then the 3 legacy tools
+    web_search/web_fetch/web_extract register LAST to override the factories.
+    Expected: 25 tools (unique).
     """
     from importlib import import_module
     from tools.web import web_search, web_fetch, web_extract
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 5e. Factories web — đúng thứ tự tuple trong bản gốc (web_tools trước,
-    #     tools.web sau nên bản tools.web thắng khi trùng tên).
+    # 5e. Web factories — in the original tuple order (web_tools first,
+    #     tools.web later so tools.web wins on name clashes).
     for module_name, use_root_dir in (
         ("tools.web_tools", False),
         ("tools.browser_tool", False),
@@ -478,7 +481,7 @@ def _init_web_tools(env) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             print(f"[tools] {module_name} unavailable: {e}")
 
-    # Unified web tools legacy (bản gốc, sau section 12) — ghi đè factory.
+    # Legacy unified web tools (original, after section 12) — override factories.
     tools["web_search"] = {
         "name": "web_search",
         "func": web_search,
@@ -514,14 +517,14 @@ def _init_web_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm code: skills, subagents, rewind, AST, discovery, review/depgraph.
+    """Code group: skills, subagents, rewind, AST, discovery, review/depgraph.
 
-    Gồm: section 2 (skills), section 5b/5c/5d (delegate/optimize/rewind),
-    factories 5e (research_tool, tools.code — trước section 13 để legacy
-    code_review/dep_cycles ghi đè), section 9 (ast_inspect),
+    Covers: section 2 (skills), sections 5b/5c/5d (delegate/optimize/rewind),
+    factories 5e (research_tool, tools.code — before section 13 so legacy
+    code_review/dep_cycles override), section 9 (ast_inspect),
     section 11 (search_tools/list_toolsets), section 13 (code_review/
     dep_cycles/dep_impact).
-    Kỳ vọng: 15 tools (+ plugins động, 0 trong env sạch).
+    Expected: 15 tools (+ dynamic plugins, 0 in a clean env).
     """
     from importlib import import_module
     from tools.ast_tool import ASTInspector
@@ -531,7 +534,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 2. Skill ops (bản gốc section 2)
+    # 2. Skill ops (original section 2)
     tools["list_skills"] = {
         "name": "list_skills",
         "func": lambda: env.skill_loader.list_skills(),
@@ -560,7 +563,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 5b. Subagents (bản gốc section 5b)
+    # 5b. Subagents (original section 5b)
     async def _delegate(
         tasks: List[Dict[str, Any]] = None,
         fail_fast: bool = False,
@@ -637,7 +640,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 5c. Workflow self-improvement (bản gốc section 5c)
+    # 5c. Workflow self-improvement (original section 5c)
     async def _optimize(goal: str, candidates: List[Dict[str, Any]] = None, max_candidates: int = 3):
         return await env.delegation.optimize_workflow(goal, candidates, max_candidates)
 
@@ -685,7 +688,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 5d. Rewind (bản gốc section 5d)
+    # 5d. Rewind (original section 5d)
     async def _rewind(dry_run: bool = False):
         result = env.checkpoints.rewind(env.checkpoints.session_id, dry_run=dry_run)
         if not dry_run and (result["restored"] or result["deleted"]):
@@ -720,8 +723,8 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 5e. Factories code — chạy TRƯỚC section 13 để legacy ghi đè khi trùng tên
-    #     (code_review, dep_cycles). Đúng thứ tự tuple gốc.
+    # 5e. Code factories — run BEFORE section 13 so legacy overrides win on name
+    #     clashes (code_review, dep_cycles). In the original tuple order.
     for module_name, use_root_dir in (
         ("tools.research_tool", False),
         ("tools.code", False),
@@ -733,7 +736,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             print(f"[tools] {module_name} unavailable: {e}")
 
-    # 9. AST code inspection (bản gốc section 9)
+    # 9. AST code inspection (original section 9)
     tools["ast_inspect"] = {
         "name": "ast_inspect",
         "func": lambda file_path: ASTInspector.inspect_file(file_path),
@@ -741,7 +744,7 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         "schema": _schema({"file_path": {"type": "string", "description": "Path to a Python file."}}, ["file_path"]),
     }
 
-    # 11. Runtime tool discovery (bản gốc section 11)
+    # 11. Runtime tool discovery (original section 11)
     tools["search_tools"] = {
         "name": "search_tools",
         "func": search_tools,
@@ -761,12 +764,12 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
         "schema": _schema({}, []),
     }
 
-    # 13. Coding tools legacy (bản gốc section 13, phần code) — ghi đè factory tools.code
+    # 13. Legacy coding tools (original section 13, code part) — override tools.code factory
     _reviewer = CodeReviewer()
     tools["code_review"] = {
         "name": "code_review",
         "func": lambda path: _reviewer.to_markdown(_reviewer.review_file(path)),
-        "description": "Static code review of a Python file: complexity, dead code, bare except, TODOs. Returns Markdown report (Vietnamese).",
+        "description": "Static code review of a Python file: complexity, dead code, bare except, TODOs. Returns a Markdown report.",
         "schema": _schema(
             {"path": {"type": "string", "description": "Path to Python file."}},
             ["path"],
@@ -796,13 +799,13 @@ def _init_code_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm security: authz/audit, connectors, gmail, secret scan, MCP.
+    """Security group: authz/audit, connectors, gmail, secret scan, MCP.
 
-    Gồm: factories 5e (authz.tools, audit.tools, tools.security — đúng thứ tự
-    tuple gốc), 5g (connector registry), section 12 (5 tool gmail legacy,
-    ghi đè connector khi trùng tên), section 13 (secret_scan legacy, ghi đè
-    factory tools.security), 9b (MCP registry).
-    Kỳ vọng: 45 tools (+ MCP động, 0 trong env sạch).
+    Covers: factories 5e (authz.tools, audit.tools, tools.security — in the
+    original tuple order), 5g (connector registry), section 12 (5 legacy gmail
+    tools, overriding connectors on name clash), section 13 (legacy
+    secret_scan, overriding the tools.security factory), 9b (MCP registry).
+    Expected: 45 tools (+ dynamic MCP, 0 in a clean env).
     """
     from importlib import import_module
     from security.secretscan import scan_file as secret_scan_file, scan_dir as secret_scan_dir
@@ -810,8 +813,8 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 5e. Factories security — đúng thứ tự tuple gốc (authz, audit, security).
-    #     secret_scan của factory sẽ bị bản legacy section 13 ghi đè sau.
+    # 5e. Security factories — in the original tuple order (authz, audit, security).
+    #     The factory's secret_scan is overridden by the legacy section 13 below.
     for module_name, use_root_dir in (
         ("authz.tools", False),
         ("audit.tools", True),
@@ -824,7 +827,7 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             print(f"[tools] {module_name} unavailable: {e}")
 
-    # 5g. Service connectors (bản gốc section 5g) — merge qua connector registry.
+    # 5g. Service connectors (original section 5g) — merged via connector registry.
     try:
         from connectors.registry import load_default_registry
         registry = load_default_registry()
@@ -833,9 +836,9 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
     except Exception as e:
         print(f"[tools] connectors unavailable: {e}")
 
-    # 12. Gmail legacy (bản gốc section 12) — ghi đè connector khi trùng tên
-    #     (gmail_search/gmail_read/gmail_send). gmail_send KHÔNG phải safe tool:
-    #     approval gate luôn prompt trước khi gửi.
+    # 12. Legacy Gmail (original section 12) — overrides connectors on name clash
+    #     (gmail_search/gmail_read/gmail_send). gmail_send is NOT a safe tool:
+    #     the approval gate always prompts before sending.
     tools["gmail_search"] = {
         "name": "gmail_search",
         "func": _gmail_tool.gmail_search,
@@ -889,7 +892,7 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 13. secret_scan legacy (bản gốc section 13) — ghi đè factory tools.security
+    # 13. Legacy secret_scan (original section 13) — overrides tools.security factory
     tools["secret_scan"] = {
         "name": "secret_scan",
         "func": lambda target, recursive=False: secret_scan_dir(target) if recursive else secret_scan_file(target),
@@ -901,8 +904,8 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 9b. MCP servers trong mcp.json (bản gốc section 9b). register_mcp_tools
-    #     ghi trực tiếp vào env._tools nên snapshot-diff để gom vào dict group.
+    # 9b. MCP servers in mcp.json (original section 9b). register_mcp_tools
+    #     writes directly into env._tools, so snapshot-diff to collect them.
     try:
         from mcp.registry import register_mcp_tools
         before = set(env.get_tools())
@@ -917,18 +920,18 @@ def _init_security_tools(env) -> Dict[str, Dict[str, Any]]:
 
 
 def _init_db_tools(env) -> Dict[str, Dict[str, Any]]:
-    """Nhóm data: memory, session search, db, cron, triggers, learning, v.v.
+    """Data group: memory, session search, db, cron, triggers, learning, etc.
 
-    Gồm: section 8 (memory/session_search), factories 5e còn lại (db,
+    Covers: section 8 (memory/session_search), remaining factories 5e (db,
     cronjob_tool, triggers, learning, goals, digest, people, tasks, verify,
-    ocr_tool, artifacts, broadcast — đúng thứ tự tuple gốc).
-    Kỳ vọng: 44 tools.
+    ocr_tool, artifacts, broadcast — in the original tuple order).
+    Expected: 44 tools.
     """
     from importlib import import_module
 
     tools: Dict[str, Dict[str, Any]] = {}
 
-    # 8. Curated Memory & Session Search (bản gốc section 8)
+    # 8. Curated Memory & Session Search (original section 8)
     tools["memory"] = {
         "name": "memory",
         "func": lambda target, operations: env.curated_memory.execute_operations(target, operations),
@@ -968,7 +971,7 @@ def _init_db_tools(env) -> Dict[str, Dict[str, Any]]:
         ),
     }
 
-    # 5e. Factories data — đúng thứ tự tuple trong bản gốc.
+    # 5e. Data factories — in the original tuple order.
     for module_name, use_root_dir in (
         ("tools.cronjob_tool", False),
         ("artifacts.tools", False),
@@ -993,7 +996,7 @@ def _init_db_tools(env) -> Dict[str, Dict[str, Any]]:
     return tools
 
 
-# Thứ tự merge — trùng với thứ tự section trong _init_tools gốc.
+# Merge order — matches the section order of the original _init_tools.
 _GROUP_FUNCS = (
     _init_filesystem_tools,
     _init_terminal_tools,
@@ -1006,11 +1009,11 @@ _GROUP_FUNCS = (
 
 
 def init_all_tool_groups(env) -> Dict[str, Dict[str, Any]]:
-    """Gọi cả 7 hàm group và merge thành một registry duy nhất.
+    """Call all 7 group functions and merge them into one registry.
 
-    Group sau ghi đè group trước khi trùng tên — nhưng theo thiết kế, các
-    group không trùng tên nhau (mọi ghi đè có chủ đích đều nằm TRONG group),
-    nên merge này tái tạo chính xác registry của `_init_tools` gốc.
+    Later groups override earlier ones on name clash — but by design, groups
+    don't collide (every intentional override lives INSIDE a group), so this
+    merge reproduces the original `_init_tools` registry exactly.
     """
     merged: Dict[str, Dict[str, Any]] = {}
     for group_fn in _GROUP_FUNCS:

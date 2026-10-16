@@ -1,8 +1,8 @@
-"""PdfBuilder — tạo file PDF bằng reportlab nếu có,
-fallback sang writer PDF tối giản viết tay (pure stdlib) nếu thiếu lib.
+"""PdfBuilder — creates PDF files with reportlab when available,
+falling back to a hand-written minimal PDF writer (pure stdlib) without it.
 
-Fallback đủ để mọi PDF reader mở được: text (heading/paragraph/table/pagebreak),
-không đẹp bằng reportlab nhưng không bao giờ crash vì thiếu lib.
+The fallback is enough for every PDF reader to open: text (heading/paragraph/table/pagebreak);
+not as pretty as reportlab but never crashes over a missing lib.
 """
 from __future__ import annotations
 
@@ -11,22 +11,22 @@ from typing import List
 from xml.sax.saxutils import escape as _html_escape
 
 # ---------------------------------------------------------------------------
-# Fallback writer PDF tối giản (viết tay, chỉ dùng stdlib).
+# Minimal hand-written PDF writer fallback (stdlib only).
 #
-# Cấu trúc 1 file PDF hợp lệ, tối thiểu:
+# A valid minimal PDF file structure:
 #   %PDF-1.4 header
-#   các object:  Catalog -> Pages -> Page -> Contents (stream) + Font
-#   bảng xref: offset (byte) của từng object — reader dùng để nhảy tới object
+#   objects:  Catalog -> Pages -> Page -> Contents (stream) + Font
+#   xref table: byte offsets of each object — used by readers to jump to objects
 #   trailer + startxref + %%EOF
 #
-# Giới hạn của fallback (ghi rõ để không ai bất ngờ):
-#   - Chỉ dùng font Helvetica chuẩn của PDF (không embed font) -> ký tự ngoài
-#     Latin-1 (vd: đ, ơ, ư, emoji) sẽ bị thay bằng '?'. Muốn tiếng Việt đẹp
-#     thì cài reportlab.
-#   - Bảng vẽ bằng text + đường kẻ đơn giản, không có style màu mè.
+# Fallback limits (stated plainly so nobody is surprised):
+#   - Only PDF's standard Helvetica font (no font embedding) -> chars outside
+#     Latin-1 (e.g. đ, ơ, ư, emoji) are replaced with '?'. Install reportlab
+#     for proper Vietnamese.
+#   - Tables drawn as text + simple lines, no fancy styling.
 # ---------------------------------------------------------------------------
 
-_PAGE_W, _PAGE_H = 595.0, 842.0          # A4, đơn vị point
+_PAGE_W, _PAGE_H = 595.0, 842.0          # A4, in points
 _MARGIN = 50.0
 _TOP_Y = _PAGE_H - _MARGIN
 _BOTTOM_Y = _MARGIN
@@ -36,7 +36,7 @@ _GAP = {"h1": 10.0, "h2": 8.0, "h3": 6.0, "p": 6.0, "table": 8.0}
 
 
 def _pdf_escape(s: str) -> str:
-    """Escape chuỗi cho PDF literal string: chỉ giữ được Latin-1, còn lại -> '?'."""
+    """Escapes a string for a PDF literal string: only Latin-1 kept, rest -> '?'."""
     out = []
     for ch in s:
         o = ord(ch)
@@ -48,7 +48,7 @@ def _pdf_escape(s: str) -> str:
 
 
 def _wrap(text: str, max_chars: int) -> List[str]:
-    """Ngắt dòng tham lam theo từ; từ quá dài thì cắt cứng."""
+    """Greedy word-wrap; overlong words get hard-cut."""
     words = str(text).split()
     lines: List[str] = []
     cur = ""
@@ -68,7 +68,7 @@ def _wrap(text: str, max_chars: int) -> List[str]:
 
 
 class _MiniPdfPage:
-    """1 trang PDF: danh sách các op vẽ ('text' hoặc 'line')."""
+    """1 PDF page: a list of draw ops ('text' or 'line')."""
 
     def __init__(self):
         self.ops: list[tuple] = []  # ('text', x, y, size, str) | ('line', x1,y1,x2,y2,w)
@@ -94,7 +94,7 @@ class _MiniPdfPage:
 
 
 class _MiniPdfDoc:
-    """Layout engine tối giản: xếp text/bảng xuống các trang A4."""
+    """Minimal layout engine: lays text/tables out across A4 pages."""
 
     def __init__(self):
         self.pages: List[_MiniPdfPage] = []
@@ -111,7 +111,7 @@ class _MiniPdfDoc:
     @staticmethod
     def _max_chars(size: float) -> int:
         usable = _PAGE_W - 2 * _MARGIN
-        return max(10, int(usable / (size * 0.5)))  # Helvetica rộng TB ~0.5 * size
+        return max(10, int(usable / (size * 0.5)))  # Helvetica avg width ~0.5 * size
 
     def add_text(self, s: str, size: float, gap: float):
         self._need(size * 1.35 + gap)
@@ -128,7 +128,7 @@ class _MiniPdfDoc:
         if cols == 0:
             return
         usable = _PAGE_W - 2 * _MARGIN
-        # Độ rộng mỗi cột theo nội dung dài nhất, co lại nếu vượt trang
+        # Each column sized by its longest content, shrunk to fit the page
         widths = []
         for j in range(cols):
             mx = len(str(headers[j]))
@@ -148,21 +148,21 @@ class _MiniPdfDoc:
             y_base = y_top - size - 3
             for j in range(cols):
                 val = str(cells[j]) if j < len(cells) else ""
-                # cắt text vừa khít cột
+                # truncate text to fit the column
                 maxc = max(4, int(widths[j] / (size * 0.5)) - 2)
                 if len(val) > maxc:
                     val = val[:maxc - 1] + "…"
                 self.pages[-1].text(xs[j] + 4, y_base, size, val)
-            # kẻ ngang dưới mỗi hàng; header kẻ đậm hơn
+            # horizontal rule under each row; bolder for the header
             self.pages[-1].line(_MARGIN, y_top - row_h, xs[-1], y_top - row_h,
                                 1.0 if header else 0.5)
-            # kẻ dọc
+            # vertical rules
             for x in xs:
                 self.pages[-1].line(x, y_top, x, y_top - row_h, 0.5)
 
         self._need(row_h * 2 + _GAP["table"])
         self.y -= _GAP["table"] * 0.5
-        # đường kẻ trên cùng của bảng
+        # top border of the table
         self.pages[-1].line(_MARGIN, self.y, xs[-1], self.y, 1.0)
         draw_row(headers, self.y, header=True)
         self.y -= row_h
@@ -173,10 +173,10 @@ class _MiniPdfDoc:
         self.y -= _GAP["table"] * 0.5
 
     def serialize(self) -> bytes:
-        """Dựng bytes PDF hoàn chỉnh: header + objects + xref + trailer."""
+        """Builds complete PDF bytes: header + objects + xref + trailer."""
         n = len(self.pages)
-        # Đánh số object: 1=catalog, 2=pages, 3=font, rồi mỗi trang 2 object
-        # (page, contents). Tổng = 3 + 2*n.
+        # Object numbering: 1=catalog, 2=pages, 3=font, then 2 objects per page
+        # (page, contents). Total = 3 + 2*n.
         total_objs = 3 + 2 * n
         kids = " ".join(f"{4 + 2 * i} 0 R" for i in range(n))
 
@@ -195,7 +195,7 @@ class _MiniPdfDoc:
             objs[5 + 2 * i] = b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"endstream"
 
         out = bytearray()
-        out += b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"  # dòng binary comment theo chuẩn
+        out += b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"  # binary comment line per the spec
         offsets = [0] * (total_objs + 1)
         for num in range(1, total_objs + 1):
             offsets[num] = len(out)
@@ -211,10 +211,10 @@ class _MiniPdfDoc:
 
 
 class PdfBuilder:
-    """Fluent builder tạo file PDF.
+    """Fluent builder for PDF files.
 
-    Dùng reportlab khi có sẵn; nếu không, fallback sang writer PDF tối giản
-    viết tay (pure stdlib). Không bao giờ crash vì thiếu lib.
+    Uses reportlab when available; otherwise falls back to the hand-written
+    minimal PDF writer (pure stdlib). Never crashes over a missing lib.
     """
 
     def __init__(self, force_fallback: bool = False):
@@ -229,7 +229,7 @@ class PdfBuilder:
 
     @property
     def available(self) -> bool:
-        """True nếu đang dùng reportlab (native), False nếu fallback viết tay."""
+        """True when using reportlab (native), False for the hand-written fallback."""
         return self._native
 
     # -- fluent API ---------------------------------------------------------
@@ -308,7 +308,7 @@ class PdfBuilder:
         doc.build(story)
         return buf.getvalue()
 
-    # -- fallback build (viết tay) ------------------------------------------
+    # -- fallback build (hand-written) --------------------------------------
     def _build_fallback(self) -> bytes:
         doc = _MiniPdfDoc()
         for op in self._ops:

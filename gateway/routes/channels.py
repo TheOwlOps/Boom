@@ -1,27 +1,28 @@
-"""Routes nhóm "channels" — trạng thái các kênh nhắn tin.
+"""The "channels" route group — messaging channel status.
 
-Nguồn gốc: ``gateway/api.py`` (nhánh ``do_GET`` cho ``/api/channels/status``,
-gọi ``BoomAPI.channel_status()``).
+Origin: ``gateway/api.py`` (the ``do_GET`` branch for
+``/api/channels/status``, calling ``BoomAPI.channel_status()``).
 
-Danh sách kênh cố định theo contract: telegram, discord, slack, whatsapp,
-line, feishu, zalo, messenger. Trạng thái "connected" được hỏi thật từ
-daemon qua ``can_deliver(channel)``; khi chưa cấu hình, ``detail`` nêu rõ
-credential nào còn thiếu (không bịa trạng thái).
+Fixed channel list per contract: telegram, discord, slack, whatsapp,
+line, feishu, zalo, messenger. The "connected" state is genuinely
+queried from the daemon via ``can_deliver(channel)``; when unconfigured,
+``detail`` states exactly which credential is missing (no invented
+statuses).
 
-Lưu ý: gateway KHÔNG có endpoint ``/channels/send`` công khai trên HTTP API
-(gửi tin đi qua daemon/channels adapters, không qua api.py). Module này chỉ
-liệt kê route thật, không bịa thêm.
+Note: the gateway has NO public ``/channels/send`` endpoint on the HTTP
+API (outbound messages go through the daemon/channel adapters, not
+api.py). This module only lists real routes — nothing invented.
 
-Backward-compat: giữ nguyên ``/api/channels/status`` (GET).
+Backward-compat: keep ``/api/channels/status`` (GET).
 """
 
-# Mỗi entry: (HTTP method, path pattern, tên handler trong api.py).
+# Each entry: (HTTP method, path pattern, handler name in api.py).
 ROUTES = [
     ("GET", "/api/channels/status", "handle_channels_status"),
 ]
 
 
 def register(router):
-    """Gắn mọi route của module này vào router (duck-typed)."""
+    """Attach every route of this module to the router (duck-typed)."""
     for method, path, handler in ROUTES:
         router.add(method, path, handler, __name__.rsplit(".", 1)[-1])

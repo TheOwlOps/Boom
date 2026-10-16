@@ -1,19 +1,19 @@
-"""filesystem.ops — thao tác file/thư mục hợp nhất cho Boom.
+"""filesystem.ops — unified file/directory operations for Boom.
 
-Gộp từ hai module cũ (loại bỏ trùng lặp):
-- agent/src/tools/file_ops.py  (read_file, write_file, patch_file fuzzy, search_files)
-- agent/src/tools/fileops.py    (edit_file strict, append_file, file_info)
+Merged from two legacy modules (deduped):
+- agent/src/tools/file_ops.py  (read_file, write_file, fuzzy patch_file, search_files)
+- agent/src/tools/fileops.py    (strict edit_file, append_file, file_info)
 
-Quyết định khi gộp:
-- Giữ MỘT cơ chế an toàn duy nhất: mọi path đều resolve và phải nằm trong
-  thư mục làm việc hiện tại (chặn path traversal).
-- Bỏ patch_file fuzzy (dễ sửa nhầm vị trí "gần đúng", không backup) — chỉ giữ
-  edit() strict: đúng 1 match mới sửa, luôn backup sang <path>.bak.
-- Bỏ search_files (tìm kiếm nội dung là việc của research tool, không phải fs core).
-- Chuẩn hóa: mọi hàm trả về dict {"ok": True, ...} hoặc {"ok": False, "error": ...},
-  KHÔNG raise exception ra ngoài.
+Merge decisions:
+- Keep ONE safety mechanism: every path is resolved and must stay inside the
+  current working directory (blocks path traversal).
+- Drop fuzzy patch_file (risky "close enough" edits, no backup) — keep only
+  strict edit(): exactly 1 match required, always backs up to <path>.bak.
+- Drop search_files (content search is the research tool's job, not fs core).
+- Normalize: every function returns {"ok": True, ...} or {"ok": False, "error": ...},
+  never raising exceptions outward.
 
-Chỉ dùng stdlib.
+Stdlib only.
 """
 
 from __future__ import annotations
@@ -23,35 +23,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_CHUNK = 1024  # số byte đầu file dùng để phát hiện file nhị phân
-_MAX_READ_LINES = 10000  # giới hạn limit của read()
+_CHUNK = 1024  # leading bytes of a file used for binary detection
+_MAX_READ_LINES = 10000  # read() limit cap
 
 
 # ---------------------------------------------------------------------------
-# helper nội bộ
+# internal helpers
 # ---------------------------------------------------------------------------
 
 def _resolve_safe(path: str) -> tuple[Optional[Path], Optional[str]]:
-    """Resolve *path* và kiểm tra nó nằm trong thư mục làm việc hiện tại.
+    """Resolve *path* and verify it stays inside the current working directory.
 
-    Trả về (resolved_path, None) nếu hợp lệ, ngược lại (None, error_message).
+    Returns (resolved_path, None) on success, otherwise (None, error_message).
     """
     if not isinstance(path, str) or not path.strip():
-        return None, "path phải là chuỗi non-empty"
+        return None, "path must be a non-empty string"
     try:
         root = Path.cwd().resolve()
         target = (root / path).resolve()
-    except (OSError, ValueError) as exc:  # path không resolve được
-        return None, f"path không hợp lệ: {exc}"
+    except (OSError, ValueError) as exc:  # path could not be resolved
+        return None, f"invalid path: {exc}"
     try:
         target.relative_to(root)
     except ValueError:
-        return None, "path traversal blocked: path nằm ngoài thư mục làm việc"
+        return None, "path traversal blocked: path is outside the working directory"
     return target, None
 
 
 def _is_binary(path: Path) -> bool:
-    """True nếu 1KB đầu file chứa null byte (dấu hiệu file nhị phân)."""
+    """True if the first 1KB of the file contains a null byte (binary hint)."""
     try:
         with open(path, "rb") as fh:
             return b"\x00" in fh.read(_CHUNK)
@@ -64,37 +64,38 @@ def _is_binary(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def read(path: str, offset: int = 1, limit: int = 2000) -> Dict[str, Any]:
-    """Đọc file text theo trang, kèm số dòng.
+    """Read a text file page by page, with line numbers.
 
-    Mô tả:
-        Đọc *limit* dòng bắt đầu từ dòng *offset* (1-based). Mỗi dòng trả về
-        có tiền tố "<số dòng>|" để agent dễ tham chiếu khi edit.
+    Description:
+        Reads *limit* lines starting at line *offset* (1-based). Each returned
+        line is prefixed with "<line number>|" so the agent can reference it
+        when editing.
     Args:
-        path: đường dẫn file (tương đối so với cwd).
-        offset: dòng bắt đầu (1-based), phải >= 1.
-        limit: số dòng tối đa, 1..10000.
+        path: file path (relative to cwd).
+        offset: starting line (1-based), must be >= 1.
+        limit: max lines, 1..10000.
     Returns:
         {"ok": True, "content": str, "total_lines": int, "offset": int, "limit": int}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
         return {"ok": False, "error": err}
     assert target is not None
     if not isinstance(offset, int) or offset < 1:
-        return {"ok": False, "error": "offset phải là số nguyên >= 1"}
+        return {"ok": False, "error": "offset must be an integer >= 1"}
     if not isinstance(limit, int) or not 1 <= limit <= _MAX_READ_LINES:
-        return {"ok": False, "error": f"limit phải trong khoảng 1..{_MAX_READ_LINES}"}
+        return {"ok": False, "error": f"limit must be within 1..{_MAX_READ_LINES}"}
     if not target.exists() or not target.is_file():
-        return {"ok": False, "error": f"file không tồn tại: {path}"}
+        return {"ok": False, "error": f"file not found: {path}"}
     if _is_binary(target):
-        return {"ok": False, "error": "binary file refused: không đọc file nhị phân"}
+        return {"ok": False, "error": "binary file refused"}
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
-        return {"ok": False, "error": f"không đọc được file: {exc}"}
+        return {"ok": False, "error": f"could not read file: {exc}"}
     total = len(lines)
     start = offset - 1
     selected = lines[start:start + limit]
@@ -109,53 +110,55 @@ def read(path: str, offset: int = 1, limit: int = 2000) -> Dict[str, Any]:
 
 
 def write(path: str, content: str) -> Dict[str, Any]:
-    """Ghi đè (hoặc tạo mới) file text.
+    """Overwrite (or create) a text file.
 
-    Mô tả:
-        Ghi toàn bộ *content* vào file. Tự tạo thư mục cha nếu chưa có.
+    Description:
+        Writes the full *content* to the file. Creates parent directories
+        if missing.
     Args:
-        path: đường dẫn file (tương đối so với cwd).
-        content: nội dung text cần ghi.
+        path: file path (relative to cwd).
+        content: text content to write.
     Returns:
         {"ok": True, "path": str, "bytes_written": int}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
         return {"ok": False, "error": err}
     assert target is not None
     if not isinstance(content, str):
-        return {"ok": False, "error": "content phải là chuỗi"}
+        return {"ok": False, "error": "content must be a string"}
     if target.exists() and not target.is_file():
-        return {"ok": False, "error": "path là thư mục, không ghi đè được"}
+        return {"ok": False, "error": "path is a directory, cannot overwrite"}
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     except OSError as exc:
-        return {"ok": False, "error": f"không ghi được file: {exc}"}
+        return {"ok": False, "error": f"could not write file: {exc}"}
     return {"ok": True, "path": str(target),
             "bytes_written": len(content.encode("utf-8"))}
 
 
 def edit(path: str, old: str, new: str) -> Dict[str, Any]:
-    """Sửa file: thay đúng 1 vị trí khớp tuyệt đối (exact match).
+    """Edit a file: replace exactly one absolute-match occurrence.
 
-    Mô tả:
-        Tìm chuỗi *old* trong file. Chỉ sửa khi có đúng 1 match:
-        - 0 match  -> lỗi "not found"
-        - >1 match -> lỗi "ambiguous", yêu cầu chuỗi cụ thể hơn
-        Trước khi ghi, backup bản gốc sang <path>.bak.
+    Description:
+        Finds the *old* string in the file. Edits only when there is exactly
+        1 match:
+        - 0 matches -> "not found" error
+        - >1 match  -> "ambiguous" error, asking for a more specific string
+        Backs up the original to <path>.bak before writing.
     Args:
-        path: đường dẫn file.
-        old: chuỗi cần thay (phải non-empty, khớp tuyệt đối).
-        new: chuỗi thay thế.
+        path: file path.
+        old: string to replace (must be non-empty, exact match).
+        new: replacement string.
     Returns:
         {"ok": True, "path": str, "backup": str}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
@@ -166,51 +169,51 @@ def edit(path: str, old: str, new: str) -> Dict[str, Any]:
     if _is_binary(target):
         return {"ok": False, "error": "binary file refused"}
     if not old:
-        return {"ok": False, "error": "old phải non-empty"}
+        return {"ok": False, "error": "old must be non-empty"}
     if not isinstance(new, str):
-        return {"ok": False, "error": "new phải là chuỗi"}
+        return {"ok": False, "error": "new must be a string"}
     try:
         content = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return {"ok": False, "error": f"không đọc được file: {exc}"}
+        return {"ok": False, "error": f"could not read file: {exc}"}
     count = content.count(old)
     if count == 0:
         return {"ok": False, "error": "not found"}
     if count > 1:
-        return {"ok": False, "error": f"ambiguous: {count} matches, hãy cụ thể hơn"}
+        return {"ok": False, "error": f"ambiguous: {count} matches, be more specific"}
     backup = target.with_name(target.name + ".bak")
     try:
         shutil.copy2(target, backup)
         target.write_text(content.replace(old, new, 1), encoding="utf-8")
     except OSError as exc:
-        return {"ok": False, "error": f"không ghi được file: {exc}"}
+        return {"ok": False, "error": f"could not write file: {exc}"}
     return {"ok": True, "path": str(target), "backup": str(backup)}
 
 
 def append(path: str, text: str, newline: bool = True) -> Dict[str, Any]:
-    """Nối text vào cuối file (tạo mới nếu chưa có).
+    """Append text to the end of a file (creates it if missing).
 
-    Mô tả:
-        Nối *text* vào cuối file. Nếu newline=True và file chưa kết thúc
-        bằng newline thì tự chèn một newline trước.
+    Description:
+        Appends *text* to the end of the file. If newline=True and the file
+        does not already end with a newline, one is inserted first.
     Args:
-        path: đường dẫn file.
-        text: text cần nối.
-        newline: tự xuống dòng trước khi nối nếu cần.
+        path: file path.
+        text: text to append.
+        newline: insert a newline before appending if needed.
     Returns:
         {"ok": True, "path": str, "bytes_added": int}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
         return {"ok": False, "error": err}
     assert target is not None
     if not isinstance(text, str):
-        return {"ok": False, "error": "text phải là chuỗi"}
+        return {"ok": False, "error": "text must be a string"}
     if target.exists() and not target.is_file():
-        return {"ok": False, "error": "path là thư mục"}
+        return {"ok": False, "error": "path is a directory"}
     if target.is_file() and _is_binary(target):
         return {"ok": False, "error": "binary file refused"}
     try:
@@ -224,23 +227,24 @@ def append(path: str, text: str, newline: bool = True) -> Dict[str, Any]:
         with open(target, "a", encoding="utf-8") as fh:
             fh.write(payload)
     except OSError as exc:
-        return {"ok": False, "error": f"không append được: {exc}"}
+        return {"ok": False, "error": f"could not append: {exc}"}
     return {"ok": True, "path": str(target),
             "bytes_added": len(payload.encode("utf-8"))}
 
 
 def delete(path: str) -> Dict[str, Any]:
-    """Xóa file hoặc thư mục RỖNG.
+    """Delete a file or an EMPTY directory.
 
-    Mô tả:
-        Xóa file thường. Thư mục chỉ xóa khi rỗng. Từ chối: symlink,
-        thư mục con của cwd, thư mục không rỗng, và chính cwd.
+    Description:
+        Deletes regular files. Directories are only deleted when empty.
+        Refuses: symlinks, subdirectories of cwd, non-empty directories,
+        and cwd itself.
     Args:
-        path: đường dẫn cần xóa.
+        path: path to delete.
     Returns:
-        {"ok": True, "path": str} hoặc {"ok": False, "error": str}.
+        {"ok": True, "path": str} or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
@@ -248,49 +252,50 @@ def delete(path: str) -> Dict[str, Any]:
     assert target is not None
     root = Path.cwd().resolve()
     if target == root:
-        return {"ok": False, "error": "từ chối xóa thư mục làm việc hiện tại"}
+        return {"ok": False, "error": "refusing to delete the current working directory"}
     if not target.exists() and not target.is_symlink():
-        return {"ok": False, "error": f"không tồn tại: {path}"}
+        return {"ok": False, "error": f"not found: {path}"}
     if target.is_symlink():
-        return {"ok": False, "error": "từ chối xóa symlink (nguy cơ trỏ ra ngoài)"}
+        return {"ok": False, "error": "refusing to delete symlink (may point outside)"}
     try:
         if target.is_dir():
             if any(target.iterdir()):
-                return {"ok": False, "error": "từ chối xóa thư mục không rỗng"}
+                return {"ok": False, "error": "refusing to delete non-empty directory"}
             target.rmdir()
         else:
             target.unlink()
     except OSError as exc:
-        return {"ok": False, "error": f"không xóa được: {exc}"}
+        return {"ok": False, "error": f"could not delete: {exc}"}
     return {"ok": True, "path": str(target)}
 
 
 def list_dir(path: str = ".", recursive: bool = False,
              limit: int = 200) -> Dict[str, Any]:
-    """Liệt kê nội dung thư mục.
+    """List directory contents.
 
-    Mô tả:
-        Liệt kê file/thư mục con (sắp xếp theo tên). Hỗ trợ liệt kê đệ quy.
+    Description:
+        Lists files/subdirectories (sorted by name). Supports recursive
+        listing.
     Args:
-        path: thư mục cần liệt kê (mặc định ".").
-        recursive: True để liệt kê đệ quy.
-        limit: số entry tối đa (1..5000).
+        path: directory to list (default ".").
+        recursive: True for recursive listing.
+        limit: max entries (1..5000).
     Returns:
         {"ok": True, "path": str, "entries": [{"name","type","size"}], "truncated": bool}
-        hoặc {"ok": False, "error": str}.
+        or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
         return {"ok": False, "error": err}
     assert target is not None
     if not target.exists():
-        return {"ok": False, "error": f"không tồn tại: {path}"}
+        return {"ok": False, "error": f"not found: {path}"}
     if not target.is_dir():
-        return {"ok": False, "error": f"không phải thư mục: {path}"}
+        return {"ok": False, "error": f"not a directory: {path}"}
     if not isinstance(limit, int) or not 1 <= limit <= 5000:
-        return {"ok": False, "error": "limit phải trong khoảng 1..5000"}
+        return {"ok": False, "error": "limit must be within 1..5000"}
     try:
         items = target.rglob("*") if recursive else target.iterdir()
         entries: List[Dict[str, Any]] = []
@@ -309,26 +314,27 @@ def list_dir(path: str = ".", recursive: bool = False,
             except OSError:
                 continue
     except OSError as exc:
-        return {"ok": False, "error": f"không liệt kê được: {exc}"}
+        return {"ok": False, "error": f"could not list directory: {exc}"}
     return {"ok": True, "path": str(target), "entries": entries,
             "truncated": truncated}
 
 
 def info(path: str) -> Dict[str, Any]:
-    """Lấy metadata của path (tồn tại, kích thước, mtime, số dòng...).
+    """Get path metadata (exists, size, mtime, line count...).
 
-    Mô tả:
-        Tương đương stat gọn nhẹ: tồn tại hay không, size (bytes),
-        mtime (ISO 8601 UTC), số dòng (file text), có phải thư mục không.
+    Description:
+        A compact stat equivalent: whether it exists, size (bytes),
+        mtime (ISO 8601 UTC), line count (text files), whether it's a
+        directory.
     Args:
-        path: đường dẫn cần xem.
+        path: path to inspect.
     Returns:
         {"ok": True, "exists": bool, "size": int, "mtime": str,
          "lines": int, "is_dir": bool}
-        hoặc {"ok": False, "error": str} khi path không hợp lệ.
-        Path không tồn tại -> {"ok": True, "exists": False}.
+        or {"ok": False, "error": str} for an invalid path.
+        A nonexistent path -> {"ok": True, "exists": False}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     target, err = _resolve_safe(path)
     if err:
@@ -340,7 +346,7 @@ def info(path: str) -> Dict[str, Any]:
     try:
         stat = target.stat()
     except OSError as exc:
-        return {"ok": False, "error": f"không stat được: {exc}"}
+        return {"ok": False, "error": f"could not stat: {exc}"}
     mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
     lines = 0
     if not is_dir and not _is_binary(target):

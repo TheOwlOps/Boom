@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 
 from audit.models import AuditEvent
 
-# Che secret trong details trước khi ghi audit (fail-open: lỗi thì ghi gốc).
+# Redacts secrets in details before writing audit (fail-open: on error, writes raw).
 try:
     from security.redact import redact_dict as _redact_dict
 except Exception:
@@ -85,7 +85,7 @@ class AuditStore:
             event.id = _gen_id()
         if not event.ts:
             event.ts = _now_iso()
-        # Che secret trong details trước khi persist (overnight hardening).
+        # Redacts secrets in details before persisting (overnight hardening).
         try:
             if isinstance(event.details, dict):
                 event.details = _redact_dict(event.details)

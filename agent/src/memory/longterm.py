@@ -1,15 +1,15 @@
-"""Long-term memory cho Boom agent.
+"""Long-term memory for the Boom agent.
 
-Bộ nhớ dài hạn: lưu mọi thứ agent học được theo thời gian, tìm kiếm toàn văn,
-chấm điểm kết hợp độ liên quan + mức độ quan trọng, tóm tắt memories cũ
-và tự quên dần thông tin ít quan trọng.
+Long-term memory: stores everything the agent learns over time, full-text
+search, scoring that combines relevance + importance, summarizing old
+memories, and gradually forgetting low-importance information.
 
-Khác với MemoryStore (store.py) chỉ lưu key/value đơn giản:
-- Tìm kiếm toàn văn bằng FTS5 (fallback LIKE nếu sqlite không hỗ trợ)
-- Mỗi memory có importance (0.0-1.0) và tags
+Unlike MemoryStore (store.py) which only stores simple key/values:
+- Full-text search via FTS5 (LIKE fallback when sqlite lacks it)
+- Each memory has importance (0.0-1.0) and tags
 - Scoring: relevance * (0.5 + 0.5 * importance)
-- summarize(): gom memories cũ >30 ngày theo tags, tóm tắt 1 lần
-- forget_old(): xóa memories vừa cũ vừa ít quan trọng
+- summarize(): groups memories older than 30 days by tags, summarizes once
+- forget_old(): deletes memories that are both old and low-importance
 
 Stdlib only: sqlite3, threading, json, time.
 """
@@ -22,30 +22,30 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-# Memories cũ hơn số ngày này thì đủ điều kiện đưa vào summarize()
+# Memories older than this many days become eligible for summarize()
 SUMMARIZE_AFTER_DAYS = 30
 
 
 class LongTermMemory:
-    """Bộ nhớ dài hạn dùng SQLite, thread-safe."""
+    """SQLite-backed long-term memory, thread-safe."""
 
     def __init__(self, db_path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Thread-safe: mọi thao tác DB đều đi qua lock này.
-        # check_same_thread=False vì connection được dùng chung giữa các thread,
-        # lock đảm bảo không bao giờ có 2 thread dùng connection cùng lúc.
+        # Thread-safe: every DB operation goes through this lock.
+        # check_same_thread=False because the connection is shared across
+        # threads; the lock guarantees 2 threads never use it at once.
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self._fts5 = False  # True nếu sqlite hỗ trợ FTS5
+        self._fts5 = False  # True when sqlite supports FTS5
         with self._lock:
             self._init_db()
 
     # ------------------------------------------------------------------ init
 
     def _init_db(self):
-        """Tạo schema. Thử bật FTS5, thất bại thì fallback LIKE."""
+        """Creates the schema. Tries FTS5, falls back to LIKE on failure."""
         with self.conn:
             self.conn.execute(
                 """
@@ -80,8 +80,8 @@ class LongTermMemory:
                 "CREATE INDEX IF NOT EXISTS idx_memories_importance "
                 "ON memories(importance)"
             )
-        # Thử tạo bảng FTS5 + trigger đồng bộ. Trigger giữ memories_fts
-        # luôn khớp với bảng memories (insert/update/delete).
+        # Try creating the FTS5 table + sync triggers. The triggers keep
+        # memories_fts always matching the memories table (insert/update/delete).
         try:
             with self.conn:
                 self.conn.execute(
@@ -115,8 +115,8 @@ class LongTermMemory:
                     END
                     """
                 )
-                # Nếu bảng memories đã có dữ liệu mà FTS index còn trống
-                # (VD: DB tạo từ trước khi có FTS), rebuild cho khớp.
+                # When the memories table already has data but the FTS index
+                # is empty (e.g. DB created before FTS existed), rebuild to match.
                 n_mem = self.conn.execute(
                     "SELECT COUNT(*) AS n FROM memories").fetchone()["n"]
                 n_fts = self.conn.execute(
@@ -126,7 +126,7 @@ class LongTermMemory:
                         "INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
             self._fts5 = True
         except sqlite3.OperationalError:
-            # sqlite build này không có FTS5 -> recall() dùng LIKE
+            # this sqlite build has no FTS5 -> recall() uses LIKE
             self._fts5 = False
 
     # ------------------------------------------------------------------ write
@@ -134,14 +134,15 @@ class LongTermMemory:
     def remember(self, key: str, value: str, importance: float = 1.0,
                  tags: Optional[List[str]] = None,
                  created_at: Optional[float] = None) -> None:
-        """Lưu một memory.
+        """Stores one memory.
 
-        - importance: 0.0 (rác) -> 1.0 (rất quan trọng), tự clamp vào khoảng.
-        - tags: VD ["ops", "deploy"]. None -> [].
-        - created_at: epoch giây; None = bây giờ. Tham số này để backdate
-          khi import memories cũ hoặc để test.
-        - Ghi đè key đã tồn tại: cập nhật value/importance/tags/updated_at,
-          giữ nguyên created_at gốc, reset cờ summarized để tóm tắt lại.
+        - importance: 0.0 (junk) -> 1.0 (very important), auto-clamped.
+        - tags: e.g. ["ops", "deploy"]. None -> [].
+        - created_at: epoch seconds; None = now. Exists for backdating
+          imported old memories or for tests.
+        - Overwriting an existing key: updates value/importance/tags/updated_at,
+          keeps the original created_at, resets the summarized flag so it gets
+          summarized again.
         """
         importance = max(0.0, min(1.0, float(importance)))
         tags_json = json.dumps(list(tags or []), ensure_ascii=False)
@@ -166,16 +167,16 @@ class LongTermMemory:
     # ------------------------------------------------------------------ read
 
     def _fts5_query(self, query: str) -> str:
-        """Biến query người dùng thành FTS5 MATCH an toàn.
+        """Turns a user query into a safe FTS5 MATCH.
 
-        Mỗi token được quote kép nên ký tự đặc biệt (-, *, ", ...) thành
-        literal, không phá cú pháp MATCH. Các token nối bằng OR.
+        Every token is double-quoted so special chars (-, *, ", ...) become
+        literals instead of breaking MATCH syntax. Tokens joined with OR.
         """
         tokens = [t for t in query.split() if t]
         return " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
     def _recall_fts(self, query: str) -> List[sqlite3.Row]:
-        """Tìm bằng FTS5, trả về kèm bm25 thô (âm, càng âm càng khớp)."""
+        """Searches with FTS5, returns rows with raw bm25 (negative, more = better)."""
         match = self._fts5_query(query)
         return self.conn.execute(
             """
@@ -192,7 +193,7 @@ class LongTermMemory:
         return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def _recall_like(self, query: str) -> List[sqlite3.Row]:
-        """Fallback khi không có FTS5: LIKE trên key/value/tags."""
+        """Fallback without FTS5: LIKE over key/value/tags."""
         pat = f"%{self._like_escape(query)}%"
         return self.conn.execute(
             """
@@ -206,15 +207,15 @@ class LongTermMemory:
         ).fetchall()
 
     def recall(self, query: str, limit: int = 5) -> List[Dict]:
-        """Tìm memories liên quan nhất tới query.
+        """Finds the memories most relevant to a query.
 
         Scoring: relevance * (0.5 + 0.5 * importance)
-        - relevance từ FTS5 bm25 qua sigmoid: 1/(1+exp(bm25)) trong (0,1),
-          khớp càng tốt càng gần 1. Fallback LIKE: relevance = 1.0.
-        - importance càng cao càng đẩy score lên, nhưng memory không liên
-          quan vẫn không bao giờ lọt vào (không match = không có mặt).
+        - relevance from FTS5 bm25 through a sigmoid: 1/(1+exp(bm25)) in (0,1),
+          better matches closer to 1. LIKE fallback: relevance = 1.0.
+        - higher importance pushes the score up, but an irrelevant memory can
+          never sneak in (no match = not present).
 
-        Trả về list dict sắp xếp theo score giảm dần, tối đa `limit` phần tử.
+        Returns a list of dicts sorted by score descending, at most `limit` items.
         """
         query = (query or "").strip()
         if not query:
@@ -225,7 +226,8 @@ class LongTermMemory:
             results = []
             for r in rows:
                 if self._fts5:
-                    # bm25 FTS5: số âm, càng âm càng khớp -> sigmoid đảo chiều
+                    # FTS5 bm25: negative numbers, more negative = better match
+                    # -> inverted sigmoid
                     relevance = 1.0 / (1.0 + math.exp(r["bm25raw"]))
                 else:
                     relevance = 1.0
@@ -252,7 +254,11 @@ class LongTermMemory:
     # -------------------------------------------------------------- summarize
 
     def _template_summary(self, tag: str, items: List[sqlite3.Row]) -> str:
-        """Tóm tắt không cần LLM: liệt kê gọn từng memory trong nhóm."""
+        """No-LLM summary: compactly lists each memory in the group.
+
+        NOTE: kept in Vietnamese — the summary output language is a product
+        decision (mirrors digest/briefing.py).
+        """
         lines = [f"Tóm tắt nhóm '{tag}' ({len(items)} memories):"]
         for r in items:
             val = r["value"]
@@ -263,13 +269,13 @@ class LongTermMemory:
         return "\n".join(lines)
 
     def summarize(self, llm_fn: Optional[Callable[[str], str]] = None) -> str:
-        """Tóm tắt memories cũ hơn SUMMARIZE_AFTER_DAYS ngày, nhóm theo tags.
+        """Summarizes memories older than SUMMARIZE_AFTER_DAYS days, grouped by tags.
 
-        - Có llm_fn: gọi llm_fn(prompt) cho từng nhóm tag để tóm tắt.
-        - Không có: dùng template liệt kê đơn giản.
-        - Mỗi nhóm tag lưu 1 dòng vào bảng summaries; memories đã tóm tắt
-          được đánh dấu summarized=1 nên không bao giờ tóm tắt lại.
-        - Trả về chuỗi tóm tắt gộp (rỗng nếu không có gì để tóm tắt).
+        - With llm_fn: calls llm_fn(prompt) per tag group to summarize.
+        - Without: uses the simple listing template.
+        - Each tag group stores 1 row in the summaries table; summarized
+          memories are flagged summarized=1 so they're never summarized twice.
+        - Returns the combined summary string (empty when nothing to summarize).
         """
         cutoff = time.time() - SUMMARIZE_AFTER_DAYS * 86400
         with self._lock:
@@ -284,8 +290,8 @@ class LongTermMemory:
             ).fetchall()
         if not rows:
             return ""
-        # Nhóm theo tag; memory nhiều tag thì xuất hiện ở nhiều nhóm,
-        # memory không tag nào thì vào nhóm "untagged".
+        # Group by tag; multi-tag memories appear in several groups,
+        # untagged memories go to the "untagged" group.
         groups: Dict[str, List[sqlite3.Row]] = {}
         for r in rows:
             try:
@@ -300,6 +306,8 @@ class LongTermMemory:
         with self._lock, self.conn:
             for tag, items in groups.items():
                 if llm_fn is not None:
+                    # NOTE: prompt kept in Vietnamese — the summary output
+                    # language is a product decision.
                     prompt_lines = [
                         f"Tóm tắt các ghi nhớ cũ sau (nhóm tag: {tag}):"]
                     for r in items:
@@ -322,9 +330,9 @@ class LongTermMemory:
                     (tag, content, len(items), now),
                 )
                 parts.append(f"## {tag}\n{content}")
-            # Đánh dấu đã tóm tắt để lần sau không tóm tắt lại
+            # Flag as summarized so next runs skip them
             ids = [r["id"] for r in rows]
-            for i in range(0, len(ids), 500):  # chunk tránh giới hạn biến SQL
+            for i in range(0, len(ids), 500):  # chunked to dodge SQL variable limits
                 chunk = ids[i:i + 500]
                 self.conn.execute(
                     f"UPDATE memories SET summarized = 1 "
@@ -336,11 +344,11 @@ class LongTermMemory:
     # ---------------------------------------------------------------- forget
 
     def forget_old(self, days: int = 90, min_importance: float = 0.3) -> int:
-        """Xóa memories VỪA cũ hơn `days` ngày VỪA có importance < min_importance.
+        """Deletes memories BOTH older than `days` days AND below min_importance.
 
-        Memory cũ nhưng quan trọng (>= min_importance) được giữ lại.
-        Memory mới nhưng ít quan trọng cũng được giữ (chưa đủ cũ).
-        Trigger FTS tự dọn index theo. Trả về số lượng đã xóa.
+        Old but important (>= min_importance) memories are kept.
+        New but unimportant memories are kept too (not old enough yet).
+        FTS triggers clean the index along. Returns the deleted count.
         """
         cutoff = time.time() - days * 86400
         with self._lock, self.conn:
@@ -353,7 +361,7 @@ class LongTermMemory:
     # ----------------------------------------------------------------- stats
 
     def get_stats(self) -> Dict:
-        """Thống kê: tổng số, đếm theo tag, oldest/newest, số đã tóm tắt."""
+        """Stats: totals, per-tag counts, oldest/newest, summarized count."""
         with self._lock:
             total = self.conn.execute(
                 "SELECT COUNT(*) AS n FROM memories").fetchone()["n"]
@@ -386,6 +394,6 @@ class LongTermMemory:
         }
 
     def close(self):
-        """Đóng connection (giống pattern của MemoryStore)."""
+        """Closes the connection (same pattern as MemoryStore)."""
         with self._lock:
             self.conn.close()

@@ -60,6 +60,7 @@ def _extract_code(response: str) -> str:
 
 
 def _build_fix_prompt(code: str, error: str, error_hint) -> str:
+    # NOTE: prompt text is pinned by evals/test_verify.py:129 — keep Vietnamese.
     hint_line = f"\nGợi ý thêm: {error_hint}\n" if error_hint else ""
     return (
         "Sửa code Python dưới đây cho chạy đúng, không lỗi.\n"

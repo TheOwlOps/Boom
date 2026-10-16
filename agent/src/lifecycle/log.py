@@ -1,15 +1,15 @@
-"""Structured JSON logging cho Boom agent.
+"""Structured JSON logging for the Boom agent.
 
-Module này bọc logging stdlib để mọi log record đều có cấu trúc JSON cố định:
+This module wraps stdlib logging so every log record has a fixed JSON shape:
     {"timestamp", "level", "name", "message", "request_id", "context"}
 
-- timestamp: ISO8601 UTC (kèm hậu tố Z)
-- request_id: gắn qua bind()/contextvar nên an toàn với async task
-  (mỗi coroutine giữ contextvar riêng, không rò rỉ giữa các request)
-- context: dict tùy ý đi kèm mỗi lần log
-- Không bao giờ crash vì object không JSON-serializable (fallback str())
+- timestamp: ISO8601 UTC (with the Z suffix)
+- request_id: attached via bind()/contextvar, so async-safe
+  (each coroutine keeps its own contextvar copy, no leaks between requests)
+- context: arbitrary dict attached to each log call
+- Never crashes on non-JSON-serializable objects (falls back to str())
 
-Chỉ dùng stdlib: logging, json, contextvars, datetime, sys.
+Stdlib only: logging, json, contextvars, datetime, sys.
 """
 
 from __future__ import annotations
@@ -20,52 +20,53 @@ import json
 import logging
 import sys
 
-# Biến ngữ cảnh lưu request_id hiện tại.
-# Vì sao dùng contextvar thay vì thread-local: trong asyncio, nhiều request
-# chạy cùng 1 thread nhưng khác task — thread-local sẽ rò rỉ request_id giữa
-# các task, còn contextvar thì mỗi task có bản sao context riêng nên an toàn.
+# Context var holding the current request_id.
+# Why a contextvar instead of thread-local: in asyncio, many requests share
+# one thread but run in different tasks — thread-local would leak request_id
+# across tasks, while a contextvar gives each task its own context copy.
 _request_id_var: contextvars.ContextVar = contextvars.ContextVar(
     "boom_request_id", default=None
 )
 
-# Context dict mặc định của task hiện tại (mỗi task một bản sao, không chia sẻ).
+# Default context dict of the current task (each task gets a copy, not shared).
 _context_var: contextvars.ContextVar = contextvars.ContextVar(
     "boom_log_context", default=None
 )
 
-# Ghi nhớ setup_logging đã chạy để không gắn handler trùng lặp.
+# Remembers that setup_logging already ran, so handlers aren't duplicated.
 _configured = False
 
 
 def _safe_json(value):
-    """Chuyển mọi giá trị thành JSON-serializable.
+    """Converts any value to JSON-serializable form.
 
-    Đệ quy qua dict/list/tuple; object lạ thì fallback str(value).
-    Lỗi bất ngờ khi stringify cũng được bắt để logger không bao giờ crash.
+    Recurses through dict/list/tuple; unknown objects fall back to str(value).
+    Unexpected stringify errors are caught too — the logger must never crash.
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, dict):
         return {str(k): _safe_json(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
-        # set/frozenset không JSON được trực tiếp: chuyển thành list.
+        # sets/frozensets aren't directly JSON-able: convert to list.
         return [_safe_json(v) for v in value]
     if isinstance(value, (bytes, bytearray)):
         try:
             return bytes(value).decode("utf-8")
-        except Exception:  # bytes không decode được thì fallback str
+        except Exception:  # undecodable bytes fall back to str
             return str(value)
     try:
         return str(value)
-    except Exception:  # noqa: BLE001 - stringify không bao giờ được crash log
+    except Exception:  # noqa: BLE001 - stringifying must never crash logging
         return "<unserializable>"
 
 
 class JSONFormatter(logging.Formatter):
-    """Formatter 1 dòng JSON cho mỗi record.
+    """One-line-per-record JSON formatter.
 
-    Lấy request_id từ contextvar (nếu record chưa gắn riêng), lấy context
-    từ contextvar + extra "context" của record rồi gộp lại, safe-json hóa.
+    Takes request_id from the contextvar (when the record doesn't carry its
+    own), merges context from the contextvar + the record's extra "context",
+    and safe-json-ifies everything.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -87,18 +88,18 @@ class JSONFormatter(logging.Formatter):
         }
         try:
             return json.dumps(payload, ensure_ascii=False)
-        except Exception:  # noqa: BLE001 - fallback cuối cùng, không crash
+        except Exception:  # noqa: BLE001 - last-resort fallback, never crash
             payload["context"] = "<unserializable>"
             payload["message"] = str(payload["message"])
             return json.dumps(payload, ensure_ascii=False)
 
 
 class _BoundLogger:
-    """Adapter gắn request_id/context mặc định cho logger.
+    """Adapter that pins default request_id/context onto a logger.
 
-    Mọi phương thức log (debug/info/warning/error/exception) đều chèn
-    request_id + context vào extra của record. Không kế thừa logging.Logger
-    nên dùng được mọi logger có sẵn; expose thuộc tính qua __getattr__.
+    Every log method (debug/info/warning/error/exception) injects request_id +
+    context into the record's extra. Doesn't subclass logging.Logger so it can
+    wrap any existing logger; attributes are exposed via __getattr__.
     """
 
     def __init__(self, logger: logging.Logger, request_id=None, context=None):
@@ -131,7 +132,7 @@ class _BoundLogger:
         self._logger.exception(msg, *args, extra=self._extra(context), **kwargs)
 
     def bind(self, request_id=None, **context):
-        """Gắn thêm request_id/context, trả về adapter mới (không đổi cũ)."""
+        """Binds more request_id/context, returns a new adapter (old one untouched)."""
         new_ctx = dict(self._context)
         new_ctx.update(context)
         return _BoundLogger(
@@ -142,29 +143,29 @@ class _BoundLogger:
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Trả về logger stdlib theo tên module.
+    """Returns the stdlib logger for a module name.
 
-    Gọi setup_logging() một lần trước đó để có JSON output; nếu chưa setup,
-    logger vẫn hoạt động với handler mặc định (lastResort) của stdlib.
+    Call setup_logging() once beforehand for JSON output; without setup the
+    logger still works with stdlib's default (lastResort) handler.
     """
     return logging.getLogger(name)
 
 
 def bind(request_id=None, _logger=None, **context) -> _BoundLogger:
-    """Trả về adapter đã gắn request_id + context.
+    """Returns an adapter with request_id + context bound.
 
-    Hai cách dùng:
+    Two ways to use it:
       1. logger = bind(request_id="abc", logger=get_logger(__name__))
-      2. logger = bind(request_id="abc")   # dùng root logger làm base
+      2. logger = bind(request_id="abc")   # uses the root logger as base
 
-    Cách 2 (không logger) không gắn vào logger cụ thể mà SET contextvar —
-    mọi log record phát ra từ task hiện tại (kể cả logger khác nhau) đều
-    tự mang request_id/context này, đúng kiểu async-safe.
+    Way 2 (no logger) doesn't attach to a specific logger but SETs the
+    contextvars — every log record emitted from the current task (from any
+    logger) automatically carries this request_id/context, async-safe style.
     """
     if _logger is not None:
         return _BoundLogger(_logger, request_id, context)
-    # Vì sao copy rồi set: contextvar là immutable-by-convention, mỗi task
-    # thấy bản sao riêng nên set dict mới ở đây không ảnh hưởng task khác.
+    # Why copy-then-set: contextvars are immutable-by-convention; each task
+    # sees its own copy, so setting a new dict here doesn't affect other tasks.
     base = dict(_context_var.get() or {})
     base.update(context)
     _context_var.set(base)
@@ -174,18 +175,18 @@ def bind(request_id=None, _logger=None, **context) -> _BoundLogger:
 
 
 def reset_bind():
-    """Xóa request_id/context đã bind cho task hiện tại (cuối request)."""
+    """Clears the bound request_id/context for the current task (end of request)."""
     _request_id_var.set(None)
     _context_var.set(None)
 
 
 def setup_logging(level: str = "INFO", json_output: bool = True) -> None:
-    """Cấu hình root logger một lần duy nhất.
+    """Configures the root logger, exactly once.
 
-    - json_output=True: handler StreamHandler(sys.stdout) + JSONFormatter,
-      mỗi record 1 dòng JSON.
-    - json_output=False: format text ngắn gọn cho dev.
-    - Gọi nhiều lần không gắn handler trùng (guard bằng _configured).
+    - json_output=True: StreamHandler(sys.stdout) + JSONFormatter,
+      one JSON line per record.
+    - json_output=False: short text format for devs.
+    - Calling repeatedly doesn't duplicate handlers (guarded by _configured).
     """
     global _configured
     root = logging.getLogger()
@@ -202,6 +203,6 @@ def setup_logging(level: str = "INFO", json_output: bool = True) -> None:
             )
         )
     root.addHandler(handler)
-    # Không để record lan tới handler mặc định của interpreter (tránh lặp).
+    # Don't let records propagate to the interpreter's default handler (avoids dupes).
     root.propagate = True
     _configured = True

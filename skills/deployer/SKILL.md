@@ -1,6 +1,6 @@
 ---
 name: deployer
-description: "Pre-deploy checklist tự động: tests pass, no secrets, version bumped, CHANGELOG, env vars, backup plan."
+description: "Automated pre-deploy checklist: tests pass, no secrets, version bumped, CHANGELOG, env vars, backup plan."
 version: 1.0.0
 author: Boom
 license: MIT
@@ -13,41 +13,41 @@ metadata:
 
 # Deployer — Pre-deploy Checklist
 
-## Tên
+## Name
 `deployer`
 
-## Mô tả
-Chạy bộ kiểm tra tự động trước khi deploy: test có pass không, code có dính secret không, version đã bump chưa, CHANGELOG có cập nhật không, biến môi trường có được document không, và đã có kế hoạch backup/rollback chưa. Kết quả là danh sách các check với trạng thái `pass` / `fail` / `warn`.
+## Description
+Runs an automated check suite before deployment: do tests pass, is the code free of secrets, has the version been bumped, is the CHANGELOG updated, are environment variables documented, and is there a backup/rollback plan. The result is a list of checks with status `pass` / `fail` / `warn`.
 
-## Khi nào dùng
-- Trước mọi lần deploy lên staging/production
-- Trước khi tag release hoặc merge vào `main`
-- Khi cần gate tự động trong CI: fail nếu có check nào `fail`
+## When to use
+- Before every deploy to staging/production
+- Before tagging a release or merging into `main`
+- When you need an automatic gate in CI: fail if any check is `fail`
 
 ## Input
-- `project_dir` (str): thư mục gốc của project cần kiểm tra
-- `test_command` (str, optional): lệnh chạy test, mặc định `python3 -m pytest -q`
-- `version_file` (str, optional): file chứa version (mặc định tự phát hiện `pyproject.toml`, `package.json`, `VERSION`)
+- `project_dir` (str): root directory of the project to check
+- `test_command` (str, optional): test command, default `python3 -m pytest -q`
+- `version_file` (str, optional): file containing the version (auto-detects `pyproject.toml`, `package.json`, `VERSION` by default)
 
 ## Output
-List các dict: `{check, status, detail}`, với `status` ∈ `pass | fail | warn`.
+A list of dicts: `{check, status, detail}`, with `status` ∈ `pass | fail | warn`.
 
-Ví dụ:
+Example:
 
 ```python
 [
   {"check": "tests_pass",        "status": "pass", "detail": "pytest: 42 passed"},
-  {"check": "no_secrets",        "status": "fail", "detail": "phát hiện AWS key ở config.py:17"},
-  {"check": "version_bumped",    "status": "warn", "detail": "không có git tag để đối chiếu"},
-  {"check": "changelog_updated", "status": "pass", "detail": "CHANGELOG.md thay đổi trong 5 commit gần nhất"},
-  {"check": "env_documented",    "status": "pass", "detail": "12/12 biến môi trường có trong .env.example"},
-  {"check": "backup_plan",       "status": "warn", "detail": "không tìm thấy script backup/rollback"},
+  {"check": "no_secrets",        "status": "fail", "detail": "found AWS key in config.py:17"},
+  {"check": "version_bumped",    "status": "warn", "detail": "no git tag to compare against"},
+  {"check": "changelog_updated", "status": "pass", "detail": "CHANGELOG.md changed in the last 5 commits"},
+  {"check": "env_documented",    "status": "pass", "detail": "12/12 env vars present in .env.example"},
+  {"check": "backup_plan",       "status": "warn", "detail": "no backup/rollback script found"},
 ]
 ```
 
-Quy ước: **có bất kỳ check nào `fail` → KHÔNG deploy.**
+Convention: **any check with status `fail` → DO NOT deploy.**
 
-## Ví dụ
+## Example
 
 ```python
 from deployer.checklist import run_checklist
@@ -57,5 +57,5 @@ for r in results:
     print(f"[{r['status']:4}] {r['check']}: {r['detail']}")
 
 if any(r["status"] == "fail" for r in results):
-    raise SystemExit("BLOCKED: có check fail, không deploy")
+    raise SystemExit("BLOCKED: a check failed, will not deploy")
 ```

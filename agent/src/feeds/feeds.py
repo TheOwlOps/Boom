@@ -1,8 +1,8 @@
-"""Các feed có sẵn, miễn phí, không cần API key.
+"""Ready-made feeds, free, no API key needed.
 
-- BinancePriceFeed: WebSocket giá crypto realtime từ Binance public stream.
-- RSSNewsFeed: polling RSS (KHÔNG phải WebSocket — RSS không có push,
-  phải fetch định kỳ). Dùng httpx, parse XML chuẩn, regex dự phòng.
+- BinancePriceFeed: realtime crypto prices from Binance's public stream.
+- RSSNewsFeed: RSS polling (NOT WebSocket — RSS has no push, so it fetches
+  periodically). Uses httpx, standard XML parsing, regex fallback.
 """
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ from websocket_feed import Feed, WebSocketFeed
 
 # ---------------------------------------------------------------- Binance
 class BinancePriceFeed(WebSocketFeed):
-    """Giá realtime qua Binance public WebSocket. Không cần key.
+    """Realtime prices via Binance's public WebSocket. No key needed.
 
-    URL mặc định: wss://stream.binance.com:9443/ws/btcusdt@ticker
-    (miniTicker 24h: giá mới nhất `c`, symbol `s`, thời gian `E`).
+    Default URL: wss://stream.binance.com:9443/ws/btcusdt@ticker
+    (24h miniTicker: latest price `c`, symbol `s`, time `E`).
 
-    Callback nhận dict: {"symbol": str, "price": float, "timestamp": float (giây)}.
+    The callback receives a dict: {"symbol": str, "price": float, "timestamp": float (seconds)}.
     """
 
     DEFAULT_URL = "wss://stream.binance.com:9443/ws/btcusdt@ticker"
@@ -37,7 +37,7 @@ class BinancePriceFeed(WebSocketFeed):
 
     @staticmethod
     def parse_ticker(raw: str) -> Optional[Dict]:
-        """Parse 1 message ticker của Binance. Trả None nếu message không hợp lệ."""
+        """Parses one Binance ticker message. Returns None on invalid messages."""
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
@@ -57,10 +57,10 @@ class BinancePriceFeed(WebSocketFeed):
         return {"symbol": str(symbol), "price": price_f, "timestamp": timestamp}
 
     def _emit(self, raw) -> None:
-        """Ghi đè: raw text từ WS -> parse ticker -> mới emit dict giá.
+        """Overrides: WS raw text -> parse ticker -> then emit the price dict.
 
-        Ghi đè _emit (thay vì bọc on_message) để FeedManager gán lại
-        feed.on_message lúc add_feed vẫn nhận đúng dict đã parse.
+        Overrides _emit (instead of wrapping on_message) so FeedManager
+        reassigning feed.on_message in add_feed still gets the parsed dict.
         """
         if isinstance(raw, bytes):
             try:
@@ -69,12 +69,12 @@ class BinancePriceFeed(WebSocketFeed):
                 return
         parsed = self.parse_ticker(raw)
         if parsed is None:
-            return  # message ping/không phải ticker -> bỏ qua lặng lẽ
+            return  # ping / non-ticker message -> silently skipped
         super()._emit(parsed)
 
 
 # ---------------------------------------------------------------- RSS
-# Regex dự phòng khi XML bị hỏng (feed thực tế ngoài đời hay thiếu tag đóng).
+# Regex fallback for broken XML (real-world feeds often miss closing tags).
 _TAG_RE = re.compile(r"<(\w+)[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
 _CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
 
@@ -83,24 +83,24 @@ def _clean(text: Optional[str]) -> str:
     if not text:
         return ""
     text = _CDATA_RE.sub(r"\1", text)
-    text = re.sub(r"<[^>]+>", "", text)  # lột tag HTML còn sót trong description
+    text = re.sub(r"<[^>]+>", "", text)  # strips leftover HTML tags in descriptions
     return text.strip()
 
 
 def _element_text(el) -> str:
-    """Lấy toàn bộ text của element kể cả text trong tag con lồng nhau.
+    """Gets an element's full text, including text inside nested child tags.
 
-    (ElementTree: <description>Mô tả <b>tin 1</b></description> -> .text chỉ
-    cho "Mô tả ", còn "tin 1" nằm trong <b>.text -> phải dùng itertext().)
+    (ElementTree: <description>Description <b>item 1</b></description> -> .text only
+    gives "Description ", while "item 1" lives in <b>.text — so use itertext().)
     """
     return _clean("".join(el.itertext()))
 
 
 def parse_rss(xml_text: str, source: str = "") -> List[Dict]:
-    """Parse RSS/Atom XML -> list dict {title, link, published, summary, source}.
+    """Parses RSS/Atom XML -> list of dicts {title, link, published, summary, source}.
 
-    Thử XML parser chuẩn trước; hỏng thì fallback regex từng <item>.
-    Không raise với feed hỏng — trả list rỗng.
+    Tries the standard XML parser first; falls back to per-<item> regex on
+    failure. Never raises on broken feeds — returns an empty list.
     """
     items: List[Dict] = []
     if not xml_text or not xml_text.strip():
@@ -109,7 +109,7 @@ def parse_rss(xml_text: str, source: str = "") -> List[Dict]:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return _parse_rss_regex(xml_text, source)
-    # RSS 2.0: channel/item ; Atom: entry (có namespace)
+    # RSS 2.0: channel/item ; Atom: entry (with namespace)
     for entry in root.iter():
         tag = entry.tag.split("}")[-1].lower()
         if tag not in ("item", "entry"):
@@ -118,7 +118,7 @@ def parse_rss(xml_text: str, source: str = "") -> List[Dict]:
         for child in entry:
             ctag = child.tag.split("}")[-1].lower()
             fields[ctag] = _element_text(child)
-        # Atom dùng <link href="..."/> thay vì text
+        # Atom uses <link href="..."/> instead of text
         link = fields.get("link", "")
         if not link:
             for child in entry:
@@ -137,11 +137,11 @@ def parse_rss(xml_text: str, source: str = "") -> List[Dict]:
 
 
 def _parse_rss_regex(xml_text: str, source: str = "") -> List[Dict]:
-    """Fallback regex khi XML hỏng không parse được.
+    """Regex fallback when XML is too broken to parse.
 
-    Tách theo thẻ <item> mở (thay vì match cặp <item>...</item>) để chịu được
-    item thiếu thẻ đóng hoặc lồng nhau — trường hợp match cặp sẽ nuốt nhầm
-    item kế tiếp vào trong.
+    Splits on the opening <item> tag (instead of matching <item>...</item>
+    pairs) to tolerate missing closing tags or nesting — pair matching would
+    swallow the next item by mistake.
     """
     items = []
     parts = re.split(r"<item\b[^>]*>", xml_text, flags=re.IGNORECASE)
@@ -150,7 +150,7 @@ def _parse_rss_regex(xml_text: str, source: str = "") -> List[Dict]:
         fields: Dict[str, str] = {}
         for k, v in _TAG_RE.findall(chunk):
             kl = k.lower()
-            if kl not in fields:  # giữ giá trị đầu, tránh tag lồng đè lên
+            if kl not in fields:  # keeps the first value, nested tags don't override
                 fields[kl] = _clean(v)
         if not any(fields.get(k) for k in ("title", "link", "description", "pubdate")):
             continue
@@ -165,7 +165,7 @@ def _parse_rss_regex(xml_text: str, source: str = "") -> List[Dict]:
 
 
 def fetch_rss(url: str, timeout: float = 20.0, source: str = "") -> List[Dict]:
-    """Fetch 1 RSS URL bằng httpx -> parse -> list item. Lỗi mạng trả list rỗng."""
+    """Fetches 1 RSS URL with httpx -> parses -> item list. Network errors return []."""
     try:
         resp = httpx.get(url, timeout=timeout,
                          headers={"User-Agent": "BoomBot/1.0 RSSNewsFeed"})
@@ -176,10 +176,10 @@ def fetch_rss(url: str, timeout: float = 20.0, source: str = "") -> List[Dict]:
 
 
 class RSSNewsFeed(Feed):
-    """Poll RSS định kỳ trong thread riêng. KHÔNG phải WebSocket.
+    """Periodic RSS polling in its own thread. NOT a WebSocket.
 
-    Mỗi item mới (chưa thấy link/guid) gọi on_message 1 lần với dict
-    {title, link, published, summary, source}. Có dedupe theo link.
+    Each new item (unseen link/guid) triggers on_message once with a dict
+    {title, link, published, summary, source}. Dedupes by link.
     """
 
     def __init__(self, urls, on_message: Optional[Callable[[Dict], None]] = None,
@@ -189,23 +189,23 @@ class RSSNewsFeed(Feed):
         self.interval = interval
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._seen = set()  # link đã gửi -> dedupe
+        self._seen = set()  # already-sent links -> dedupe
         self._seen_lock = threading.Lock()
 
     def _is_new(self, item: Dict) -> bool:
         key = item.get("link") or item.get("title")
         if not key:
-            return True  # không có key thì vẫn gửi (không dedupe được)
+            return True  # no key, can't dedupe, still send
         with self._seen_lock:
             if key in self._seen:
                 return False
             self._seen.add(key)
-            if len(self._seen) > 5000:  # chống phình set khi chạy lâu
+            if len(self._seen) > 5000:  # bounds the set on long runs
                 self._seen = set(list(self._seen)[-2500:])
             return True
 
     def fetch_once(self) -> List[Dict]:
-        """Fetch tất cả URL 1 lượt, chỉ trả item mới."""
+        """Fetches all URLs once, returns only new items."""
         fresh = []
         for url in self.urls:
             for item in fetch_rss(url, source=url):
@@ -214,7 +214,7 @@ class RSSNewsFeed(Feed):
         return fresh
 
     def poll(self, interval: float = 300.0) -> None:
-        """Chạy vòng poll trong thread riêng (daemon). Gọi 1 lần là đủ."""
+        """Runs the poll loop in its own (daemon) thread. One call is enough."""
         self.interval = interval
         self.start()
 
@@ -229,7 +229,7 @@ class RSSNewsFeed(Feed):
         self._thread.start()
 
     def _poll_loop(self) -> None:
-        # Fetch ngay lượt đầu để user không phải chờ hết interval.
+        # Fetch immediately on the first round so users don't wait out the interval.
         first = True
         while not self._stop.is_set():
             if not first:
@@ -242,7 +242,7 @@ class RSSNewsFeed(Feed):
                         break
                     self._emit(item)
             except Exception:
-                pass  # lỗi 1 vòng poll không giết feed
+                pass  # one bad poll round never kills the feed
         self._running = False
 
     def close(self) -> None:

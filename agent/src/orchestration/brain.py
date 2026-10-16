@@ -523,30 +523,30 @@ class Brain:
                 g, ["chạy", "run", "thực thi", "execute"])
             if run and self._is_explicit_test_cmd(cmd_candidate):
                 return [{"tool": run, "args": {"command": cmd_candidate},
-                         "desc": "chạy test: %s" % cmd_candidate}]
+                         "desc": "run tests: %s" % cmd_candidate}]
             t = self._pick_tool(_TEST_CANDIDATES, tools)
             if t:
                 args = {"path": files[0]} if files else {}
                 return [{"tool": t, "args": args,
-                         "desc": "chạy test: %s" % g}]
+                         "desc": "run tests: %s" % g}]
             if run:
                 cmd = self._test_command(g, files)
                 return [{"tool": run, "args": {"command": cmd},
-                         "desc": "chạy test: %s" % cmd}]
+                         "desc": "run tests: %s" % cmd}]
 
         elif intent == "fix":
             steps: List[Dict[str, Any]] = []
             if read and files:
                 steps.append({"tool": read, "args": {"path": files[0]},
-                              "desc": "đọc file lỗi: %s" % files[0]})
+                              "desc": "read failing file: %s" % files[0]})
             t = self._pick_tool(_TEST_CANDIDATES, tools)
             if t:
                 steps.append({"tool": t, "args": {},
-                              "desc": "chạy lại test để tái hiện lỗi"})
+                              "desc": "re-run tests to reproduce the error"})
             elif run:
                 steps.append({"tool": run,
                               "args": {"command": "python3 -m pytest"},
-                              "desc": "chạy lại để tái hiện lỗi"})
+                              "desc": "re-run to reproduce the error"})
             if steps:
                 return steps
 
@@ -555,12 +555,12 @@ class Brain:
                 cmd = self._strip_verb(
                     g, ["chạy", "run", "thực thi", "execute"])
                 return [{"tool": run, "args": {"command": cmd},
-                         "desc": "thực thi: %s" % cmd}]
+                         "desc": "execute: %s" % cmd}]
 
         elif intent == "read":
             if read and files:
                 return [{"tool": read, "args": {"path": files[0]},
-                         "desc": "đọc file: %s" % files[0]}]
+                         "desc": "read file: %s" % files[0]}]
 
         elif intent == "search":
             s = self._pick_tool(_SEARCH_CANDIDATES, tools)
@@ -568,7 +568,7 @@ class Brain:
                 kw = self._strip_verb(
                     g, ["tìm kiếm", "tìm", "search", "grep"])
                 return [{"tool": s, "args": {"pattern": kw},
-                         "desc": "tìm kiếm: %s" % kw}]
+                         "desc": "search: %s" % kw}]
 
         elif intent == "edit":
             # Without a model we cannot invent the new content; the useful
@@ -576,13 +576,13 @@ class Brain:
             # model, or a human) has context.
             if read and files:
                 return [{"tool": read, "args": {"path": files[0]},
-                         "desc": "đọc file trước khi sửa: %s" % files[0]}]
+                         "desc": "read file before editing: %s" % files[0]}]
 
         # generic / anything unhandled: run the goal as a command, mirroring
         # the autonomous controller's own default plan.
         if run:
             return [{"tool": run, "args": {"command": g},
-                     "desc": "thực hiện: %s" % g}]
+                     "desc": "execute: %s" % g}]
         return []
 
     # ------------------------------------------------------------------ REACT

@@ -1,34 +1,34 @@
-"""Chia goal thành TaskStep qua 1 LLM turn. Parse fail → 1 step fallback, không bịa."""
+"""Splits a goal into TaskSteps via 1 LLM turn. Parse failure → 1 fallback step, no fabrication."""
 import json
 from typing import Callable, List, Optional
 from tasks.models import TaskStep, StepStatus
 
-_PROMPT_TEMPLATE = """Bạn là bộ lập kế hoạch cho một AI agent. Mục tiêu của người dùng là:
+_PROMPT_TEMPLATE = """You are a planner for an AI agent. The user's goal is:
 
 {goal}
 
-Hãy chia mục tiêu thành các bước thực hiện cụ thể, theo thứ tự, mỗi bước là một việc có thể thực hiện độc lập bởi agent.
+Split the goal into concrete, ordered execution steps; each step should be independently executable by the agent.
 
-Trả lời DUY NHẤT bằng một JSON array, KHÔNG thêm giải thích, KHÔNG thêm markdown, KHÔNG dùng code fence. Mỗi phần tử trong array có dạng:
-{{"id": "1", "desc": "Mô tả bước cần làm", "depends_on": ["2"]}}
+Reply with ONLY a JSON array, NO explanations, NO markdown, NO code fences. Each array element looks like:
+{{"id": "1", "desc": "Description of the step to do", "depends_on": ["2"]}}
 
-Trong đó:
-- "id": chuỗi định danh duy nhất của bước (bắt đầu từ "1").
-- "desc": mô tả ngắn gọn, rõ ràng việc phải làm trong bước đó (tiếng Việt).
-- "depends_on": danh sách id các bước PHẢI hoàn thành trước khi bước này chạy; để trống [] nếu bước độc lập.
+Where:
+- "id": the step's unique identifier string (starting from "1").
+- "desc": a short, clear description of the work in this step.
+- "depends_on": ids of steps that MUST complete before this step runs; empty [] when independent.
 
-Ví dụ trả lời hợp lệ:
-[{{"id": "1", "desc": "Tìm danh sách quán phở ngon ở Quận 1", "depends_on": []}}, {{"id": "2", "desc": "Đọc review từng quán", "depends_on": ["1"]}}, {{"id": "3", "desc": "Chốt 3 quán tốt nhất và gửi địa chỉ", "depends_on": ["1", "2"]}}]
+Valid example reply:
+[{{"id": "1", "desc": "Find good pho restaurants in District 1", "depends_on": []}}, {{"id": "2", "desc": "Read reviews of each place", "depends_on": ["1"]}}, {{"id": "3", "desc": "Pick the 3 best and send addresses", "depends_on": ["1", "2"]}}]
 """
 
 
 def _fallback(goal: str) -> List[TaskStep]:
-    """Fallback trung thực: đúng 1 step chứa nguyên goal, không bịa thêm bước."""
+    """Honest fallback: exactly 1 step containing the raw goal, no invented steps."""
     return [TaskStep(id="1", desc=goal.strip(), status=StepStatus.PENDING)]
 
 
 def _extract_json_array(text: str) -> Optional[list]:
-    """Trích JSON array từ text: lấy từ '[' đầu tiên đến ']' cuối cùng rồi json.loads."""
+    """Extracts a JSON array from text: from the first '[' to the last ']' then json.loads."""
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1 or end <= start:
@@ -41,8 +41,8 @@ def _extract_json_array(text: str) -> Optional[list]:
 
 
 def _build_steps(items: list) -> List[TaskStep]:
-    """Validate từng item: dict có id và desc non-empty; id trùng giữ cái đầu;
-    depends_on phải là list. Sau đó lọc depends_on chỉ giữ id tồn tại và khác chính nó."""
+    """Validates each item: dict with non-empty id and desc; duplicate ids keep the first;
+    depends_on must be a list. Then filters depends_on to existing ids other than itself."""
     seen: dict = {}
     for item in items:
         if not isinstance(item, dict):
@@ -54,7 +54,7 @@ def _build_steps(items: list) -> List[TaskStep]:
         if not step_id or not desc:
             continue
         if step_id in seen:
-            continue  # id trùng: giữ cái đầu, bỏ cái sau
+            continue  # duplicate id: keep the first, drop later ones
         depends_on = item.get("depends_on", [])
         if not isinstance(depends_on, list):
             depends_on = []
@@ -62,7 +62,7 @@ def _build_steps(items: list) -> List[TaskStep]:
         seen[step_id] = TaskStep(
             id=step_id, desc=desc, status=StepStatus.PENDING, depends_on=depends_on
         )
-    # Lọc depends_on: chỉ giữ id tồn tại trong steps và khác chính nó (không để DAG gãy)
+    # Filter depends_on: keeps only ids present in steps and not the step itself (keeps the DAG valid)
     ids = set(seen.keys())
     for step in seen.values():
         step.depends_on = [d for d in step.depends_on if d in ids and d != step.id]
@@ -70,13 +70,13 @@ def _build_steps(items: list) -> List[TaskStep]:
 
 
 def plan_goal(goal: str, llm: Callable[[str], str]) -> List[TaskStep]:
-    """Chia goal thành các TaskStep qua 1 LLM turn.
+    """Splits a goal into TaskSteps via 1 LLM turn.
 
-    - goal rỗng/blank → ValueError.
-    - llm raise exception hoặc text trả về không parse được → fallback 1 step.
+    - Empty/blank goal → ValueError.
+    - llm raising or returning unparsable text → 1-step fallback.
     """
     if not goal or not goal.strip():
-        raise ValueError("goal không được rỗng")
+        raise ValueError("goal must not be empty")
     prompt = _PROMPT_TEMPLATE.format(goal=goal.strip())
     try:
         text = llm(prompt)

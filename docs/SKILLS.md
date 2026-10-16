@@ -1,193 +1,193 @@
-# Boom — Danh mục Skills
+# Boom — Skills Catalog
 
-Agent Skills của Boom nằm trong `skills/` — mỗi skill là 1 thư mục chứa `SKILL.md` (frontmatter `description` + hướng dẫn chi tiết). Agent khám phá skill qua tool `list_skills`, đọc chi tiết bằng `view_skill`, và cài thêm bằng `install_skill`.
+Boom's agent skills live in `skills/` — each skill is a directory containing a `SKILL.md` (frontmatter `description` + detailed instructions). The agent discovers skills via the `list_skills` tool, reads details with `view_skill`, and installs more with `install_skill`.
 
-> **Nguồn xác thực:** quét `skills/**/SKILL.md` trên `main` (commit `f4ed006`).
-> **Tổng số: 80 skills** (mỗi file `SKILL.md` = 1 skill). Thư mục `skills/index-cache` hiện chưa có `SKILL.md` nên không tính.
+> **Source of truth:** scanned `skills/**/SKILL.md` on `main` (commit `f4ed006`).
+> **Total: 80 skills** (one `SKILL.md` file = one skill). `skills/index-cache` has no `SKILL.md` yet, so it's excluded.
 
-| Nhóm | Số skills |
-|------|-----------|
-| Lập trình & chất lượng code | 17 |
+| Group | Skills |
+|-------|--------|
+| Programming & code quality | 17 |
 | Reverse engineering (REA) | 4 |
-| DevOps, deploy & vận hành | 7 |
-| Lên lịch & thông báo | 2 |
-| Bảo mật & dữ liệu | 3 |
-| Nghiên cứu & thông tin | 6 |
-| Tài liệu văn phòng | 9 |
-| Kết nối dịch vụ | 13 |
-| Theo dõi giá | 1 |
-| Sáng tạo & media | 12 |
+| DevOps, deploy & operations | 7 |
+| Scheduling & notifications | 2 |
+| Security & data | 3 |
+| Research & information | 6 |
+| Office documents | 9 |
+| Service integrations | 13 |
+| Price tracking | 1 |
+| Creative & media | 12 |
 | Autonomous agents | 5 |
 | Web recovery | 1 |
 
 ---
 
-## 1. Lập trình & chất lượng code (17)
+## 1. Programming & code quality (17)
 
-| Skill | Mô tả |
-|-------|-------|
-| `ast-refactor` | Refactor code bằng AST và structural pattern matching. |
-| `code-review` | Review tĩnh code Python: complexity, dead code, bare except, print, TODO (wrap `codereview.py` của Boom). |
-| `refactor-assistant` | Trợ lý refactor an toàn: rename symbol, extract function, move symbol bằng AST thật, luôn dry-run preview diff trước khi apply. |
-| `test-writer` | Sinh test pytest từ AST: phân tích function, suy luận giá trị mẫu, sinh happy path + edge cases (None, rỗng, biên). |
-| `api-designer` | Thiết kế REST API từ mô tả: sinh OpenAPI 3.0 spec (paths, schemas, errors) + route stubs FastAPI/Flask, có validate chuẩn REST. |
-| `software-development/codebase-inspection` | Inspect codebase bằng pygount: LOC, ngôn ngữ, tỉ lệ. |
-| `software-development/dogfood` | Exploratory QA web app: tìm bug, thu thập evidence, viết report. |
-| `software-development/github` | GitHub qua `gh` CLI: PR, issue, review, repo, auth. |
-| `software-development/hermes-agent-skill-authoring` | Viết SKILL.md trong repo: frontmatter và cấu trúc chuẩn. |
-| `software-development/inspecting-hermes-desktop-dom` | Đọc live Hermes desktop DOM/CSS qua CDP. |
-| `software-development/node-inspect-debugger` | Debug Node.js qua `--inspect` + Chrome DevTools Protocol CLI. |
+| Skill | Description |
+|-------|-------------|
+| `ast-refactor` | Refactor code with AST and structural pattern matching. |
+| `code-review` | Static Python code review: complexity, dead code, bare except, print, TODO (wraps Boom's `codereview.py`). |
+| `refactor-assistant` | Safe refactor assistant: rename symbol, extract function, move symbol with real AST, always dry-run preview diff before applying. |
+| `test-writer` | Generate pytest tests from AST: analyze functions, infer sample values, generate happy path + edge cases (None, empty, boundary). |
+| `api-designer` | Design REST APIs from a description: generate OpenAPI 3.0 spec (paths, schemas, errors) + FastAPI/Flask route stubs, with REST-standard validation. |
+| `software-development/codebase-inspection` | Inspect codebase with pygount: LOC, languages, ratios. |
+| `software-development/dogfood` | Exploratory web app QA: find bugs, collect evidence, write reports. |
+| `software-development/github` | GitHub via `gh` CLI: PRs, issues, reviews, repos, auth. |
+| `software-development/hermes-agent-skill-authoring` | Write SKILL.md in a repo: standard frontmatter and structure. |
+| `software-development/inspecting-hermes-desktop-dom` | Read live Hermes desktop DOM/CSS via CDP. |
+| `software-development/node-inspect-debugger` | Debug Node.js via `--inspect` + Chrome DevTools Protocol CLI. |
 | `software-development/python-debugpy` | Debug Python: pdb REPL + debugpy remote (DAP). |
-| `software-development/requesting-code-review` | Review trước commit: security scan, quality gates, auto-fix. |
-| `software-development/simplify-code` | Dọn code mới thay đổi gần đây bằng 4 agent song song. |
-| `software-development/spike` | Thí nghiệm throwaway để validate ý tưởng trước khi build. |
-| `software-development/systematic-debugging` | Debug tìm root cause theo 4 pha: hiểu bug trước khi sửa. |
-| `software-development/test-driven-development` | TDD: ép RED-GREEN-REFACTOR, viết test trước code. |
+| `software-development/requesting-code-review` | Pre-commit review: security scan, quality gates, auto-fix. |
+| `software-development/simplify-code` | Clean up recently changed code with 4 parallel agents. |
+| `software-development/spike` | Throwaway experiments to validate ideas before building. |
+| `software-development/systematic-debugging` | Root-cause debugging in 4 phases: understand the bug before fixing. |
+| `software-development/test-driven-development` | TDD: enforce RED-GREEN-REFACTOR, tests before code. |
 
 ---
 
 ## 2. Reverse engineering — REA (4)
 
-Bộ skill từ `morluto/rea` (commit `3135db3`), dùng cho điều tra artifact.
+Skill set from `morluto/rea` (commit `3135db3`), for artifact investigation.
 
-| Skill | Mô tả |
-|-------|-------|
-| `rea/reverse-engineer-anything` | Reverse engineer target native, managed, Electron/JS, packaged, firmware, browser bằng REA; giải thích feature, so sánh version, decompile, hoặc hướng dẫn tái dựng. |
-| `rea/rea-tool-design` | Thiết kế/thay đổi investigation tool của REA, contract CLI/MCP, provider capability và Evidence semantics. |
-| `rea/rea-ci-tests-audit` | Audit CI và test suite của REA: correctness, fixture drift, false pass, performance đo được. |
-| `rea/rea-changelog-update` | Chuẩn bị/viết lại changelog release và GitHub release notes của REA từ Git history, kèm lời cảm ơn contributor đã verify. |
-
----
-
-## 3. DevOps, deploy & vận hành (7)
-
-| Skill | Mô tả |
-|-------|-------|
-| `devops/sdlc-review` | Review Kanban handoff và route outcome đã verify. |
-| `deployer` | Checklist pre-deploy tự động: tests pass, không secret, version bumped, CHANGELOG, env vars, backup plan. |
-| `env-setup` | Kiểm tra môi trường dev: version Python, package đã cài, biến môi trường bắt buộc, port trống. Output chuẩn [{check, status, fix_command}]. |
-| `git-workflow` | Git workflow helper: `smart_commit()` tự sinh commit message từ diff, `branch_status()` xem trạng thái nhánh, `pr_checklist()` kiểm tra trước khi tạo PR. |
-| `log-analyzer` | Phân tích file log, đếm lỗi và tìm pattern chậm. |
-| `backup-manager` | Tạo, liệt kê, khôi phục và dọn backup tar.gz. |
-| `perf-optimizer` | Phân tích bottleneck hiệu năng bằng AST: vòng lặp lồng O(n²), I/O trong loop, nối chuỗi +=, N+1 query, thiếu cache. |
+| Skill | Description |
+|-------|-------------|
+| `rea/reverse-engineer-anything` | Reverse engineer native, managed, Electron/JS, packaged, firmware, and browser targets with REA; explain features, compare versions, decompile, or guide reconstruction. |
+| `rea/rea-tool-design` | Design/change REA investigation tools, CLI/MCP contracts, provider capabilities, and Evidence semantics. |
+| `rea/rea-ci-tests-audit` | Audit REA's CI and test suites: correctness, fixture drift, false passes, measurable performance. |
+| `rea/rea-changelog-update` | Prepare/rewrite REA release changelogs and GitHub release notes from git history, with verified contributor thanks. |
 
 ---
 
-## 4. Lên lịch & thông báo (2)
+## 3. DevOps, deploy & operations (7)
 
-| Skill | Mô tả |
-|-------|-------|
-| `cron-manager` | Quản lý cron jobs: add/list/remove (lưu JSON) + validate cron expression, hỗ trợ @daily/@hourly và dạng 5 trường. |
-| `notify-hub` | Gửi thông báo đa kênh qua webhook URL từ env. |
-
----
-
-## 5. Bảo mật & dữ liệu (3)
-
-| Skill | Mô tả |
-|-------|-------|
-| `security-audit` | Kiểm toán bảo mật code Python: hardcoded secret, hàm nguy hiểm (eval/exec/os.system), SQL injection, thiếu validate input. |
-| `data-validator` | Validate JSON/CSV theo schema, type và format. |
-| `db-helper` | Wrap SQLite an toàn: query/insert/migrate với whitelist bảng, parameterized query, chặn DROP và DELETE/UPDATE thiếu WHERE. |
+| Skill | Description |
+|-------|-------------|
+| `devops/sdlc-review` | Review Kanban handoffs and route verified outcomes. |
+| `deployer` | Automated pre-deploy checklist: tests pass, no secrets, version bumped, CHANGELOG, env vars, backup plan. |
+| `env-setup` | Check dev environment: Python version, installed packages, required env vars, free ports. Standard output [{check, status, fix_command}]. |
+| `git-workflow` | Git workflow helper: `smart_commit()` auto-generates commit messages from diffs, `branch_status()` shows branch state, `pr_checklist()` checks before opening a PR. |
+| `log-analyzer` | Analyze log files, count errors, find slow patterns. |
+| `backup-manager` | Create, list, restore, and clean tar.gz backups. |
+| `perf-optimizer` | Analyze performance bottlenecks with AST: nested O(n²) loops, I/O in loops, += string concat, N+1 queries, missing cache. |
 
 ---
 
-## 6. Nghiên cứu & thông tin (6)
+## 4. Scheduling & notifications (2)
 
-| Skill | Mô tả |
-|-------|-------|
-| `research/arxiv` | Tìm paper arXiv theo keyword, author, category hoặc ID. |
-| `research/competitor-news-monitor` | Theo dõi tin tức quan trọng của các công ty chỉ định; digest có trích dẫn. |
-| `research/grounded-citations` | Neo câu trả lời và tài liệu vào nguồn trích dẫn có thể verify. |
-| `research/llm-wiki` | Xây/truy vấn knowledge base markdown liên kết (theo LLM Wiki của Karpathy). |
-| `doc-researcher` | Lập kế hoạch nghiên cứu cho 1 topic: câu hỏi cần trả lời, nguồn cần tra, template outline markdown để agent điền. |
-| `feature-watch` | Theo dõi hệ sinh thái AI agent, báo tính năng/release mới có trích dẫn. |
+| Skill | Description |
+|-------|-------------|
+| `cron-manager` | Manage cron jobs: add/list/remove (JSON storage) + validate cron expressions, supports @daily/@hourly and 5-field format. |
+| `notify-hub` | Send multi-channel notifications via webhook URLs from env. |
 
 ---
 
-## 7. Tài liệu văn phòng (9)
+## 5. Security & data (3)
 
-| Skill | Mô tả |
-|-------|-------|
-| `productivity/docx` | Tạo, đọc, sửa, template và review file Word .docx. |
-| `productivity/pdf` | File PDF: tạo, đọc, merge, fill form, OCR, sửa text. |
-| `productivity/xlsx` | Tạo, đọc, sửa workbook Excel .xlsx và CSV. |
-| `productivity/powerpoint` | Tạo, đọc, sửa deck .pptx bằng python-pptx. |
-| `productivity/notion` | Notion API + CLI `ntn`: pages, databases, markdown, Workers. |
-| `productivity/meeting-action-items` | Biến meeting notes thành decision, owner, ticket có trích dẫn. |
-| `productivity/document-to-action-items` | Trích obligation, deadline, task có trích dẫn từ tài liệu. |
-| `productivity/weekly-review-planning` | Weekly reset: commitments, việc kẹt, kế hoạch tuần tới. |
-| `note-taking/obsidian` | Đọc, tìm, tạo và sửa note trong Obsidian vault. |
+| Skill | Description |
+|-------|-------------|
+| `security-audit` | Audit Python code security: hardcoded secrets, dangerous functions (eval/exec/os.system), SQL injection, missing input validation. |
+| `data-validator` | Validate JSON/CSV against schema, types, and formats. |
+| `db-helper` | Safe SQLite wrapper: query/insert/migrate with table whitelist, parameterized queries, blocks DROP and WHERE-less DELETE/UPDATE. |
 
 ---
 
-## 8. Kết nối dịch vụ (13)
+## 6. Research & information (6)
 
-| Skill | Mô tả |
-|-------|-------|
-| `productivity/airtable` | Airtable REST API qua curl: records CRUD, filter, upsert. |
-| `productivity/box` | Box: quản lý file cloud, chia sẻ, tìm kiếm, metadata. |
-| `productivity/google-workspace` | Gmail, Calendar, Drive, Docs, Sheets qua CLI `gws` hoặc Python. |
-| `productivity/maps` | Geocode, POI, route, timezone qua OpenStreetMap/OSRM. |
-| `productivity/teams-meeting-pipeline` | Tóm tắt meeting Teams, job replay, Graph subscriptions. |
-| `email/email-inbox-triage` | Triage inbox: ưu tiên thread, draft reply an toàn. |
-| `email/himalaya` | Email IMAP/SMTP từ terminal qua Himalaya CLI. |
-| `social-media/xurl` | X/Twitter qua `xurl` CLI: tìm post, đăng bài, DM, media. |
-| `media/youtube-content` | Transcript YouTube thành summary, thread, blog. |
-| `apple/apple-notes` | Quản lý Apple Notes qua `memo` CLI: tạo, tìm, sửa. |
-| `apple/apple-reminders` | Apple Reminders qua `remindctl`: add, list, complete. |
-| `apple/findmy` | Theo dõi thiết bị Apple/AirTag qua FindMy.app trên macOS. |
-| `apple/imessage` | Gửi/nhận iMessage/SMS qua CLI `imsg` trên macOS. |
+| Skill | Description |
+|-------|-------------|
+| `research/arxiv` | Search arXiv papers by keyword, author, category, or ID. |
+| `research/competitor-news-monitor` | Track important news from specified companies; digest with citations. |
+| `research/grounded-citations` | Ground answers and documents in verifiable cited sources. |
+| `research/llm-wiki` | Build/query linked markdown knowledge bases (Karpathy's LLM Wiki style). |
+| `doc-researcher` | Plan research for a topic: questions to answer, sources to check, markdown outline template for the agent to fill in. |
+| `feature-watch` | Watch the AI agent ecosystem, report new features/releases with citations. |
 
 ---
 
-## 9. Theo dõi giá (1)
+## 7. Office documents (9)
 
-| Skill | Mô tả |
-|-------|-------|
-| `productivity/product-price-monitor` | Theo dõi giá sản phẩm, chuyến bay, listing; alert khi chạm target. |
+| Skill | Description |
+|-------|-------------|
+| `productivity/docx` | Create, read, edit, template, and review Word .docx files. |
+| `productivity/pdf` | PDF files: create, read, merge, fill forms, OCR, edit text. |
+| `productivity/xlsx` | Create, read, edit Excel .xlsx workbooks and CSV. |
+| `productivity/powerpoint` | Create, read, edit .pptx decks with python-pptx. |
+| `productivity/notion` | Notion API + `ntn` CLI: pages, databases, markdown, Workers. |
+| `productivity/meeting-action-items` | Turn meeting notes into decisions, owners, and cited tickets. |
+| `productivity/document-to-action-items` | Extract obligations, deadlines, and cited tasks from documents. |
+| `productivity/weekly-review-planning` | Weekly reset: commitments, blockers, next week's plan. |
+| `note-taking/obsidian` | Read, search, create, and edit notes in an Obsidian vault. |
 
 ---
 
-## 10. Sáng tạo & media (12)
+## 8. Service integrations (13)
 
-| Skill | Mô tả |
-|-------|-------|
-| `creative/architecture-diagram` | Vẽ sơ đồ kiến trúc/cloud/infra dạng SVG dark-theme xuất HTML. |
-| `creative/ascii-video` | ASCII video: chuyển video/audio thành MP4/GIF ASCII màu. |
-| `creative/baoyu-infographic` | Infographic: 21 layout × 21 style. |
-| `creative/claude-design` | Thiết kế HTML artifact một lần (landing, deck, prototype). |
-| `creative/design-md` | Soạn/validate/export file spec token DESIGN.md của Google. |
-| `creative/humanizer` | Humanize text: loại AI-ism, thêm giọng thật. |
-| `creative/manim-video` | Animation Manim CE: video toán/thuật toán kiểu 3Blue1Brown. |
-| `creative/p5js` | Sketch p5.js: generative art, shader, interactive, 3D. |
-| `creative/popular-web-designs` | 54 design system thật (Stripe, Linear, Vercel) dạng HTML/CSS. |
-| `creative/songwriting-and-ai-music` | Kỹ thuật sáng tác nhạc và prompt nhạc AI Suno. |
-| `media/gif-search` | Tìm/tải GIF từ Tenor qua curl + jq. |
-| `media/songsee` | Spectrogram/đặc trưng audio (mel, chroma, MFCC) qua CLI. |
+| Skill | Description |
+|-------|-------------|
+| `productivity/airtable` | Airtable REST API via curl: records CRUD, filter, upsert. |
+| `productivity/box` | Box: cloud file management, sharing, search, metadata. |
+| `productivity/google-workspace` | Gmail, Calendar, Drive, Docs, Sheets via `gws` CLI or Python. |
+| `productivity/maps` | Geocode, POI, routes, timezones via OpenStreetMap/OSRM. |
+| `productivity/teams-meeting-pipeline` | Summarize Teams meetings, job replay, Graph subscriptions. |
+| `email/email-inbox-triage` | Triage inbox: prioritize threads, draft safe replies. |
+| `email/himalaya` | Email IMAP/SMTP from terminal via Himalaya CLI. |
+| `social-media/xurl` | X/Twitter via `xurl` CLI: search posts, publish, DMs, media. |
+| `media/youtube-content` | Turn YouTube transcripts into summaries, threads, blogs. |
+| `apple/apple-notes` | Manage Apple Notes via `memo` CLI: create, search, edit. |
+| `apple/apple-reminders` | Apple Reminders via `remindctl`: add, list, complete. |
+| `apple/findmy` | Track Apple devices/AirTags via FindMy.app on macOS. |
+| `apple/imessage` | Send/receive iMessage/SMS via `imsg` CLI on macOS. |
+
+---
+
+## 9. Price tracking (1)
+
+| Skill | Description |
+|-------|-------------|
+| `productivity/product-price-monitor` | Track product, flight, and listing prices; alert on target hit. |
+
+---
+
+## 10. Creative & media (12)
+
+| Skill | Description |
+|-------|-------------|
+| `creative/architecture-diagram` | Draw architecture/cloud/infra diagrams as dark-theme SVG exported to HTML. |
+| `creative/ascii-video` | ASCII video: convert video/audio to colored ASCII MP4/GIF. |
+| `creative/baoyu-infographic` | Infographics: 21 layouts × 21 styles. |
+| `creative/claude-design` | One-shot HTML artifact design (landing, deck, prototype). |
+| `creative/design-md` | Author/validate/export Google DESIGN.md token spec files. |
+| `creative/humanizer` | Humanize text: remove AI-isms, add a real voice. |
+| `creative/manim-video` | Manim CE animations: 3Blue1Brown-style math/algorithm videos. |
+| `creative/p5js` | p5.js sketches: generative art, shaders, interactive, 3D. |
+| `creative/popular-web-designs` | 54 real design systems (Stripe, Linear, Vercel) as HTML/CSS. |
+| `creative/songwriting-and-ai-music` | Songwriting techniques and Suno AI music prompts. |
+| `media/gif-search` | Find/download GIFs from Tenor via curl + jq. |
+| `media/songsee` | Audio spectrogram/features (mel, chroma, MFCC) via CLI. |
 
 ---
 
 ## 11. Autonomous agents (5)
 
-Ủy quyền coding cho các coding agent CLI khác.
+Delegate coding to other coding-agent CLIs.
 
-| Skill | Mô tả |
-|-------|-------|
-| `autonomous-ai-agents/claude-code` | Ủy quyền coding cho Claude Code CLI (feature, PR). |
-| `autonomous-ai-agents/codex` | Ủy quyền coding cho OpenAI Codex CLI (feature, PR). |
-| `autonomous-ai-agents/opencode` | Ủy quyền coding cho OpenCode CLI (feature, PR review). |
-| `autonomous-ai-agents/hermes-agent` | Dùng, cấu hình, theme, mở rộng và điều phối Hermes Agent. |
-| `autonomous-ai-agents/computer-use` | Điều khiển desktop background-first; escalate khi có signal. |
+| Skill | Description |
+|-------|-------------|
+| `autonomous-ai-agents/claude-code` | Delegate coding to Claude Code CLI (features, PRs). |
+| `autonomous-ai-agents/codex` | Delegate coding to OpenAI Codex CLI (features, PRs). |
+| `autonomous-ai-agents/opencode` | Delegate coding to OpenCode CLI (features, PR reviews). |
+| `autonomous-ai-agents/hermes-agent` | Use, configure, theme, extend, and orchestrate Hermes Agent. |
+| `autonomous-ai-agents/computer-use` | Background-first desktop control; escalate on signal. |
 
 ---
 
 ## 12. Web recovery (1)
 
-| Skill | Mô tả |
-|-------|-------|
-| `web/blocked-page-recovery` | Dùng khi fetch thất bại: 403/429, paywall, WAF, tường bot. |
+| Skill | Description |
+|-------|-------------|
+| `web/blocked-page-recovery` | Use when fetching fails: 403/429, paywalls, WAFs, bot walls. |
 
 ---
 
-*Cập nhật 2026-10-16 từ `main`. Số liệu quét thật từ `skills/**/SKILL.md` — không ước lượng. Mô tả lấy từ field `description:` trong frontmatter của từng SKILL.md.*
+*Updated 2026-10-16 from `main`. Figures scanned from `skills/**/SKILL.md` — not estimated. Descriptions taken from each SKILL.md's frontmatter `description:` field.*

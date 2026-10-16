@@ -1,31 +1,31 @@
-"""TaskPlanner — phan tich task code thanh steps chi tiet truoc khi thuc thi.
+"""TaskPlanner — breaks a coding task into detailed steps before execution.
 
-Nam tren duong chay: controller.run_goal(goi brain.plan) -> goi TaskPlanner.plan
-de co duoc ke hoach chi tiet (steps co dependencies DAG) truoc khi vao vong lap
-execute -> verify -> debug.
+On the execution path: controller.run_goal (calls brain.plan) -> calls
+TaskPlanner.plan to get a detailed plan (steps with DAG dependencies) before
+entering the execute -> verify -> debug loop.
 
-v1: heuristic keyword + template, KHONG dung LLM — du de phan tich nhanh cac
-task thong thuong, khong phu thuoc key hay mang.
+v1: keyword heuristics + templates, NO LLM — fast enough for routine tasks,
+no keys or network required.
 
-Cach dung::
+Usage::
 
     from autonomous.planner import TaskPlanner
     planner = TaskPlanner()
-    plan = planner.plan("Them chuc nang tim kiem vao module tools")
+    plan = planner.plan("Add a search feature to the tools module")
     print(planner.to_markdown(plan))
 
-Plan dict co dang:
+Plan dict shape:
     {
-        "task": str,            # mo ta task goc
+        "task": str,            # original task description
         "task_type": "feature" | "bugfix" | "refactor",
         "steps": [
             {
                 "id": "step_1",
                 "title": str,
                 "description": str,
-                "files": [str],           # file du kien cham toi (co the rong)
-                "actions": [str],         # hanh dong ky thuat ngan gon
-                "dependencies": [str],    # id cac step phai xong truoc (DAG)
+                "files": [str],           # files likely touched (may be empty)
+                "actions": [str],         # short technical actions
+                "dependencies": [str],    # ids of steps that must finish first (DAG)
                 "complexity": "low" | "medium" | "high",
             }, ...
         ],
@@ -37,7 +37,8 @@ from typing import Dict, List
 
 
 # ---------------------------------------------------------------------------
-# Keyword cho detect_task_type (Viet + Anh, so sanh tren chu thuong)
+# Keywords for detect_task_type (Vietnamese + English, lowercased match).
+# NOTE: these tuples are functional classification data — kept as-is.
 # ---------------------------------------------------------------------------
 
 _FEATURE_KEYWORDS = (
@@ -68,12 +69,14 @@ _TASK_TYPES = ("feature", "bugfix", "refactor")
 
 
 # ---------------------------------------------------------------------------
-# Template steps cho tung loai task
+# Step templates per task type.
+# NOTE: template titles/descriptions and the to_markdown() labels are pinned
+# by evals/test_planner.py — the plan report stays Vietnamese by design.
 # ---------------------------------------------------------------------------
 
-# Moi template: list cac step, moi step la dict co:
-#   title, description, files (goi y), actions.
-# Dependencies tu dong xay theo thu tu (step n phu thuoc step n-1) de thanh DAG.
+# Each template: a list of steps, each a dict with:
+#   title, description, files (suggestions), actions.
+# Dependencies are auto-built in order (step n depends on step n-1) forming a DAG.
 _FEATURE_TEMPLATE = [
     {
         "title": "Khảo sát codebase",
@@ -194,7 +197,7 @@ _TEMPLATES = {
     "refactor": _REFACTOR_TEMPLATE,
 }
 
-# Goi y file dua tren tu khoa xuat hien trong mo ta task.
+# File suggestions based on keywords in the task description.
 _FILE_HINTS = (
     ("tool", ["agent/src/tools.py"]),
     ("channel", ["gateway/channels/"]),
@@ -209,9 +212,9 @@ _FILE_HINTS = (
 
 
 def detect_task_type(task_description: str) -> str:
-    """Phan loai task bang keyword (Viet + Anh).
+    """Classifies a task by keyword (Vietnamese + English).
 
-    Uu tien: bugfix > refactor > feature. Mac dinh tra ve "feature".
+    Priority: bugfix > refactor > feature. Defaults to "feature".
     """
     text = (task_description or "").lower()
     for kw in _BUGFIX_KEYWORDS:
@@ -227,7 +230,7 @@ def detect_task_type(task_description: str) -> str:
 
 
 def _suggest_files(task_description: str) -> List[str]:
-    """Goi y file co the lien quan dua tren tu khoa trong mo ta."""
+    """Suggests possibly-relevant files from keywords in the description."""
     text = (task_description or "").lower()
     hints = []
     for kw, files in _FILE_HINTS:
@@ -237,11 +240,11 @@ def _suggest_files(task_description: str) -> List[str]:
 
 
 def estimate_complexity(step: Dict) -> str:
-    """Heuristic do phuc tap cua mot step.
+    """Heuristic step-complexity estimate.
 
-    - "high":   cham nhieu file (multi-file / >2 file) hoac refactor
-    - "medium": co test/verify/reproduce, hoac >= 3 actions
-    - "low":    con lai
+    - "high":   touches many files (multi-file / >2 files) or is a refactor
+    - "medium": involves test/verify/reproduce, or >= 3 actions
+    - "low":    everything else
     """
     actions = [str(a).lower() for a in (step.get("actions") or [])]
     title = str(step.get("title") or "").lower()
@@ -257,13 +260,13 @@ def estimate_complexity(step: Dict) -> str:
 
 
 class TaskPlanner:
-    """Phan tich mo ta task thanh plan steps chi tiet (heuristic, khong LLM)."""
+    """Turns a task description into detailed plan steps (heuristic, no LLM)."""
 
     def plan(self, task_description: str) -> Dict:
-        """Tra ve plan dict {task, task_type, steps, estimated_steps}.
+        """Returns a plan dict {task, task_type, steps, estimated_steps}.
 
-        Steps duoc danh id step_1..step_N, dependencies xay theo thu tu
-        logic (step sau phu thuoc step ngay truoc) tao thanh DAG tuyen tinh.
+        Steps get ids step_1..step_N, dependencies built in logical order
+        (each step depends on the previous one) forming a linear DAG.
         """
         task = (task_description or "").strip()
         task_type = detect_task_type(task)
@@ -294,7 +297,11 @@ class TaskPlanner:
         }
 
     def to_markdown(self, plan: Dict) -> str:
-        """Render plan thanh markdown tieng Viet de hien thi/xac nhan."""
+        """Renders the plan as Vietnamese markdown for display/confirmation.
+
+        NOTE: the labels below are pinned by evals/test_planner.py — keep
+        them Vietnamese.
+        """
         lines = []
         lines.append("# Kế hoạch thực hiện")
         lines.append("")
@@ -328,5 +335,5 @@ class TaskPlanner:
 
 
 def plan_task(task_description: str) -> Dict:
-    """Ham tien ich: plan nhanh 1 task ma khong can tao TaskPlanner."""
+    """Convenience: quickly plan one task without creating a TaskPlanner."""
     return TaskPlanner().plan(task_description)

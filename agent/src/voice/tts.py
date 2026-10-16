@@ -1,21 +1,22 @@
-"""Text-to-Speech (TTS) cho Boom voice-mode.
+"""Text-to-Speech (TTS) for Boom voice-mode.
 
-GHI CHÚ: repo đã có ``agent/src/tools/tts_tool.py`` (tool ghi file .mp3 ra đĩa,
-chỉ dùng edge-tts, và khi thiếu lib thì ghi SILENT một file stub giả).
-Module này khác ở 3 điểm: (1) trả về ``bytes`` thay vì đường dẫn file —
-tiện cho voice loop stream trực tiếp; (2) nhiều backend dự phòng theo thứ tự
-ưu tiên; (3) KHÔNG bao giờ trả audio giả — thiếu backend thì raise lỗi rõ ràng.
+NOTE: the repo already has ``agent/src/tools/tts_tool.py`` (a tool that writes
+.mp3 files to disk, edge-tts only, and writes a SILENT fake stub file when the
+lib is missing). This module differs in 3 ways: (1) returns ``bytes`` instead
+of a file path — handy for streaming straight into the voice loop; (2) several
+fallback backends in priority order; (3) NEVER returns fake audio — no backend
+means a clear raised error.
 
-Thứ tự ưu tiên backend (tự động chọn backend đầu tiên khả dụng):
-1. ``edge-tts`` — MIỄN PHÍ, không cần key, giọng tiếng Việt tự nhiên
-   (vi-VN-NamMinhNeural). Cần ``pip install edge-tts`` và mạng tới Microsoft.
-2. ``openai`` — OpenAI TTS. Cần ``OPENAI_API_KEY``. Gọi qua HTTPS (httpx).
-3. ``espeak`` — offline qua binary hệ thống ``espeak``/``espeak-ng``
-   (giọng robot nhưng không cần mạng, không cần key).
-4. ``pyttsx3`` — offline qua thư viện (``pip install pyttsx3``), dùng engine
-   giọng nói có sẵn của OS.
+Backend priority order (auto-picks the first available):
+1. ``edge-tts`` — FREE, no key needed, natural Vietnamese voice
+   (vi-VN-NamMinhNeural). Needs ``pip install edge-tts`` and network to Microsoft.
+2. ``openai`` — OpenAI TTS. Needs ``OPENAI_API_KEY``. Called over HTTPS (httpx).
+3. ``espeak`` — offline via the ``espeak``/``espeak-ng`` system binary
+   (robotic voice but no network, no key).
+4. ``pyttsx3`` — offline via the library (``pip install pyttsx3``), using the
+   OS's built-in speech engine.
 
-Không có backend nào → ``NotImplementedError`` kèm hướng dẫn tiếng Việt.
+No backend at all → ``NotImplementedError`` with setup instructions.
 """
 
 from __future__ import annotations
@@ -33,8 +34,8 @@ _OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 _OPENAI_TTS_MODEL = "tts-1"
 _OPENAI_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
 
-# Map mã giọng ngắn gọn -> tên giọng Edge TTS đầy đủ.
-# Nếu người dùng truyền thẳng tên "xx-XX-...Neural" thì giữ nguyên.
+# Map short voice codes -> full Edge TTS voice names.
+# When the user passes a full "xx-XX-...Neural" name directly, keep it as-is.
 _EDGE_VOICES = {
     "vi": "vi-VN-NamMinhNeural",
     "vi-VN": "vi-VN-NamMinhNeural",
@@ -46,7 +47,7 @@ _DEFAULT_VOICE = "vi-VN"
 
 
 def available_backends() -> List[str]:
-    """Liệt kê backend TTS đang dùng được, theo đúng thứ tự ưu tiên."""
+    """Lists the currently usable TTS backends, in priority order."""
     backends: List[str] = []
     try:
         import edge_tts  # noqa: F401
@@ -72,16 +73,16 @@ def speak(
     voice: str = _DEFAULT_VOICE,
     backend: Optional[str] = None,
 ) -> bytes:
-    """Tổng hợp giọng nói, trả về audio bytes (mp3 với edge-tts/openai, wav với espeak/pyttsx3).
+    """Synthesizes speech, returns audio bytes (mp3 with edge-tts/openai, wav with espeak/pyttsx3).
 
-    :param text: nội dung cần đọc. Rỗng → ``ValueError``.
-    :param voice: ``"vi-VN"`` (mặc định) | ``"en-US"`` | tên giọng đầy đủ của backend
-        (ví dụ ``"vi-VN-NamMinhNeural"``, hoặc ``"nova"`` cho OpenAI).
-    :param backend: ép dùng backend cụ thể, mặc định tự chọn theo thứ tự ưu tiên.
+    :param text: content to read. Empty → ``ValueError``.
+    :param voice: ``"vi-VN"`` (default) | ``"en-US"`` | a backend's full voice name
+        (e.g. ``"vi-VN-NamMinhNeural"``, or ``"nova"`` for OpenAI).
+    :param backend: forces a specific backend; default auto-picks by priority.
     """
     text = (text or "").strip()
     if not text:
-        raise ValueError("text rỗng — không có gì để đọc.")
+        raise ValueError("Empty text — nothing to read.")
 
     chosen = backend or _auto_backend()
     if chosen == "edge-tts":
@@ -93,8 +94,8 @@ def speak(
     if chosen == "pyttsx3":
         return _speak_pyttsx3(text, voice)
     raise ValueError(
-        f"Backend TTS không hỗ trợ: {backend!r}. "
-        f"Backend khả dụng hiện tại: {available_backends()}"
+        f"Unsupported TTS backend: {backend!r}. "
+        f"Currently available backends: {available_backends()}"
     )
 
 
@@ -102,11 +103,11 @@ def _auto_backend() -> str:
     backends = available_backends()
     if not backends:
         raise NotImplementedError(
-            "Không có backend Text-to-Speech nào khả dụng.\n"
-            "Hãy chọn một trong các cách sau:\n"
-            "  1. Edge TTS (khuyên dùng, miễn phí, không cần key): pip install edge-tts\n"
+            "No Text-to-Speech backend available.\n"
+            "Pick one of these:\n"
+            "  1. Edge TTS (recommended, free, no key): pip install edge-tts\n"
             "  2. OpenAI TTS: export OPENAI_API_KEY=sk-...\n"
-            "  3. espeak offline: sudo apt install espeak-ng  (giọng robot, không cần mạng)\n"
+            "  3. espeak offline: sudo apt install espeak-ng  (robotic voice, no network)\n"
             "  4. pyttsx3 offline: pip install pyttsx3"
         )
     return backends[0]
@@ -121,7 +122,8 @@ def _speak_edge(text: str, voice: str) -> bytes:
         import edge_tts
     except ImportError:
         raise RuntimeError(
-            "Backend edge-tts được chọn nhưng chưa cài thư viện: pip install edge-tts"
+            "The edge-tts backend was selected but the library is not installed: "
+            "pip install edge-tts"
         )
     import asyncio
 
@@ -129,7 +131,7 @@ def _speak_edge(text: str, voice: str) -> bytes:
 
     async def _generate() -> bytes:
         chunks = []
-        # stream() yield từng chunk {"type": "audio", "data": ...} — gom lại thành mp3 hoàn chỉnh.
+        # stream() yields {"type": "audio", "data": ...} chunks — merge into a full mp3.
         async for chunk in edge_tts.Communicate(text, edge_voice).stream():
             if chunk.get("type") == "audio" and chunk.get("data"):
                 chunks.append(chunk["data"])
@@ -139,10 +141,11 @@ def _speak_edge(text: str, voice: str) -> bytes:
         audio = asyncio.run(_generate())
     except Exception as exc:
         raise RuntimeError(
-            f"Edge TTS thất bại — backend này cần mạng tới Microsoft. Lỗi: {exc}"
+            f"Edge TTS failed — this backend needs network access to Microsoft. "
+            f"Error: {exc}"
         ) from exc
     if not audio:
-        raise RuntimeError("Edge TTS không trả về audio (phản hồi rỗng).")
+        raise RuntimeError("Edge TTS returned no audio (empty response).")
     return audio
 
 
@@ -150,11 +153,11 @@ def _speak_openai(text: str, voice: str) -> bytes:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "Backend openai được chọn nhưng thiếu OPENAI_API_KEY. "
-            "Hãy export OPENAI_API_KEY=sk-... trước khi gọi."
+            "The openai backend was selected but OPENAI_API_KEY is missing. "
+            "Export OPENAI_API_KEY=sk-... before calling."
         )
-    # OpenAI chỉ nhận 6 tên giọng cố định — map "vi-VN"/"en-US" về "alloy",
-    # còn nếu user truyền thẳng "nova"... thì giữ nguyên.
+    # OpenAI only accepts 6 fixed voice names — map "vi-VN"/"en-US" to "alloy",
+    # but keep it when the user passes "nova"... directly.
     openai_voice = voice if voice in _OPENAI_VOICES else "alloy"
     try:
         resp = httpx.post(
@@ -164,18 +167,18 @@ def _speak_openai(text: str, voice: str) -> bytes:
             timeout=120.0,
         )
     except httpx.HTTPError as exc:
-        raise RuntimeError(f"Gọi OpenAI TTS thất bại (lỗi mạng): {exc}") from exc
+        raise RuntimeError(f"OpenAI TTS call failed (network error): {exc}") from exc
     if resp.status_code != 200:
         raise RuntimeError(
-            f"OpenAI TTS trả lỗi HTTP {resp.status_code}: {resp.text[:300]}"
+            f"OpenAI TTS returned HTTP {resp.status_code}: {resp.text[:300]}"
         )
     if not resp.content:
-        raise RuntimeError("OpenAI TTS trả về audio rỗng.")
+        raise RuntimeError("OpenAI TTS returned empty audio.")
     return resp.content
 
 
 def _espeak_binary() -> Optional[str]:
-    # Ưu tiên espeak-ng (bản fork mới, hỗ trợ tiếng Việt tốt hơn espeak cũ).
+    # Prefer espeak-ng (newer fork, better Vietnamese support than old espeak).
     return shutil.which("espeak-ng") or shutil.which("espeak")
 
 
@@ -183,8 +186,8 @@ def _speak_espeak(text: str, voice: str) -> bytes:
     binary = _espeak_binary()
     if not binary:
         raise RuntimeError(
-            "Backend espeak được chọn nhưng không tìm thấy binary espeak/espeak-ng. "
-            "Cài bằng: sudo apt install espeak-ng"
+            "The espeak backend was selected but no espeak/espeak-ng binary was found. "
+            "Install with: sudo apt install espeak-ng"
         )
     espeak_voice = "vi" if voice.lower().startswith("vi") else "en"
     try:
@@ -194,15 +197,15 @@ def _speak_espeak(text: str, voice: str) -> bytes:
             timeout=60,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("espeak bị timeout sau 60s.") from exc
+        raise RuntimeError("espeak timed out after 60s.") from exc
     if proc.returncode != 0:
         raise RuntimeError(
-            f"espeak báo lỗi (exit {proc.returncode}): "
+            f"espeak reported an error (exit {proc.returncode}): "
             f"{proc.stderr.decode(errors='replace')[:300]}"
         )
     if not proc.stdout:
-        raise RuntimeError("espeak không xuất ra audio.")
-    return proc.stdout  # WAV bytes ghi ra stdout nhờ flag --stdout
+        raise RuntimeError("espeak produced no audio.")
+    return proc.stdout  # WAV bytes written to stdout via the --stdout flag
 
 
 def _speak_pyttsx3(text: str, voice: str) -> bytes:
@@ -210,10 +213,11 @@ def _speak_pyttsx3(text: str, voice: str) -> bytes:
         import pyttsx3
     except ImportError:
         raise RuntimeError(
-            "Backend pyttsx3 được chọn nhưng chưa cài thư viện: pip install pyttsx3"
+            "The pyttsx3 backend was selected but the library is not installed: "
+            "pip install pyttsx3"
         )
     engine = pyttsx3.init()
-    # pyttsx3 chỉ ghi ra file nên dùng file tạm rồi đọc bytes lên, xong xóa.
+    # pyttsx3 only writes to a file, so use a temp file then read the bytes, then delete.
     fd, tmp_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
@@ -227,5 +231,5 @@ def _speak_pyttsx3(text: str, voice: str) -> bytes:
         except OSError:
             pass
     if not data:
-        raise RuntimeError("pyttsx3 không tạo ra audio.")
+        raise RuntimeError("pyttsx3 produced no audio.")
     return data

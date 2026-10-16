@@ -1,20 +1,20 @@
-"""Lớp nền chung cho mọi channel adapter của Boom.
+"""Shared base class for all Boom channel adapters.
 
-File này trích từ `gateway/channel.py` (giữ nguyên 100% logic của
-:class:`ChannelAdapter`) cộng thêm các khối dùng chung mà mọi adapter
-con cần:
+This file is extracted from `gateway/channel.py` (keeping 100% of the
+:class:`ChannelAdapter` logic) plus the shared building blocks every child
+adapter needs:
 
-- :class:`HmacWebhookMixin` — kiểm tra chữ ký webhook bằng HMAC.
-- :func:`normalize_message` — rút {text, sender_id, chat_id, timestamp}
-  từ payload thô của nhiều nền tảng khác nhau.
-- :class:`RetryMixin` — gọi lại (retry) với backoff lũy thừa khi lỗi mạng.
+- :class:`HmacWebhookMixin` — verify webhook signatures with HMAC.
+- :func:`normalize_message` — extract {text, sender_id, chat_id, timestamp}
+  from raw payloads of many different platforms.
+- :class:`RetryMixin` — retry with exponential backoff on network errors.
 
-Các adapter con dùng kiểu::
+Child adapters look like::
 
     class TelegramAdapter(ChannelAdapter, HmacWebhookMixin, RetryMixin):
         ...
 
-Chỉ dùng stdlib + httpx, không thêm thư viện mới.
+Stdlib + httpx only, no new dependencies.
 """
 
 from __future__ import annotations
@@ -159,23 +159,23 @@ class ChannelAdapter:
 
 
 class HmacWebhookMixin:
-    """Kiểm tra chữ ký HMAC của webhook request.
+    """Verify the HMAC signature of a webhook request.
 
-    Mixin này giúp mọi adapter (LINE, Feishu, Zalo, ...) dùng chung một
-    hàm kiểm tra chữ ký mà không phải tự cài đặt lại. Luôn trả về bool,
-    không bao giờ raise với input không hợp lệ — request lỗi chỉ đơn
-    giản là "không xác thực được".
+    This mixin lets every adapter (LINE, Feishu, Zalo, ...) share one
+    signature-check function instead of reimplementing it. Always returns
+    bool, never raises on invalid input — a bad request is simply
+    "not authenticated".
     """
 
     @staticmethod
     def verify_hmac_signature(secret: str, payload: bytes, signature: str,
                               algorithm: str = "sha256") -> bool:
-        """Kiểm tra chữ ký HMAC của `payload` so với `signature`.
+        """Verify the HMAC signature of `payload` against `signature`.
 
-        - ``signature`` chấp nhận 2 dạng: ``"sha256=<hex>"`` (kiểu LINE/
-          GitHub) hoặc chuỗi hex thuần (kiểu Feishu/Zalo).
-        - So sánh bằng :func:`hmac.compare_digest` để chống timing attack.
-        - Trả về ``False`` (không raise) khi bất kỳ input nào không hợp lệ.
+        - ``signature`` accepts 2 forms: ``"sha256=<hex>"`` (LINE/GitHub
+          style) or a bare hex string (Feishu/Zalo style).
+        - Comparison uses :func:`hmac.compare_digest` to prevent timing attacks.
+        - Returns ``False`` (never raises) when any input is invalid.
         """
         try:
             if not isinstance(secret, str) or not secret:
@@ -201,7 +201,7 @@ class HmacWebhookMixin:
 
 
 def _first_not_none(*values: Any) -> Any:
-    """Lấy giá trị đầu tiên khác None trong danh sách."""
+    """Return the first non-None value in the list."""
     for value in values:
         if value is not None:
             return value
@@ -209,7 +209,7 @@ def _first_not_none(*values: Any) -> Any:
 
 
 def _sender_id_from(value: Any) -> Optional[str]:
-    """Rút sender_id từ một object sender dạng dict/str."""
+    """Extract sender_id from a dict/str-shaped sender object."""
     if isinstance(value, dict):
         return _first_not_none(value.get("id"), value.get("sender_id"))
     if isinstance(value, str):
@@ -218,17 +218,17 @@ def _sender_id_from(value: Any) -> Optional[str]:
 
 
 def normalize_message(raw: dict) -> dict:
-    """Rút ``{text, sender_id, chat_id, timestamp}`` từ payload thô.
+    """Extract ``{text, sender_id, chat_id, timestamp}`` from a raw payload.
 
-    Xử lý nhiều định dạng payload khác nhau của các nền tảng:
+    Handles many different payload shapes across platforms:
 
     - ``{"text": ..., "sender_id": ..., "chat_id": ..., "timestamp": ...}``
-      (định dạng phẳng)
-    - ``{"message": {"text": ..., ...}}`` (kiểu Telegram)
-    - ``{"content": ...}`` (kiểu một số nền tảng chat nội bộ)
+      (flat shape)
+    - ``{"message": {"text": ..., ...}}`` (Telegram style)
+    - ``{"content": ...}`` (some internal chat platforms' style)
 
-    Thiếu field → ``None``. Input không phải dict (hoặc payload rỗng)
-    không gây crash, vẫn trả về dict với các giá trị ``None``.
+    Missing fields → ``None``. Non-dict input (or an empty payload)
+    never crashes, still returns a dict with ``None`` values.
     """
     empty = {"text": None, "sender_id": None, "chat_id": None, "timestamp": None}
     if not isinstance(raw, dict):
@@ -271,11 +271,11 @@ def normalize_message(raw: dict) -> dict:
 
 
 class RetryMixin:
-    """Chạy một coroutine với cơ chế retry + backoff lũy thừa.
+    """Run a coroutine with retry + exponential backoff.
 
-    Chỉ retry khi gặp :class:`TimeoutError` hoặc :class:`ConnectionError`
-    (lỗi mạng tạm thời). Các exception khác được raise ngay lập tức để
-    không che giấu lỗi logic.
+    Only retries on :class:`TimeoutError` or :class:`ConnectionError`
+    (transient network errors). Other exceptions are raised immediately
+    so logic errors are never hidden.
     """
 
     async def _with_retry(
@@ -284,10 +284,10 @@ class RetryMixin:
         max_retries: int = 3,
         base_delay: float = 1.0,
     ) -> Any:
-        """Gọi ``coro_fn()``; nếu lỗi mạng thì thử lại tối đa ``max_retries`` lần.
+        """Call ``coro_fn()``; on network error retry up to ``max_retries`` times.
 
-        Khoảng chờ giữa các lần thử là ``base_delay * 2^attempt`` giây.
-        Hết số lần retry → raise exception cuối cùng.
+        The wait between attempts is ``base_delay * 2^attempt`` seconds.
+        When retries are exhausted → raise the last exception.
         """
         last_exc: Optional[BaseException] = None
         for attempt in range(max_retries + 1):
@@ -303,7 +303,7 @@ class RetryMixin:
         raise last_exc
 
 
-# Re-export tiện dùng cho các adapter con.
+# Re-export for child adapters to use directly.
 __all__ = [
     "ChannelAdapter",
     "HmacWebhookMixin",

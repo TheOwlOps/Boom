@@ -1,6 +1,6 @@
 ---
 name: data-validator
-description: Validate JSON/CSV theo schema, type và format.
+description: Validate JSON/CSV against schema, types, and formats.
 version: 1.0.0
 author: boom-overnight
 license: MIT
@@ -11,14 +11,14 @@ category: data
 
 # Data Validator
 
-Kiểm tra dữ liệu JSON/CSV trước khi đưa vào pipeline:
+Validate JSON/CSV data before feeding it into a pipeline:
 
-- `validate_json(data, schema)` — kiểm tra dict theo schema: type của từng
-  field, field bắt buộc (`required`), format (`email`, `url`, `date`).
-- `validate_csv(path, columns)` — kiểm tra file CSV có đủ cột yêu cầu và
-  mỗi dòng đủ số cột không.
+- `validate_json(data, schema)` — check a dict against a schema: per-field
+  type, required fields (`required`), formats (`email`, `url`, `date`).
+- `validate_csv(path, columns)` — check that a CSV file has the required
+  columns and each row has enough columns.
 
-## Cách dùng
+## Usage
 
 ```python
 from validator import validate_json, validate_csv
@@ -34,6 +34,6 @@ result = validate_json({"name": "Son", "email": "a@b.com"}, schema)
 result = validate_csv("/data/users.csv", columns=["name", "email", "age"])
 ```
 
-Kết quả luôn có dạng `{"valid": bool, "errors": [...]}` — mỗi error gồm
-`field`, `message` để dễ hiển thị trong `web UI` hoặc log. Schema dùng
-pydantic để ép type nghiêm ngặt (`StrictInt`, `StrictStr`...).
+Results always have the shape `{"valid": bool, "errors": [...]}` — each error
+carries a `field` and a `message` for easy display in a `web UI` or logs. The
+schema uses pydantic to strictly coerce types (`StrictInt`, `StrictStr`...).

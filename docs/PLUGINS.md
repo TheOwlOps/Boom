@@ -1,67 +1,61 @@
-# Hệ Thống Plugin Thống Nhất (Unified Plugin System)
+# The Unified Plugin System
 
-> Design doc — hợp nhất **skills** và **plugins** của Boom thành một kiến trúc duy nhất.
-> Chỉ dùng stdlib. Tài liệu tiếng Việt.
+> Design doc — unifying Boom's **skills** and **plugins** into a single architecture.
+> Stdlib only.
 
-## 1. Vấn đề
+## 1. The problem
 
-Hiện tại Boom có 2 hệ thống mở rộng rời rạc, không liên quan gì đến nhau:
+Today Boom has two separate, unrelated extension systems:
 
-| | **Skills** (`skill_loader.py`, `skills_hub.py`) | **Plugins** (`plugin_registry.py`, 41 dòng) |
+| | **Skills** (`skill_loader.py`, `skills_hub.py`) | **Plugins** (`plugin_registry.py`, 41 lines) |
 |---|---|---|
-| Đơn vị | Thư mục chứa `SKILL.md` | Thư mục chứa `plugin.json` + `entry.py` |
-| Bản chất | Markdown hướng dẫn cho LLM đọc | Code Python thật chạy trong agent |
-| Load | Lazy-load qua tool `list_skills` / `view_skill` / `install_skill` | `scan_and_load()` bằng importlib, load hết một lần |
-| Quyền | Không chạy code → không cần quyền | Full quyền process agent, không giới hạn |
-| Lifecycle | Không có | Không có (chỉ `register(ctx)` một lần) |
-| Manifest | Frontmatter YAML trong `SKILL.md` (tùy ý) | `plugin.json` sơ sài (chỉ `name`, `entry`) |
+| Unit | Directory containing `SKILL.md` | Directory containing `plugin.json` + `entry.py` |
+| Nature | Markdown instructions for the LLM to read | Real Python code that runs inside the agent |
+| Loading | Lazy-loaded via `list_skills` / `view_skill` / `install_skill` | `scan_and_load()` via importlib, all at once |
+| Privileges | Runs no code → needs no privileges | Full agent process privileges, unrestricted |
+| Lifecycle | None | None (one-shot `register(ctx)`) |
+| Manifest | Freeform YAML frontmatter in `SKILL.md` | Bare-bones `plugin.json` (`name`, `entry` only) |
 
-Hệ quả: muốn thêm một tính năng mở rộng, dev phải chọn một trong hai hệ thống, không
-có cách nào để một "skill hướng dẫn LLM" đi kèm "code thực thi", và plugin chạy với
-toàn quyền của agent là rủi ro bảo mật.
+Consequences: to add an extension, a dev must pick one of two systems; there is no way for an "LLM guidance skill" to ship with "executable code"; and plugins run with the agent's full privileges — a security risk.
 
-## 2. Kiến trúc mới: một hệ thống duy nhất
+## 2. The new architecture: one unified system
 
-Mỗi plugin là **một thư mục** với tối đa 3 thành phần:
+Each plugin is **a directory** with up to 3 components:
 
 ```
 my-plugin/
-├── plugin.json      # (BẮT BUỘC) manifest: tên, version, quyền, entry point
-├── entry.py         # (BẮT BUỘC với plugin có code) code Python, hook vòng đời
-└── SKILL.md         # (TÙY CHỌN) hướng dẫn cho LLM: khi nào dùng, dùng thế nào
+├── plugin.json      # (REQUIRED) manifest: name, version, permissions, entry point
+├── entry.py         # (REQUIRED for code plugins) Python code, lifecycle hooks
+└── SKILL.md         # (OPTIONAL) guidance for the LLM: when to use it, how to use it
 ```
 
-Ba module điều phối (chỉ stdlib):
+Three coordinating modules (stdlib only):
 
 ```
 agent/src/extensibility/
-├── __init__.py        # export PluginManager / PluginManifest / PluginSandbox (try/except)
-├── manifest.py        # PluginManifest: đọc + validate plugin.json
+├── __init__.py        # exports PluginManager / PluginManifest / PluginSandbox (try/except)
+├── manifest.py        # PluginManifest: reads + validates plugin.json
 ├── lifecycle.py       # PluginManager: install / enable / disable / uninstall / update
-├── sandbox.py         # PluginSandbox: thực thi code plugin theo quyền đã khai báo
-├── skill_loader.py    # (cũ, giữ lại) — đọc SKILL.md của plugin như "skill"
-└── skills_hub.py      # (cũ, giữ lại) — tools list_skills/view_skill giờ nhìn vào plugin/
+├── sandbox.py         # PluginSandbox: executes plugin code under declared permissions
+├── skill_loader.py    # (legacy, kept) — reads a plugin's SKILL.md as a "skill"
+└── skills_hub.py      # (legacy, kept) — list_skills/view_skill tools now look at plugin/
 ```
 
-Luồng hoạt động:
+How it works:
 
-1. **PluginManifest** đọc `plugin.json`, validate schema (trường bắt buộc, version
-   semver, permissions hợp lệ). Manifest không hợp lệ → từ chối ngay từ bước install.
-2. **PluginManager** quản lý vòng đời và trạng thái (lưu trong SQLite hoặc JSON
-   tại `~/.boom/plugins/state.json`): chỉ plugin ở trạng thái `enabled` mới được load.
-3. **PluginSandbox** load `entry.py` bằng importlib **trong môi trường giới hạn theo
-   quyền đã khai báo** (xem mục 6), rồi gọi các hook vòng đời:
-   `on_install` → `on_enable` → (chạy) → `on_disable` → `on_uninstall`.
-4. `SKILL.md` (nếu có) được `skill_loader` đọc như một skill thông thường, giúp LLM
-   biết khi nào nên gọi tool mà plugin đăng ký — cầu nối giữa "hướng dẫn" và "code thật".
+1. **PluginManifest** reads `plugin.json` and validates the schema (required fields, semver version, valid permissions). An invalid manifest is rejected at install time.
+2. **PluginManager** manages lifecycle and state (stored in SQLite or JSON at `~/.boom/plugins/state.json`): only plugins in the `enabled` state are loaded.
+3. **PluginSandbox** loads `entry.py` with importlib **inside an environment restricted by the declared permissions** (see section 6), then calls the lifecycle hooks:
+   `on_install` → `on_enable` → (run) → `on_disable` → `on_uninstall`.
+4. `SKILL.md` (when present) is read by `skill_loader` like any ordinary skill, so the LLM knows when to call the tools a plugin registers — a bridge between "guidance" and "real code".
 
-### 2.1. Schema `plugin.json`
+### 2.1. `plugin.json` schema
 
 ```json
 {
   "name": "hello-plugin",
   "version": "1.0.0",
-  "description": "Plugin chào hỏi mẫu",
+  "description": "Sample hello plugin",
   "author": "Boom",
   "license": "MIT",
   "homepage": "https://example.com",
@@ -73,100 +67,98 @@ Luồng hoạt động:
 }
 ```
 
-Trường bắt buộc: `name`, `version`, `description`, `author`, `entry`, `permissions`.
-Các trường còn lại tùy chọn, có giá trị mặc định hợp lý
-(`entry` mặc định `"entry.py"`, `skill` mặc định `"SKILL.md"` nếu file tồn tại).
+Required fields: `name`, `version`, `description`, `author`, `entry`, `permissions`.
+Everything else is optional with sensible defaults
+(`entry` defaults to `"entry.py"`, `skill` defaults to `"SKILL.md"` when the file exists).
 
-Quy ước `name`: chữ thường, dấu gạch ngang, ví dụ `gmail-tools`, `price-watcher`.
-`version` theo semver `MAJOR.MINOR.PATCH`.
+`name` convention: lowercase, hyphenated, e.g. `gmail-tools`, `price-watcher`.
+`version` follows semver `MAJOR.MINOR.PATCH`.
 
-### 2.2. Hook vòng đời trong `entry.py`
+### 2.2. Lifecycle hooks in `entry.py`
 
 ```python
-def on_install(ctx):   # chạy 1 lần khi cài đặt
-def on_enable(ctx):    # chạy mỗi khi plugin được bật (đăng ký tool tại đây)
-def on_disable():      # chạy khi plugin bị tắt (dọn dẹp tại đây)
-def on_uninstall():    # chạy 1 lần khi gỡ cài đặt
-def on_update(ctx, old_version):  # chạy khi update version
+def on_install(ctx):   # runs once at install time
+def on_enable(ctx):    # runs each time the plugin is enabled (register tools here)
+def on_disable():      # runs when the plugin is disabled (clean up here)
+def on_uninstall():    # runs once at uninstall time
+def on_update(ctx, old_version):  # runs when the version is updated
 ```
 
-Tương thích ngược: plugin cũ chỉ có `register(ctx)` vẫn chạy được — manager tự bọc
-`register` thành `on_enable`.
+Backward compatible: old plugins with only `register(ctx)` still work — the manager wraps `register` as `on_enable`.
 
-`ctx` (PluginContext) cung cấp: `register_tool(name, func, description, schema)`,
-`unregister_tool(name)`, `get_config(key)`, `log(...)`, và `skill_text` (nội dung
-`SKILL.md` nếu có).
+`ctx` (PluginContext) provides: `register_tool(name, func, description, schema)`,
+`unregister_tool(name)`, `get_config(key)`, `log(...)`, and `skill_text` (the contents of
+`SKILL.md` when present).
 
-## 3. Bảng so sánh
+## 3. Comparison table
 
-| Tiêu chí | Skills (cũ) | Plugins (cũ) | **Hệ thống mới (unified)** |
+| Criterion | Skills (old) | Plugins (old) | **New unified system** |
 |---|---|---|---|
-| Đơn vị phân phối | Thư mục + `SKILL.md` | Thư mục + `plugin.json` + `entry.py` | Thư mục + `plugin.json` + `entry.py` + `SKILL.md` (optional) |
-| Chạy code | Không | Có (full quyền) | Có, **giới hạn theo permissions** |
-| Hướng dẫn cho LLM | Có (`SKILL.md`) | Không | Có — `SKILL.md` đi kèm plugin |
-| Manifest | Frontmatter YAML tùy ý | `plugin.json` sơ sài | `plugin.json` schema đầy đủ, validate chặt |
-| Lifecycle | Không | Chỉ `register()` 1 lần | `install → enable → disable → uninstall` + `update` |
-| Bật/tắt runtime | Không (luôn "có mặt" để đọc) | Không (load là chạy) | Có — trạng thái lưu persistent |
-| Quyền (permissions) | Không cần | Không có khái niệm | `network`, `filesystem`, `shell`, `env` (mục 6) |
-| Cô lập khi chạy | N/A | Không | PluginSandbox theo quyền |
-| Tool agent | `list_skills`, `view_skill`, `install_skill` | Không có | Giữ nguyên 3 tool + thêm `enable_plugin`, `disable_plugin`, `uninstall_plugin`, `update_plugin`, `list_plugins` |
-| Tương thích ngược | — | — | Đọc được cả 2 định dạng cũ (mục 4) |
+| Distribution unit | Directory + `SKILL.md` | Directory + `plugin.json` + `entry.py` | Directory + `plugin.json` + `entry.py` + `SKILL.md` (optional) |
+| Runs code | No | Yes (full privileges) | Yes, **limited by permissions** |
+| Guidance for the LLM | Yes (`SKILL.md`) | No | Yes — `SKILL.md` ships with the plugin |
+| Manifest | Freeform YAML frontmatter | Bare-bones `plugin.json` | Full-schema `plugin.json`, strictly validated |
+| Lifecycle | None | Only one-shot `register()` | `install → enable → disable → uninstall` + `update` |
+| Runtime on/off | No (always "present" for reading) | No (load = run) | Yes — state persisted |
+| Permissions | N/A | No concept | `network`, `filesystem`, `shell`, `env` (section 6) |
+| Runtime isolation | N/A | None | PluginSandbox by permission |
+| Agent tools | `list_skills`, `view_skill`, `install_skill` | None | Keep the 3 tools + add `enable_plugin`, `disable_plugin`, `uninstall_plugin`, `update_plugin`, `list_plugins` |
+| Backward compatibility | — | — | Reads both legacy formats (section 4) |
 
 ## 4. Migration path
 
-### 4.1. Skills cũ (chỉ có `SKILL.md`) → plugin
+### 4.1. Old skills (`SKILL.md` only) → plugin
 
-Skill cũ không có code, nên bọc thành plugin "chỉ hướng dẫn":
+An old skill has no code, so wrap it as a "guidance-only" plugin:
 
-1. Giữ nguyên thư mục skill và `SKILL.md`.
-2. Thêm `plugin.json` tối giản:
+1. Keep the skill directory and its `SKILL.md`.
+2. Add a minimal `plugin.json`:
    ```json
    {
-     "name": "ten-skill-cu",
+     "name": "old-skill-name",
      "version": "1.0.0",
-     "description": "<copy từ frontmatter description>",
-     "author": "<tác giả cũ, hoặc 'Boom'>",
+     "description": "<copy from frontmatter description>",
+     "author": "<previous author, or 'Boom'>",
      "entry": "entry.py",
      "permissions": []
    }
    ```
-3. Thêm `entry.py` rỗng (chỉ hook, không đăng ký tool):
+3. Add an empty `entry.py` (hooks only, no tools registered):
    ```python
-   """Skill <tên> được bọc thành plugin — chỉ mang SKILL.md, không có code."""
+   """Skill <name> wrapped as a plugin — SKILL.md only, no code."""
 
    def on_enable(ctx):
-       # Không đăng ký tool nào; SKILL.md vẫn được skill_loader đọc cho LLM.
+       # Registers no tools; skill_loader still reads SKILL.md for the LLM.
        return None
 
    def on_disable():
        return None
    ```
-4. Copy thư mục vào `plugins/` (hoặc chạy `install_plugin --from-skill <dir>` —
-   manager tự sinh 2 file trên).
-5. `view_skill` / `list_skills` cũ vẫn thấy nội dung vì manager expose `SKILL.md`
-   qua cùng interface `SkillLoader`.
+4. Copy the directory into `plugins/` (or run `install_plugin --from-skill <dir>` —
+   the manager generates the two files above).
+5. Old `view_skill` / `list_skills` still see the content because the manager exposes `SKILL.md`
+   through the same `SkillLoader` interface.
 
-Không mất dữ liệu, không đổi tên: `name` trong `plugin.json` nên trùng tên thư mục
-skill cũ để tool `view_skill` cũ tiếp tục hoạt động.
+No data loss, no renames: the `name` in `plugin.json` should match the old skill
+directory name so old `view_skill` tool calls keep working.
 
-### 4.2. Plugins cũ (`plugin.json` + `entry.py`) → manifest đầy đủ
+### 4.2. Old plugins (`plugin.json` + `entry.py`) → full manifest
 
-1. Bổ sung các trường bắt buộc còn thiếu vào `plugin.json`:
-   `description`, `author`, `permissions` (mặc định `[]` nếu plugin không cần gì,
-   nhưng **nên liệt kê đúng** những gì code thật sự dùng — xem mục 6).
-2. Đổi hook `register(ctx)` → `on_enable(ctx)` (hoặc giữ nguyên — manager tự bọc,
-   nhưng nên đổi để rõ vòng đời). Thêm `on_disable()` dọn dẹp tài nguyên mà
-   `register` cũ đã mở (thread, file handle, connection).
-3. (Khuyến khích) thêm `SKILL.md` mô tả cho LLM biết khi nào gọi tool của plugin.
-4. Chạy `validate_plugin <dir>` — PluginManifest báo chính xác trường nào thiếu.
+1. Fill in any missing required fields in `plugin.json`:
+   `description`, `author`, `permissions` (defaults to `[]` if the plugin needs nothing,
+   but **listing exactly** what the code really uses is recommended — see section 6).
+2. Rename the `register(ctx)` hook → `on_enable(ctx)` (or keep it — the manager wraps it,
+   but renaming makes the lifecycle clearer). Add `on_disable()` to clean up resources
+   the old `register` opened (threads, file handles, connections).
+3. (Recommended) add a `SKILL.md` telling the LLM when to call the plugin's tools.
+4. Run `validate_plugin <dir>` — PluginManifest reports exactly which fields are missing.
 
-### 4.3. Thứ tự triển khai an toàn
+### 4.3. Safe rollout order
 
-1. Ship `manifest.py` + `lifecycle.py` + `sandbox.py` mới, giữ nguyên 2 module cũ.
-2. Chạy migration script cho `skills/*` → sinh `plugin.json` + `entry.py` mẫu.
-3. Bật "chế độ unified" sau khi toàn bộ plugin cũ đã có manifest đầy đủ.
-4. Xóa `plugin_registry.py` cũ khi không còn plugin nào dùng `register()` thuần.
-
+1. Ship the new `manifest.py` + `lifecycle.py` + `sandbox.py`, keep the 2 old modules.
+2. Run the migration script for `skills/*` → generate template `plugin.json` + `entry.py`.
+3. Enable "unified mode" once all old plugins have full manifests.
+4. Delete the old `plugin_registry.py` when no plugin uses a bare `register()` anymore.
 ## 5. Lifecycle diagram
 
 ```mermaid
@@ -179,74 +171,71 @@ stateDiagram-v2
     installed --> uninstalled: uninstall_plugin(name)
     enabled --> updating: update_plugin(name, new_version)
     disabled --> updating: update_plugin(name, new_version)
-    updating --> enabled: update thành công\n(giữ trạng thái cũ)
-    updating --> disabled: update thất bại\n(rollback về version cũ)
+    updating --> enabled: update succeeded\n(keeps previous state)
+    updating --> disabled: update failed\n(rolls back to old version)
     uninstalled --> [*]
 
     note right of installed
-        on_install(ctx) chạy 1 lần.
-        Manifest đã validate.
-        Chưa load code.
+        on_install(ctx) runs once.
+        Manifest already validated.
+        Code not loaded yet.
     end note
     note right of enabled
-        entry.py load trong PluginSandbox.
-        on_enable(ctx): đăng ký tool.
-        SKILL.md expose cho LLM.
+        entry.py loads inside PluginSandbox.
+        on_enable(ctx): registers tools.
+        SKILL.md exposed to the LLM.
     end note
     note right of disabled
-        on_disable(): dọn dẹp.
-        Code unload, tool gỡ đăng ký.
-        Giữ files trên đĩa.
+        on_disable(): cleans up.
+        Code unloaded, tools unregistered.
+        Files remain on disk.
     end note
 ```
 
-Chi tiết từng chuyển đổi:
+Each transition in detail:
 
-| Chuyển đổi | Trigger | Hành động | Rollback khi lỗi |
+| Transition | Trigger | Actions | Rollback on failure |
 |---|---|---|---|
-| `install` | `install_plugin(path/url)` | validate manifest → copy vào `plugins/<name>/` → ghi state `installed` → gọi `on_install` | xóa thư mục đã copy |
-| `enable` | `enable_plugin(name)` | sandbox load `entry.py` → gọi `on_enable(ctx)` → đăng ký tool → state `enabled` | gọi `on_disable` nếu đã chạy dở, giữ state cũ |
-| `disable` | `disable_plugin(name)` | gọi `on_disable()` → gỡ tool khỏi registry → unload module → state `disabled` | log warning, giữ state `enabled` nếu dọn dẹp thất bại |
-| `uninstall` | `uninstall_plugin(name)` | (nếu enabled → disable trước) → gọi `on_uninstall()` → xóa thư mục → xóa state | không rollback (đã xóa) — backup vào `~/.boom/plugins/.trash/` 7 ngày |
-| `update` | `update_plugin(name, src)` | backup bản cũ → install đè → gọi `on_update(ctx, old_version)` → giữ nguyên trạng thái enabled/disabled trước đó | restore backup, gọi lại hook của bản cũ |
+| `install` | `install_plugin(path/url)` | validate manifest → copy into `plugins/<name>/` → write `installed` state → call `on_install` | delete the copied directory |
+| `enable` | `enable_plugin(name)` | sandbox loads `entry.py` → call `on_enable(ctx)` → register tools → `enabled` state | call `on_disable` if partially run, keep old state |
+| `disable` | `disable_plugin(name)` | call `on_disable()` → unregister tools from registry → unload module → `disabled` state | log a warning, keep `enabled` state if cleanup failed |
+| `uninstall` | `uninstall_plugin(name)` | (disable first if enabled) → call `on_uninstall()` → delete directory → delete state | no rollback (already deleted) — backup to `~/.boom/plugins/.trash/` for 7 days |
+| `update` | `update_plugin(name, src)` | back up old version → install over it → call `on_update(ctx, old_version)` → keep previous enabled/disabled state | restore backup, re-invoke the old version's hooks |
 
 ## 6. Permissions model
 
-`permissions` trong `plugin.json` là **danh sách chuỗi**. Plugin **mặc định không có
-quyền gì** (`[]`): chỉ được tính toán thuần túy (thuật toán, format chuỗi, validate
-dữ liệu) và gọi API của `ctx` (đăng ký tool, log, đọc config của chính nó).
+`permissions` in `plugin.json` is a **list of strings**. A plugin **has no permissions by default** (`[]`): it can only do pure computation (algorithms, string formatting, data validation) and call `ctx` APIs (register tools, log, read its own config).
 
-Sandbox thực thi bằng cách giới hạn những gì code plugin được chạm vào; quyền nào
-không khai báo thì bị chặn và raise `PermissionError` với message rõ ràng.
+The sandbox enforces limits on what plugin code can touch; anything not declared is blocked and raises `PermissionError` with a clear message.
 
-| Quyền | Cú pháp | Cho phép | Ví dụ dùng |
+| Permission | Syntax | Allows | Example use |
 |---|---|---|---|
-| **network** | `"network"` hoặc `"network:example.com"` | Mở kết nối HTTP(S) ra ngoài. Dạng rút gọn `"network"` = mọi host (nên tránh); dạng `"network:<host>"` = chỉ host đó. Không có quyền này: mọi `socket`/`http.client`/`urllib`/`httpx`/`requests` trong plugin đều bị chặn. | Plugin tra cứu giá, đọc RSS, gọi API |
-| **filesystem** | `"filesystem:read"` / `"filesystem:write"` / `"filesystem:read:/path/cho-phep"` | Đọc/ghi file. Mặc định (không scope): chỉ trong thư mục của chính plugin. `read` không cho `write` và ngược lại. Mọi truy cập ngoài scope → chặn. | Plugin cache dữ liệu, đọc file cấu hình riêng |
-| **shell** | `"shell"` hoặc `"shell:ffmpeg,yt-dlp"` | Chạy tiến trình con (`subprocess`, `os.system`). Dạng có danh sách = chỉ những binary đó. Không có quyền này: `subprocess`/`os.popen`/`os.system` bị chặn. | Plugin gọi `ffmpeg` cắt video, `tesseract` OCR |
-| **env** | `"env"` hoặc `"env:API_KEY,TOKEN"` | Đọc biến môi trường (`os.environ`). Dạng rút gọn = mọi biến; dạng liệt kê = chỉ các biến đó. Không có quyền này: `os.environ` trả về dict rỗng đối với plugin. | Plugin đọc API key do user cấu hình |
+| **network** | `"network"` or `"network:example.com"` | Open outbound HTTP(S) connections. The bare form `"network"` = all hosts (avoid); the `"network:<host>"` form = that host only. Without it: all `socket`/`http.client`/`urllib`/`httpx`/`requests` use inside the plugin is blocked. | Price lookup, RSS reading, API calls |
+| **filesystem** | `"filesystem:read"` / `"filesystem:write"` / `"filesystem:read:/allowed/path"` | Read/write files. Default (unscoped): only within the plugin's own directory. `read` does not grant `write` and vice versa. Any access outside the scope → blocked. | Caching data, reading the plugin's own config files |
+| **shell** | `"shell"` or `"shell:ffmpeg,yt-dlp"` | Spawn child processes (`subprocess`, `os.system`). The listed form = only those binaries. Without it: `subprocess`/`os.popen`/`os.system` are blocked. | Calling `ffmpeg` to cut video, `tesseract` for OCR |
+| **env** | `"env"` or `"env:API_KEY,TOKEN"` | Read environment variables (`os.environ`). The bare form = all variables; the listed form = only those. Without it: `os.environ` returns an empty dict for the plugin. | Reading a user-configured API key |
 
-Quy tắc chung:
+General rules:
 
-- **Khai báo tối thiểu**: chỉ xin đúng quyền code cần. Reviewer từ chối plugin xin
-  `"network"` + `"shell"` + `"filesystem:write"` mà không giải thích.
-- **Scope hẹp nhất có thể**: `"network:api.example.com"` tốt hơn `"network"`;
-  `"filesystem:read:~/.boom/data"` tốt hơn `"filesystem:read"`.
-- **Quyền là trần, không phải sàn**: ngay cả khi có `"filesystem:write"`, plugin
-  vẫn không được ghi đè file của plugin khác hoặc file hệ thống Boom
-  (`agent/src/`, `~/.boom/config.json`, ...) — sandbox chặn theo allowlist.
-- **User phê duyệt lúc install**: `install_plugin` in ra bảng quyền và yêu cầu xác
-  nhận (hoặc flag `--yes` cho script). Update nào **thêm quyền mới** cũng phải duyệt lại.
-- **Không có cơ chế "xin thêm quyền lúc chạy"**: muốn thêm quyền → update manifest
-  → user duyệt lại. Tránh prompt fatigue và confused-deputy.
+- **Declare the minimum**: only request what the code needs. Reviewers reject plugins requesting `"network"` + `"shell"` + `"filesystem:write"` without justification.
+- **Narrowest scope wins**: `"network:api.example.com"` beats `"network"`;
+  `"filesystem:read:~/.boom/data"` beats `"filesystem:read"`.
+- **Permissions are a ceiling, not a floor**: even with `"filesystem:write"`, a plugin
+  may not overwrite other plugins' files or Boom system files
+  (`agent/src/`, `~/.boom/config.json`, ...) — the sandbox blocks those via allowlist.
+- **User approves at install**: `install_plugin` prints the permissions table and asks for
+  confirmation (or a `--yes` flag for scripts). Any update that **adds new permissions**
+  must be re-approved.
+- **No "request more permissions at runtime"**: to gain a permission → update the manifest
+  → the user re-approves. This avoids prompt fatigue and confused-deputy problems.
 
-Ví dụ manifest cho plugin cần gọi API thời tiết và cache file:
+Example manifest for a plugin that calls a weather API and caches files:
 
 ```json
 {
   "name": "weather-vn",
   "version": "1.2.0",
-  "description": "Dự báo thời tiết Việt Nam",
+  "description": "Vietnam weather forecast",
   "author": "Boom",
   "entry": "entry.py",
   "permissions": [
@@ -256,17 +245,17 @@ Ví dụ manifest cho plugin cần gọi API thời tiết và cache file:
 }
 ```
 
-## 7. Ví dụ plugin đầy đủ
+## 7. Full plugin example
 
-Plugin `examples/hello-plugin/` minh họa cấu trúc tối thiểu (0 quyền).
-Dưới đây là ví dụ đầy đủ hơn — plugin nhắc giá coin, dùng đủ 4 nhóm quyền:
+The `examples/hello-plugin/` plugin demonstrates the minimal structure (0 permissions).
+Below is a fuller example — a coin-price alert plugin using all 4 permission groups:
 
 `plugin.json`:
 ```json
 {
   "name": "price-watcher",
   "version": "1.0.0",
-  "description": "Theo dõi giá coin và báo khi chạm ngưỡng",
+  "description": "Track coin prices and alert when a threshold is hit",
   "author": "Boom",
   "license": "MIT",
   "entry": "entry.py",
@@ -282,18 +271,18 @@ Dưới đây là ví dụ đầy đủ hơn — plugin nhắc giá coin, dùng 
 
 `entry.py`:
 ```python
-"""Price watcher — ví dụ plugin đầy đủ quyền."""
+"""Price watcher — full-permission plugin example."""
 
 import json
 import urllib.request
 from pathlib import Path
 
-_STATE = None  # Path tới file state, set trong on_enable
+_STATE = None  # Path to the state file, set in on_enable
 
 
 def _get(ctx, coin: str) -> float:
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
-    with urllib.request.urlopen(url, timeout=15) as resp:  # cần quyền network
+    with urllib.request.urlopen(url, timeout=15) as resp:  # needs network permission
         data = json.loads(resp.read().decode("utf-8"))
     return float(data[coin]["usd"])
 
@@ -301,20 +290,20 @@ def _get(ctx, coin: str) -> float:
 def on_enable(ctx):
     global _STATE
     plugin_dir = Path(__file__).resolve().parent
-    _STATE = plugin_dir / "state.json"          # cần quyền filesystem:write
+    _STATE = plugin_dir / "state.json"          # needs filesystem:write
 
     def price_alert(coin: str, target: float) -> str:
-        """Kiểm tra giá hiện tại của coin và so với ngưỡng target (USD)."""
+        """Check the current price of a coin against a target threshold (USD)."""
         current = _get(ctx, coin)
         hit = current >= target
         _STATE.write_text(json.dumps({"coin": coin, "last": current}))
-        status = "ĐẠT NGƯỠNG" if hit else "chưa đạt"
-        return f"{coin}: ${current:,.2f} — {status} (ngưỡng ${target:,.2f})"
+        status = "THRESHOLD HIT" if hit else "not reached"
+        return f"{coin}: ${current:,.2f} — {status} (threshold ${target:,.2f})"
 
     ctx.register_tool(
         "price_alert",
         price_alert,
-        description="Kiểm tra giá coin theo ngưỡng. Dùng khi user hỏi giá coin.",
+        description="Check a coin's price against a threshold. Use when the user asks about coin prices.",
         schema={"coin": "string", "target": "number"},
     )
     ctx.log("price-watcher enabled")
@@ -322,7 +311,7 @@ def on_enable(ctx):
 
 def on_disable():
     global _STATE
-    _STATE = None  # không giữ handle file sau khi tắt
+    _STATE = None  # don't hold the file handle after disabling
 
 
 def on_update(ctx, old_version):
@@ -333,39 +322,39 @@ def on_update(ctx, old_version):
 ```markdown
 # price-watcher
 
-Plugin theo dõi giá coin qua CoinGecko.
+Track coin prices via CoinGecko.
 
-## Khi nào dùng
-- User hỏi "giá BTC bao nhiêu", "báo khi ETH lên 5000", ...
-- Muốn lưu ngưỡng giá để kiểm tra định kỳ.
+## When to use
+- The user asks "what's the BTC price", "alert me when ETH hits 5000", ...
+- The user wants to save price thresholds for periodic checks.
 
 ## Tool
-- `price_alert(coin, target)`: `coin` là id CoinGecko (vd `bitcoin`),
-  `target` là ngưỡng USD. Trả về giá hiện tại + trạng thái đạt/chưa đạt.
+- `price_alert(coin, target)`: `coin` is a CoinGecko id (e.g. `bitcoin`),
+  `target` is the USD threshold. Returns the current price + hit/not-hit status.
 ```
 
-## 8. Tool agent mới
+## 8. New agent tools
 
-Giữ nguyên `list_skills` / `view_skill` / `install_skill` (backward compat, giờ đọc
-từ plugin có `SKILL.md`), thêm:
+Keep `list_skills` / `view_skill` / `install_skill` (backward compatible, now reading
+from plugins with `SKILL.md`), plus:
 
-- `list_plugins()` — liệt kê plugin + version + trạng thái (installed/enabled/disabled)
-- `enable_plugin(name)` / `disable_plugin(name)` — bật/tắt runtime
-- `install_plugin(path_or_url, yes=False)` — validate manifest, in bảng quyền, chờ duyệt
-- `uninstall_plugin(name, backup=True)` — gỡ, backup 7 ngày
-- `update_plugin(name, src)` — update giữ nguyên trạng thái, rollback khi lỗi
-- `plugin_permissions(name)` — xem quyền plugin đang có (phục vụ audit)
+- `list_plugins()` — list plugins + version + state (installed/enabled/disabled)
+- `enable_plugin(name)` / `disable_plugin(name)` — toggle at runtime
+- `install_plugin(path_or_url, yes=False)` — validate manifest, print permissions table, wait for approval
+- `uninstall_plugin(name, backup=True)` — uninstall, 7-day backup
+- `update_plugin(name, src)` — update keeping the current state, rollback on failure
+- `plugin_permissions(name)` — view a plugin's current permissions (for audits)
 
-## 9. Rủi ro và quyết định đã chốt
+## 9. Risks and settled decisions
 
-1. **Chỉ stdlib**: không thêm dependency cho core (sandbox tự viết bằng importlib +
-   kiểm soát builtins/sys.modules, không dùng RestrictedPython).
-2. **Không hot-patch quyền lúc chạy**: mọi thay đổi quyền đều qua update manifest +
-   user duyệt lại.
-3. **Plugin lỗi không crash agent**: `on_enable` raise → plugin ở lại `disabled`,
-   lỗi log đầy đủ kèm traceback, agent tiếp tục chạy.
-4. **Tương thích ngược 2 chiều**: đọc được skill cũ (bọc tự động) và plugin cũ
-   (`register()` → bọc thành `on_enable`).
-5. **`__init__.py` dùng try/except ImportError**: trong giai đoạn 4 worker làm song
-   song, package vẫn import được dù `lifecycle.py` / `manifest.py` / `sandbox.py`
-   chưa tồn tại; export thiếu có giá trị `None` cho tới khi module xuất hiện.
+1. **Stdlib only**: no new dependencies for the core (sandbox is hand-written with importlib +
+   builtins/sys.modules control, no RestrictedPython).
+2. **No runtime permission hot-patching**: every permission change goes through a manifest
+   update + user re-approval.
+3. **A broken plugin must not crash the agent**: `on_enable` raising → the plugin stays
+   `disabled`, the error is logged with a full traceback, the agent keeps running.
+4. **Two-way backward compatibility**: reads old skills (auto-wrapped) and old plugins
+   (`register()` → wrapped as `on_enable`).
+5. **`__init__.py` uses try/except ImportError**: while the 4 modules were being built in
+   parallel, the package still imported even if `lifecycle.py` / `manifest.py` / `sandbox.py`
+   didn't exist yet; missing exports are `None` until the module lands.

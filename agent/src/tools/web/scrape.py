@@ -1,15 +1,16 @@
-"""scrape_basic: scrape cấu trúc đơn giản (không cần Chrome).
+"""scrape_basic: simple structured scraping (no Chrome needed).
 
-Kế thừa ý tưởng từ ``scraper.py`` nhưng tự chứa (không import tool cũ):
-  - fetch HTML tĩnh bằng httpx + retry/backoff (giống fetch.py), CÓ validate SSRF.
-  - DOM mini bằng stdlib html.parser + selector đơn giản
+Borrowing the idea from ``scraper.py`` but self-contained (doesn't import
+the old tool):
+  - fetches static HTML with httpx + retry/backoff (like fetch.py), WITH SSRF validation.
+  - mini DOM via stdlib html.parser + simple selectors
     (tag / .class / #id / tag.class / tag#id / "tag@attr").
-  - fields: {tên_field: selector}; hậu tố "@attr" lấy attribute thay vì text
-    (VD {"img": ".thumb@src"}).
+  - fields: {field_name: selector}; the "@attr" suffix grabs an attribute
+    instead of text (e.g. {"img": ".thumb@src"}).
 
-KHÔNG mang vào: crawl nhiều trang, sitemap, watch_url, browser fallback
-(JS-heavy vẫn dùng browser_tool cũ). scrape_basic never-raise: lỗi trả về
-{"error": ...}, không bao giờ raise vào agent loop.
+NOT included: multi-page crawl, sitemap, watch_url, browser fallback
+(JS-heavy still uses the old browser_tool). scrape_basic never raises:
+errors return {"error": ...}, never into the agent loop.
 """
 
 import re
@@ -27,13 +28,13 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36 Boom/1.0"
 )
-_MAX_DOWNLOAD = 2 * 1024 * 1024     # 2 MiB: scrape cần DOM đầy đủ hơn fetch text
+_MAX_DOWNLOAD = 2 * 1024 * 1024     # 2 MiB: scraping needs a fuller DOM than text fetch
 _MAX_RETRIES = 2
 _BACKOFF = (1.0, 2.0)
 _sleep = time.sleep
 _RETRYABLE = (httpx.TransportError,)
 
-# Dấu hiệu trang render bằng JS (body rỗng + script bundle / SPA root).
+# Signs of a JS-rendered page (empty body + script bundle / SPA root).
 _SPA_MARKERS = re.compile(
     r'<div[^>]+id=["\'](?:root|app|__next)["\']',
     re.I,
@@ -41,10 +42,10 @@ _SPA_MARKERS = re.compile(
 
 
 class ScrapeError(Exception):
-    """Lỗi scrape (network / parse / selector)."""
+    """Scrape error (network / parse / selector)."""
 
 
-# ---------------------------------------------------------------- DOM mini
+# ---------------------------------------------------------------- mini DOM
 class _Node:
     __slots__ = ("tag", "attrs", "children", "text")
 
@@ -94,7 +95,7 @@ _SELECTOR_RE = re.compile(
 
 
 def _split_field_selector(field_selector: str) -> Tuple[str, Optional[str]]:
-    """Tách "selector@attr" -> (selector, attr|None)."""
+    """Splits "selector@attr" -> (selector, attr|None)."""
     if "@" in field_selector:
         sel, _, attr = field_selector.rpartition("@")
         return sel.strip() or "*", attr.strip() or None
@@ -104,7 +105,7 @@ def _split_field_selector(field_selector: str) -> Tuple[str, Optional[str]]:
 def _match_simple(node: _Node, part: str) -> bool:
     m = _SELECTOR_RE.match(part.strip())
     if not m or not any(m.groupdict().values()):
-        raise ValueError(f"selector không hỗ trợ {part!r}")
+        raise ValueError(f"unsupported selector {part!r}")
     g = m.groupdict()
     if g["tag"] and node.tag != g["tag"].lower():
         return False
@@ -116,7 +117,7 @@ def _match_simple(node: _Node, part: str) -> bool:
 
 
 def _select(root: _Node, selector: str) -> List[_Node]:
-    """Tìm mọi node khớp selector (duyệt toàn cây, không hỗ trợ descendant)."""
+    """Finds every node matching the selector (whole-tree walk, no descendant support)."""
     sel, _attr = _split_field_selector(selector)
     out: List[_Node] = []
 
@@ -144,12 +145,12 @@ def _inner_text(node: _Node) -> str:
 
 # ------------------------------------------------------------------ fetch
 def _fetch_html(url: str, timeout: float = 20.0) -> str:
-    """Fetch HTML tĩnh: validate SSRF + retry/backoff + cap 2 MiB."""
+    """Fetches static HTML: SSRF validation + retry/backoff + 2 MiB cap."""
     target = validate_url(url)
 
     def _one() -> str:
         with httpx.Client(
-            trust_env=False,  # như search.py/fetch.py
+            trust_env=False,  # like search.py/fetch.py
             timeout=httpx.Timeout(timeout, connect=5.0),
             follow_redirects=True,
             headers={"User-Agent": USER_AGENT,
@@ -159,7 +160,7 @@ def _fetch_html(url: str, timeout: float = 20.0) -> str:
                 if resp.status_code == 429:
                     raise ScrapeError("rate limited (HTTP 429)")
                 if resp.status_code >= 400:
-                    raise ScrapeError(f"HTTP {resp.status_code} cho {target}")
+                    raise ScrapeError(f"HTTP {resp.status_code} for {target}")
                 body = bytearray()
                 for chunk in resp.iter_bytes(chunk_size=64 * 1024):
                     if len(body) + len(chunk) > _MAX_DOWNLOAD:
@@ -179,7 +180,7 @@ def _fetch_html(url: str, timeout: float = 20.0) -> str:
             last_exc = exc
             if attempt < _MAX_RETRIES:
                 _sleep(_BACKOFF[attempt])
-    raise ScrapeError(f"GET {target} thất bại sau retry: {last_exc}")
+    raise ScrapeError(f"GET {target} failed after retries: {last_exc}")
 
 
 def scrape_basic(
@@ -189,21 +190,21 @@ def scrape_basic(
     max_items: int = 50,
     timeout: int = 20,
 ) -> Dict[str, Any]:
-    """Scrape 1 trang: mỗi element khớp item_selector -> 1 item.
+    """Scrapes 1 page: each element matching item_selector -> 1 item.
 
-    fields: {tên_field: selector}; selector có thể kèm "@attr" để lấy
-    attribute (VD {"link": "a@href", "img": ".thumb@src"}), không có @attr
-    thì lấy inner text đã collapse whitespace.
+    fields: {field_name: selector}; selectors may carry "@attr" to grab an
+    attribute (e.g. {"link": "a@href", "img": ".thumb@src"}); without @attr
+    it takes the inner text with collapsed whitespace.
 
-    Trả về {"url", "items": [...], "count"} hoặc {"error": ...} (never-raise).
-    Trang trông như client-rendered (SPA root rỗng) -> {"error"} gợi ý dùng
-    browser_tool, không cố bypass.
+    Returns {"url", "items": [...], "count"} or {"error": ...} (never raises).
+    Pages that look client-rendered (empty SPA root) -> {"error"} suggesting
+    browser_tool, no bypass attempts.
     """
     try:
         if not isinstance(item_selector, str) or not item_selector.strip():
-            return {"error": "item_selector phải là string không rỗng"}
+            return {"error": "item_selector must be a non-empty string"}
         if not isinstance(fields, dict) or not fields:
-            return {"error": "fields phải là dict {tên: selector} không rỗng"}
+            return {"error": "fields must be a non-empty dict {name: selector}"}
         try:
             max_items = max(1, int(max_items))
         except (TypeError, ValueError):
@@ -213,15 +214,15 @@ def scrape_basic(
         if _SPA_MARKERS.search(markup) and len(re.sub(r"<[^>]+>", "", markup).strip()) < 200:
             return {
                 "error": (
-                    "trang có vẻ render bằng JS (SPA); scrape_basic chỉ đọc HTML tĩnh. "
-                    "Hãy dùng browser_tool cho trang này."
+                    "the page looks JS-rendered (SPA); scrape_basic only reads static HTML. "
+                    "Use browser_tool for this page."
                 )
             }
 
         root = _parse_html(markup)
         items_nodes = _select(root, item_selector)
         if not items_nodes:
-            return {"error": f"item_selector {item_selector!r} không khớp element nào"}
+            return {"error": f"item_selector {item_selector!r} matched no elements"}
 
         items: List[Dict[str, Any]] = []
         for node in items_nodes[:max_items]:
@@ -229,13 +230,13 @@ def scrape_basic(
             for name, field_sel in fields.items():
                 sel, attr = _split_field_selector(str(field_sel))
                 found = _select(node, sel) if sel != "*" else [node]
-                # _select duyệt từ node: node con khớp; thử cả chính node
+                # _select walks from the node: matching children; also try the node itself
                 if not found:
                     try:
                         if _match_simple(node, sel):
                             found = [node]
                     except ValueError:
-                        return {"error": f"field selector không hỗ trợ {field_sel!r}"}
+                        return {"error": f"unsupported field selector {field_sel!r}"}
                 if not found:
                     item[name] = None
                     continue
@@ -244,9 +245,9 @@ def scrape_basic(
             items.append(item)
         return {"url": url, "items": items, "count": len(items)}
     except (SSRFError, ValueError) as exc:
-        # Lỗi validate/SSRF: báo rõ ràng để agent sửa input, không retry.
+        # Validation/SSRF errors: reported clearly so the agent can fix input, no retry.
         return {"error": f"{type(exc).__name__}: {exc}"}
     except ScrapeError as exc:
         return {"error": str(exc)}
-    except Exception as exc:  # never-raise: mọi lỗi lạ cũng thành {"error"}
+    except Exception as exc:  # never-raise: even odd errors become {"error"}
         return {"error": f"unexpected: {type(exc).__name__}: {exc}"}

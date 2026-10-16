@@ -1,18 +1,18 @@
-"""terminal.shell — chạy lệnh shell an toàn cho Boom.
+"""terminal.shell — safe shell command execution for Boom.
 
-Kế thừa từ agent/src/tools/shell.py, đổi tên API cho gọn:
+Inherited from agent/src/tools/shell.py, with a tidier API:
 run / bg / status / kill (/ forget).
 
-Mô hình an toàn:
-- KHÔNG BAO GIỜ dùng shell=True. Chuỗi lệnh được tách bằng shlex.split
-  nên `;`, `|`, `&&`, `$(...)` chỉ là tham số chữ, không được diễn giải.
-- Denylist chặn lệnh nguy hiểm: rm -rf /, mkfs, dd ghi /dev/*,
-  fork bomb, lệnh nguồn (shutdown/reboot/...).
-- cwd bị nhốt trong allowed_root (mặc định: cwd hiện tại).
-- Output mỗi stream cắt ở 100 KiB; run() kill tiến trình sau `timeout` giây
-  (mặc định 30s cho MỌI lệnh).
+Safety model:
+- NEVER uses shell=True. Command strings go through shlex.split, so
+  `;`, `|`, `&&`, `$(...)` are just literal arguments, never interpreted.
+- Denylist blocks dangerous commands: rm -rf /, mkfs, dd writing /dev/*,
+  fork bombs, power commands (shutdown/reboot/...).
+- cwd is jailed inside allowed_root (default: the current cwd).
+- Each stream's output is capped at 100 KiB; run() kills the process after
+  `timeout` seconds (default 30s for EVERY command).
 
-Chỉ dùng stdlib + pydantic.
+Stdlib + pydantic only.
 """
 
 from __future__ import annotations
@@ -29,52 +29,52 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
-MAX_OUTPUT_BYTES = 100 * 1024  # 100 KiB mỗi stream
+MAX_OUTPUT_BYTES = 100 * 1024  # 100 KiB per stream
 KILL_GRACE_SECONDS = 5
-DEFAULT_TIMEOUT = 30  # timeout mặc định cho mọi lệnh run()
+DEFAULT_TIMEOUT = 30  # default timeout for every run() command
 
-# Fork bomb kinh điển: :(){ :|:& };:
+# Classic fork bomb: :(){ :|:& };:
 _FORK_BOMB_RE = re.compile(r":\(\)\s*\{[^}]*\}\s*;\s*:")
 
 
 class RunOptions(BaseModel):
-    """Tham số validate cho run()/bg(): timeout, cwd, allowed_root."""
+    """Validated parameters for run()/bg(): timeout, cwd, allowed_root."""
 
     timeout: int = Field(default=DEFAULT_TIMEOUT, gt=0, le=600,
-                         description="timeout giây, 1..600")
-    cwd: Optional[str] = Field(default=None, description="thư mục chạy lệnh")
+                         description="timeout in seconds, 1..600")
+    cwd: Optional[str] = Field(default=None, description="directory to run the command in")
     allowed_root: Optional[str] = Field(
-        default=None, description="cwd phải nằm trong root này")
+        default=None, description="cwd must be inside this root")
 
 
 def _split_cmd(cmd: Union[str, List[str]]) -> List[str]:
-    """Tách lệnh thành argv. Chuỗi đi qua shlex (không qua shell)."""
+    """Split a command into argv. Strings go through shlex (never a shell)."""
     if isinstance(cmd, list):
         return list(cmd)
     return shlex.split(cmd)
 
 
 def _is_blocked(argv: List[str]) -> bool:
-    """True nếu argv khớp pattern lệnh nguy hiểm (denylist)."""
+    """True if argv matches a dangerous-command pattern (denylist)."""
     if not argv:
-        return True  # lệnh rỗng cũng bị chặn
+        return True  # empty commands are blocked too
     exe = os.path.basename(argv[0])
 
-    # Lệnh nguồn / phá hệ thống
+    # Power / system-destroying commands
     if exe in {"shutdown", "reboot", "poweroff", "halt", "init"}:
         return True
 
-    # mkfs.* mọi dạng
+    # mkfs.* in all forms
     if exe == "mkfs" or exe.startswith("mkfs."):
         return True
 
-    # dd động vào thiết bị thô
+    # dd touching raw devices
     if exe == "dd":
         for arg in argv[1:]:
             if arg.startswith("if=/dev/") or arg.startswith("of=/dev/"):
                 return True
 
-    # rm -rf vào gốc hệ thống
+    # rm -rf against the system root
     if exe == "rm":
         if "--no-preserve-root" in argv:
             return True
@@ -90,69 +90,69 @@ def _is_blocked(argv: List[str]) -> bool:
 
 
 def _check_dangerous(cmd: Union[str, List[str]]) -> Optional[str]:
-    """Trả về chuỗi lỗi nếu lệnh bị chặn, ngược lại None."""
+    """Returns an error string if the command is blocked, otherwise None."""
     if not isinstance(cmd, (str, list)):
-        return "blocked: cmd phải là chuỗi hoặc list argv"
+        return "blocked: cmd must be a string or an argv list"
     if isinstance(cmd, str) and _FORK_BOMB_RE.search(cmd):
         return "blocked: dangerous command (fork bomb pattern)"
     try:
         argv = _split_cmd(cmd)
-    except ValueError as exc:  # quote hỏng...
-        return f"blocked: không parse được lệnh ({exc})"
+    except ValueError as exc:  # broken quoting...
+        return f"blocked: could not parse command ({exc})"
     if _is_blocked(argv):
         return "blocked: dangerous command"
     return None
 
 
 def _resolve_cwd(cwd: Optional[str], allowed_root: Optional[str]) -> str:
-    """Resolve cwd và đảm bảo nằm trong allowed_root, sai thì raise PermissionError."""
+    """Resolves cwd and ensures it is inside allowed_root, else raises PermissionError."""
     root = Path(allowed_root).resolve() if allowed_root else Path.cwd().resolve()
     target = Path(cwd).resolve() if cwd else root
     try:
         target.relative_to(root)
     except ValueError:
-        raise PermissionError(f"cwd {target} nằm ngoài allowed_root {root}")
+        raise PermissionError(f"cwd {target} is outside allowed_root {root}")
     return str(target)
 
 
 def _validate_options(timeout: int, cwd: Optional[str],
                       allowed_root: Optional[str]) -> tuple[Optional[RunOptions], Optional[str]]:
-    """Validate tham số bằng pydantic. Trả về (options, None) hoặc (None, lỗi)."""
+    """Validates parameters with pydantic. Returns (options, None) or (None, error)."""
     try:
         return RunOptions(timeout=timeout, cwd=cwd, allowed_root=allowed_root), None
     except ValidationError as exc:
-        return None, f"tham số không hợp lệ: {exc.errors()[0]['msg']}"
+        return None, f"invalid parameters: {exc.errors()[0]['msg']}"
 
 
 def _truncate(data: bytes) -> str:
-    """Decode bytes, cắt ở MAX_OUTPUT_BYTES."""
+    """Decodes bytes, capped at MAX_OUTPUT_BYTES."""
     if len(data) > MAX_OUTPUT_BYTES:
         data = data[:MAX_OUTPUT_BYTES] + b"\n...[truncated at 100KB]..."
     return data.decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
-# chạy đồng bộ
+# synchronous run
 # ---------------------------------------------------------------------------
 
 def run(cmd: Union[str, List[str]], timeout: int = DEFAULT_TIMEOUT,
         cwd: Optional[str] = None,
         allowed_root: Optional[str] = None) -> Dict:
-    """Chạy lệnh đồng bộ, thu stdout/stderr.
+    """Runs a command synchronously, capturing stdout/stderr.
 
-    Mô tả:
-        Chạy lệnh và đợi kết thúc (tối đa *timeout* giây, mặc định 30s).
-        Lệnh nguy hiểm trong denylist bị chặn trước khi chạy.
+    Description:
+        Runs the command and waits for it (up to *timeout* seconds, default
+        30s). Denylisted dangerous commands are blocked before running.
     Args:
-        cmd: chuỗi lệnh hoặc list argv.
-        timeout: timeout giây (1..600), mặc định 30.
-        cwd: thư mục chạy lệnh.
-        allowed_root: cwd phải nằm trong root này.
+        cmd: command string or argv list.
+        timeout: timeout in seconds (1..600), default 30.
+        cwd: directory to run the command in.
+        allowed_root: cwd must be inside this root.
     Returns:
         {"ok", "returncode", "stdout", "stderr", "timed_out"}.
-        timed_out=True khi tiến trình bị kill do quá timeout.
+        timed_out=True when the process was killed for exceeding the timeout.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     blocked = _check_dangerous(cmd)
     if blocked:
@@ -201,7 +201,7 @@ def run(cmd: Union[str, List[str]], timeout: int = DEFAULT_TIMEOUT,
 
 
 # ---------------------------------------------------------------------------
-# job nền
+# background jobs
 # ---------------------------------------------------------------------------
 
 _JOBS: Dict[str, Dict] = {}
@@ -209,7 +209,7 @@ _JOBS_LOCK = threading.Lock()
 
 
 def _drain(stream, buf: List[bytes], proc: subprocess.Popen) -> None:
-    """Đọc pipe tới EOF, giữ tối đa MAX_OUTPUT_BYTES (giữ phần đuôi)."""
+    """Reads a pipe to EOF, keeping at most MAX_OUTPUT_BYTES (keeps the tail)."""
     try:
         while True:
             chunk = stream.read(65536)
@@ -222,7 +222,7 @@ def _drain(stream, buf: List[bytes], proc: subprocess.Popen) -> None:
                 buf.clear()
                 buf.append(joined[-MAX_OUTPUT_BYTES:])
     except (ValueError, OSError):
-        pass  # pipe bị đóng giữa chừng
+        pass  # pipe closed mid-read
     finally:
         try:
             stream.close()
@@ -232,19 +232,19 @@ def _drain(stream, buf: List[bytes], proc: subprocess.Popen) -> None:
 
 def bg(cmd: Union[str, List[str]], cwd: Optional[str] = None,
        allowed_root: Optional[str] = None) -> Dict:
-    """Chạy lệnh ở chế độ nền, trả về ngay job_id.
+    """Runs a command in the background, returning a job_id immediately.
 
-    Mô tả:
-        Khởi động tiến trình nền, output được gom vào buffer để đọc dần
-        qua status(). Job nền không áp timeout (dùng kill() để dừng).
+    Description:
+        Starts a background process; output is buffered and readable via
+        status(). Background jobs have no timeout (use kill() to stop them).
     Args:
-        cmd: chuỗi lệnh hoặc list argv.
-        cwd: thư mục chạy lệnh.
-        allowed_root: cwd phải nằm trong root này.
+        cmd: command string or argv list.
+        cwd: directory to run the command in.
+        allowed_root: cwd must be inside this root.
     Returns:
-        {"ok": True, "job_id": str} hoặc {"ok": False, "error": str}.
+        {"ok": True, "job_id": str} or {"ok": False, "error": str}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     blocked = _check_dangerous(cmd)
     if blocked:
@@ -289,16 +289,16 @@ def _join_drainers(entry: Dict) -> None:
 
 
 def status(job_id: str) -> Dict:
-    """Xem trạng thái job nền: đang chạy hay đã xong, kèm output đã gom.
+    """Checks a background job's status: running or done, with buffered output.
 
     Args:
-        job_id: id do bg() trả về.
+        job_id: the id returned by bg().
     Returns:
         {"ok": True, "job_id", "running": bool, "returncode": int|None,
          "stdout": str, "stderr": str}
-        hoặc {"ok": False, "error": "not found"}.
+        or {"ok": False, "error": "not found"}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     with _JOBS_LOCK:
         entry = _JOBS.get(job_id)
@@ -307,7 +307,7 @@ def status(job_id: str) -> Dict:
     proc = entry["proc"]
     rc = proc.poll()
     if rc is not None:
-        _join_drainers(entry)  # đảm bảo đã gom hết output
+        _join_drainers(entry)  # make sure all output was collected
     return {
         "ok": True,
         "job_id": job_id,
@@ -319,14 +319,14 @@ def status(job_id: str) -> Dict:
 
 
 def kill(job_id: str) -> Dict:
-    """Dừng job nền: SIGTERM, sau 5s chưa chết thì SIGKILL.
+    """Stops a background job: SIGTERM, then SIGKILL if still alive after 5s.
 
     Args:
-        job_id: id do bg() trả về.
+        job_id: the id returned by bg().
     Returns:
-        {"ok": True, "job_id": str} hoặc {"ok": False, "error": "not found"}.
+        {"ok": True, "job_id": str} or {"ok": False, "error": "not found"}.
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     with _JOBS_LOCK:
         entry = _JOBS.get(job_id)
@@ -351,15 +351,15 @@ def kill(job_id: str) -> Dict:
 
 
 def forget(job_id: str) -> Dict:
-    """Xóa job đã xong khỏi registry để giải phóng bộ nhớ.
+    """Drops a finished job from the registry to free memory.
 
     Args:
-        job_id: id do bg() trả về.
+        job_id: the id returned by bg().
     Returns:
-        {"ok": True, "job_id": str} hoặc {"ok": False, "error": str}
+        {"ok": True, "job_id": str} or {"ok": False, "error": str}
         (not found / job still running).
     Raises:
-        Không raise — mọi lỗi trả về dict.
+        Never raises — all errors are returned as dicts.
     """
     with _JOBS_LOCK:
         entry = _JOBS.get(job_id)

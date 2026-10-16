@@ -1,22 +1,22 @@
-"""CodeReviewer cho Boom: review tĩnh file Python bằng AST thật, không regex mù.
+"""CodeReviewer for Boom: static Python review with real AST, no blind regex.
 
 Review rules:
   - complexity   : cyclomatic complexity > 10 -> warning (AST: if/for/while/
-                   except/and/or, mỗi điểm rẽ +1)
-  - long_function: hàm > 50 dòng -> warning
-  - long_file    : file > 500 dòng -> info
-  - dead_code    : biến gán nhưng không dùng -> warning (phân tích AST theo scope)
-  - bare_except  : `except:` trần -> error
-  - todo         : comment TODO/FIXME -> info
-  - print_stmt   : dùng print() thay vì logging -> info
+                   except/and/or, each branch point +1)
+  - long_function: function > 50 lines -> warning
+  - long_file    : file > 500 lines -> info
+  - dead_code    : assigned but unused variable -> warning (AST analysis per scope)
+  - bare_except  : bare `except:` -> error
+  - todo         : TODO/FIXME comment -> info
+  - print_stmt   : using print() instead of logging -> info
 
 API:
-  - review_file(path)      -> list issues [{line, severity, rule, message}]
-  - review_diff(diff_text) -> chỉ check các dòng thêm mới trong git diff
-                            (rules theo dòng: todo, print_stmt, bare_except)
-  - to_markdown(issues)    -> báo cáo tiếng Việt
+  - review_file(path)      -> list of issues [{line, severity, rule, message}]
+  - review_diff(diff_text) -> only checks added lines in a git diff
+                            (line-based rules: todo, print_stmt, bare_except)
+  - to_markdown(issues)    -> Vietnamese report (format pinned by evals)
 
-Chỉ dùng stdlib: ast, io, re, tokenize, pathlib.
+Stdlib only: ast, io, re, tokenize, pathlib.
 """
 
 import ast
@@ -26,20 +26,20 @@ import tokenize
 from pathlib import Path
 
 
-# Ngưỡng mặc định cho từng rule
+# Default thresholds per rule
 NGUONG_COMPLEXITY = 10
 NGUONG_LONG_FUNCTION = 50
 NGUONG_LONG_FILE = 500
 
-# Regex tìm TODO/FIXME trong comment
+# Regex for TODO/FIXME in comments
 _RE_TODO = re.compile(r"\b(TODO|FIXME)\b", re.IGNORECASE)
-# Regex cho print() và except trần trong review_diff (check theo dòng)
+# Regex for print() and bare except in review_diff (line-based checks)
 _RE_PRINT = re.compile(r"(?<![\w.])print\s*\(")
 _RE_BARE_EXCEPT = re.compile(r"^\s*except\s*:\s*(#.*)?$")
 
 
 def _issue(line, severity, rule, message):
-    """Tạo 1 issue chuẩn."""
+    """Build one standard issue."""
     return {"line": line, "severity": severity, "rule": rule,
             "message": message}
 
@@ -49,12 +49,12 @@ def _issue(line, severity, rule, message):
 # ---------------------------------------------------------------------------
 
 class _DemDoPhucTap(ast.NodeVisitor):
-    """Đếm điểm rẽ cho cyclomatic complexity của 1 hàm.
+    """Counts branch points for a function's cyclomatic complexity.
 
-    Mỗi điểm rẽ +1 vào độ phức tạp (gốc 1):
-      if / for / while / except / with? (không) / and-or (BoolOp: n giá trị -> +n-1)
-      IfExp (ternary), comprehension (For trong comprehension),
-      Assert (rẽ khi fail), MatchCase (mỗi case -> +1).
+    Each branch point +1 to complexity (base 1):
+      if / for / while / except / with? (no) / and-or (BoolOp: n values -> +n-1)
+      IfExp (ternary), comprehension (For inside comprehension),
+      Assert (branches on failure), MatchCase (each case -> +1).
     """
 
     def __init__(self):
@@ -64,7 +64,7 @@ class _DemDoPhucTap(ast.NodeVisitor):
         self.diem += 1
         self.generic_visit(node)
 
-    # rẽ nhánh cơ bản
+    # basic branch points
     def visit_If(self, node):
         self._cong(node)
 
@@ -78,7 +78,7 @@ class _DemDoPhucTap(ast.NodeVisitor):
         self._cong(node)
 
     def visit_ExceptHandler(self, node):
-        # chỉ tính except có type; except: trần đã có rule riêng
+        # only typed except counts; bare except: has its own rule
         if node.type is not None:
             self.diem += 1
         self.generic_visit(node)
@@ -87,12 +87,12 @@ class _DemDoPhucTap(ast.NodeVisitor):
         self._cong(node)
 
     def visit_BoolOp(self, node):
-        # a and b and c -> 3 giá trị -> +2 điểm rẽ
+        # a and b and c -> 3 values -> +2 branch points
         self.diem += len(node.values) - 1
         self.generic_visit(node)
 
     def visit_comprehension(self, node):
-        self.diem += 1  # mỗi vòng for trong comprehension
+        self.diem += 1  # each for inside a comprehension
         self.generic_visit(node)
 
     def visit_Assert(self, node):
@@ -101,7 +101,7 @@ class _DemDoPhucTap(ast.NodeVisitor):
     def visit_MatchCase(self, node):
         self._cong(node)
 
-    # không đi vào hàm/class lồng nhau: độ phức tạp của scope riêng
+    # don't descend into nested functions/classes: their complexity is their own scope's
     def visit_FunctionDef(self, node):
         pass
 
@@ -120,19 +120,19 @@ def _do_phuc_tap(node):
 
 
 # ---------------------------------------------------------------------------
-# rule: dead_code (biến gán nhưng không dùng)
+# rule: dead_code (assigned but unused variables)
 # ---------------------------------------------------------------------------
 
 class _ThuThapGanDung(ast.NodeVisitor):
-    """Thu thập biến gán (Store) và biến dùng (Load) trong 1 scope.
+    """Collects assigned (Store) and used (Load) variables in one scope.
 
-    - Bỏ qua tên hàm/class/import (không phải biến).
-    - Bỏ qua biến lặp for và biến `_`.
-    - Gán nhưng sau đó có Load cùng tên trong scope -> coi là đã dùng.
+    - Skips function/class/import names (not variables).
+    - Skips for-loop variables and `_`.
+    - Assigned but later Loaded with the same name in the scope -> counts as used.
     """
 
     def __init__(self):
-        self.gan = {}   # name -> (lineno, col) của lần gán đầu tiên
+        self.gan = {}   # name -> (lineno, col) of first assignment
         self.dung = set()
         self._trong_ham_long = False
 
@@ -142,7 +142,7 @@ class _ThuThapGanDung(ast.NodeVisitor):
         if isinstance(node.ctx, ast.Load):
             self.dung.add(node.id)
         elif isinstance(node.ctx, (ast.Store, ast.Del)):
-            # Del coi như dùng (không phải dead code)
+            # Del counts as use (not dead code)
             if isinstance(node.ctx, ast.Del):
                 self.dung.add(node.id)
             elif node.id not in self.gan:
@@ -150,17 +150,17 @@ class _ThuThapGanDung(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_arg(self, node):
-        # tham số hàm: coi là đã dùng mặc định (tránh false positive
-        # cho API public); chỉ đánh dấu đã gán để không báo
+        # function args: treated as used by default (avoids false positives
+        # on public APIs); only recorded as assigned so they aren't flagged
         if node.arg not in self.gan:
             self.gan[node.arg] = (node.lineno, node.col_offset)
         self.dung.add(node.arg)
 
     def _ham_long(self, node):
-        # hàm lồng: chỉ ghi tên + decorator/args, không đi vào thân
-        # (biến trong thân thuộc scope riêng)
+        # nested function: record the name + decorators/args only, don't enter
+        # the body (its variables belong to a separate scope)
         self.gan.setdefault(node.name, (node.lineno, node.col_offset))
-        self.dung.add(node.name)  # tên hàm định nghĩa coi như dùng nội bộ
+        self.dung.add(node.name)  # a defined function name counts as used internally
         for dec in node.decorator_list:
             self.visit(dec)
         for a in node.args.args:
@@ -184,7 +184,7 @@ class _ThuThapGanDung(ast.NodeVisitor):
         for a in node.names:
             ten = (a.asname or a.name).split(".")[0]
             self.gan.setdefault(ten, (node.lineno, node.col_offset))
-            self.dung.add(ten)  # import coi như dùng (không báo dead import ở đây)
+            self.dung.add(ten)  # imports count as used (dead imports not flagged here)
 
     def visit_ImportFrom(self, node):
         for a in node.names:
@@ -204,7 +204,7 @@ class _ThuThapGanDung(ast.NodeVisitor):
 
 
 def _dead_code_trong_scope(thu):
-    """Trả về [(lineno, name)] các biến gán nhưng không dùng."""
+    """Returns [(lineno, name)] of assigned-but-unused variables."""
     return sorted(
         (lineno, ten) for ten, (lineno, _col) in thu.gan.items()
         if ten not in thu.dung
@@ -216,7 +216,7 @@ def _dead_code_trong_scope(thu):
 # ---------------------------------------------------------------------------
 
 class CodeReviewer:
-    """Review tĩnh file Python."""
+    """Static Python file reviewer."""
 
     def __init__(self, nguong_complexity=NGUONG_COMPLEXITY,
                  nguong_long_function=NGUONG_LONG_FUNCTION,
@@ -228,9 +228,9 @@ class CodeReviewer:
     # -- review_file -------------------------------------------------------
 
     def review_file(self, path):
-        """Phân tích 1 file Python, trả về list issues.
+        """Analyzes one Python file, returns a list of issues.
 
-        Syntax lỗi -> trả về 1 issue severity error rule 'syntax'.
+        Syntax errors -> returns a single 'syntax' issue with error severity.
         """
         text = Path(path).read_text(encoding="utf-8")
         try:
@@ -249,11 +249,11 @@ class CodeReviewer:
                 "file dài %d dòng (ngưỡng %d), nên tách nhỏ"
                 % (so_dong, self.nguong_long_file)))
 
-        # todo: quét comment bằng tokenize (không bắt nhầm trong string)
+        # todo: scan comments with tokenize (no false hits inside strings)
         issues.extend(self._rule_todo(text))
 
         for node in ast.walk(tree):
-            # complexity + long_function: chỉ áp cho def (không tính module)
+            # complexity + long_function: apply to defs only (not the module)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 do_dai = (node.end_lineno or node.lineno) - node.lineno + 1
                 if do_dai > self.nguong_long_function:
@@ -285,16 +285,16 @@ class CodeReviewer:
                     "dùng print() thay vì logging, log sẽ khó "
                     "quản lý khi chạy thật"))
 
-        # dead_code: chạy riêng từng scope (module + mỗi hàm)
+        # dead_code: run per scope (module + each function)
         issues.extend(self._rule_dead_code(tree))
 
         issues.sort(key=lambda i: (i["line"], i["rule"]))
         return issues
 
-    # -- từng rule chi tiết ------------------------------------------------
+    # -- individual rules --------------------------------------------------
 
     def _rule_todo(self, text):
-        """Quét comment TODO/FIXME bằng tokenize."""
+        """Scans TODO/FIXME comments with tokenize."""
         issues = []
         try:
             tokens = tokenize.generate_tokens(io.StringIO(text).readline)
@@ -307,16 +307,16 @@ class CodeReviewer:
                         % (khop.group(1).upper(), tok.start[0],
                            tok.string.strip()[:80])))
         except (tokenize.TokenError, IndentationError):
-            pass  # file lỗi token -> rule syntax đã bắt ở review_file
+            pass  # token error -> the syntax rule already caught it in review_file
         return issues
 
     def _rule_dead_code(self, tree):
-        """Dead code theo từng scope: module và mỗi hàm."""
+        """Dead code per scope: the module and each function."""
         issues = []
 
         def xet_scope(scope_node, ten_scope):
             thu = _ThuThapGanDung()
-            # với hàm: chỉ visit thân (args đã được visit_arg đánh dấu dùng)
+            # for functions: only visit the body (args were marked used by visit_arg)
             for stmt in scope_node.body:
                 thu.visit(stmt)
             for lineno, ten in _dead_code_trong_scope(thu):
@@ -326,9 +326,9 @@ class CodeReviewer:
                     % (ten, " trong hàm '%s'" % ten_scope
                        if ten_scope else "")))
 
-        # scope module
+        # module scope
         xet_scope(tree, "")
-        # scope từng hàm
+        # each function scope
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 xet_scope(node, node.name)
@@ -337,10 +337,10 @@ class CodeReviewer:
     # -- review_diff -------------------------------------------------------
 
     def review_diff(self, diff_text):
-        """Review từ git diff: chỉ check các dòng thêm mới (bắt đầu bằng '+').
+        """Reviews from a git diff: only checks newly added lines (starting with '+').
 
-        Rules theo dòng: todo, print_stmt, bare_except. Trả về issues với
-        line là số dòng trong file MỚI.
+        Line-based rules: todo, print_stmt, bare_except. Returns issues with
+        `line` as the line number in the NEW file.
         """
         issues = []
         file_moi = None
@@ -351,7 +351,7 @@ class CodeReviewer:
                 file_moi = dong[4:] if dong.startswith("+++ b/") else dong[4:]
                 continue
             if dong.startswith("@@"):
-                # @@ -a,b +c,d @@ -> lấy dòng bắt đầu của file mới (c)
+                # @@ -a,b +c,d @@ -> take the new file's start line (c)
                 m = re.search(r"\+(\d+)", dong)
                 dong_moi = int(m.group(1)) if m else 0
                 continue
@@ -376,16 +376,20 @@ class CodeReviewer:
                         "[diff %s] `except:` trần bắt mọi exception"
                         % file_moi))
             elif dong.startswith("-") and not dong.startswith("---"):
-                pass  # dòng xóa: không check, không tăng số dòng mới
+                pass  # removed line: no check, new-file line count unchanged
             elif not dong.startswith("\\"):
-                dong_moi += 1  # dòng context: vẫn tăng số dòng file mới
+                dong_moi += 1  # context line: still advances the new file's line count
         issues.sort(key=lambda i: (i["line"], i["rule"]))
         return issues
 
     # -- to_markdown -------------------------------------------------------
 
     def to_markdown(self, issues, tieu_de="Báo cáo code review"):
-        """Format báo cáo tiếng Việt, nhóm theo severity."""
+        """Formats the report, grouped by severity.
+
+        NOTE: the report body stays Vietnamese — evals/test_overnight_codereview.py
+        asserts on the exact strings below ("Tổng:", "🔴 Lỗi", ...).
+        """
         thu_tu = {"error": 0, "warning": 1, "info": 2}
         nhan = {"error": "🔴 Lỗi", "warning": "🟡 Cảnh báo", "info": "🔵 Thông tin"}
         dem = {"error": 0, "warning": 0, "info": 0}

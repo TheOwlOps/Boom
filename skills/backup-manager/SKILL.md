@@ -1,6 +1,6 @@
 ---
 name: backup-manager
-description: Tạo, liệt kê, khôi phục và dọn backup tar.gz.
+description: Create, list, restore, and prune tar.gz backups.
 version: 1.0.0
 author: boom-overnight
 license: MIT
@@ -11,16 +11,16 @@ category: devops
 
 # Backup Manager
 
-Sao lưu thư mục thành file `tar.gz` kèm timestamp và checksum SHA-256,
-giúp khôi phục nhanh khi cần:
+Back up a directory into a `tar.gz` file with a timestamp and SHA-256 checksum,
+for quick recovery when needed:
 
-- `create_backup(src, dest)` — nén thư mục nguồn, trả về đường dẫn file backup
-  và checksum; checksum được verify lại ngay sau khi tạo.
-- `list_backups(dir)` — liệt kê các bản backup, mới nhất trước.
-- `restore(backup, dest)` — giải nén về thư mục đích.
-- `prune(dir, keep_n)` — chỉ giữ `keep_n` bản mới nhất, xoá bản cũ hơn.
+- `create_backup(src, dest)` — compress the source directory; returns the backup
+  file path and checksum; the checksum is re-verified immediately after creation.
+- `list_backups(dir)` — list backups, newest first.
+- `restore(backup, dest)` — extract into the destination directory.
+- `prune(dir, keep_n)` — keep only the `keep_n` newest backups, delete older ones.
 
-## Cách dùng
+## Usage
 
 ```python
 from backup import create_backup, list_backups, restore, prune
@@ -31,6 +31,6 @@ restore(info["path"], "/data/restored")
 prune("/backups", keep_n=5)
 ```
 
-File backup có tên `<tên-thư-mục>-YYYYMMDD-HHMMSS.tar.gz`.
-Checksum SHA-256 được lưu trong file `.sha256` cạnh backup.
-Dùng `terminal` để kiểm tra dung lượng trước khi backup thư mục lớn.
+Backup files are named `<directory-name>-YYYYMMDD-HHMMSS.tar.gz`.
+The SHA-256 checksum is stored in a `.sha256` file next to the backup.
+Use `terminal` to check disk usage before backing up large directories.

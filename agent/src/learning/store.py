@@ -1,7 +1,7 @@
-"""SQLite-backed learning store. Thread-safe: lock + commit sau mỗi write.
+"""SQLite-backed learning store. Thread-safe: lock + commit after each write.
 
-Pattern tái dùng từ tasks/store.py: _gen_id() dạng learn_<ms>_<4hex>
-bằng secrets, retry khi đụng id trong cùng millisecond.
+Pattern reused from tasks/store.py: _gen_id() of the form learn_<ms>_<4hex>
+via secrets, with retry on same-millisecond id collisions.
 """
 
 import sqlite3
@@ -33,12 +33,12 @@ def _now_iso() -> str:
 
 
 def _gen_id() -> str:
-    """Id duy nhất: millisecond + 4 hex ngẫu nhiên (tránh đụng độ cùng-ms)."""
+    """Unique id: millisecond + 4 random hex chars (avoids same-ms collisions)."""
     return f"learn_{int(time.time() * 1000)}_{secrets.token_hex(2)}"
 
 
 class LearningStore:
-    """LearningStore lưu SQLite, thread-safe qua threading.Lock."""
+    """SQLite learning store, thread-safe via threading.Lock."""
 
     def __init__(self, db_path: Union[str, Path]):
         db_path = Path(db_path)
@@ -74,13 +74,13 @@ class LearningStore:
         if isinstance(ltype, LearningType):
             return ltype.value
         if isinstance(ltype, str):
-            return LearningType(ltype).value  # ValueError nếu type lạ
+            return LearningType(ltype).value  # ValueError on unknown types
         raise ValueError(f"unknown learning type: {ltype!r}")
 
     # -- API -------------------------------------------------------------
 
     def add(self, learning: Learning) -> str:
-        """INSERT learning mới. Sinh id nếu rỗng; id tường minh đã tồn tại -> ValueError."""
+        """INSERTs a new learning. Generates an id when empty; an explicit existing id -> ValueError."""
         with self._lock:
             auto = not learning.id
             if auto:
@@ -91,7 +91,7 @@ class LearningStore:
                     break
                 if not auto:
                     raise ValueError(f"learning id already exists: {learning.id!r}")
-                learning.id = _gen_id()  # đụng độ hiếm: sinh lại
+                learning.id = _gen_id()  # rare collision: regenerate
             else:
                 raise ValueError("could not generate a unique learning id")
             now = _now_iso()
@@ -128,7 +128,7 @@ class LearningStore:
         type: Union[LearningType, str, None] = None,
         include_superseded: bool = False,
     ) -> List[Learning]:
-        """Liệt kê learning. Mặc định ẩn các mẩu đã bị supersede."""
+        """Lists learnings. Superseded entries hidden by default."""
         type_val = self._resolve_type(type)
         clauses: List[str] = []
         params: List[str] = []
@@ -146,7 +146,7 @@ class LearningStore:
         return [self._row_to_learning(r) for r in rows]
 
     def search(self, query: str) -> List[Learning]:
-        """Tìm LIKE %query% trên content, chỉ trả non-superseded, confidence desc."""
+        """LIKE %query% search over content, non-superseded only, confidence desc."""
         with self._lock:
             cur = self._conn.execute(
                 "SELECT * FROM learnings"
@@ -158,7 +158,7 @@ class LearningStore:
         return [self._row_to_learning(r) for r in rows]
 
     def supersede(self, old_id: str, new_id: str) -> None:
-        """Đánh dấu old_id bị new_id thay thế. old không tồn tại -> ValueError."""
+        """Marks old_id as superseded by new_id. Missing old_id -> ValueError."""
         with self._lock:
             cur = self._conn.execute("SELECT 1 FROM learnings WHERE id = ?", (old_id,))
             if cur.fetchone() is None:
@@ -170,14 +170,14 @@ class LearningStore:
             self._conn.commit()
 
     def remove(self, learning_id: str) -> bool:
-        """Xóa learning. Không tồn tại -> False."""
+        """Deletes a learning. Missing -> False."""
         with self._lock:
             cur = self._conn.execute("DELETE FROM learnings WHERE id = ?", (learning_id,))
             self._conn.commit()
             return cur.rowcount > 0
 
     def count(self) -> int:
-        """Tổng số learning trong store (kể cả superseded)."""
+        """Total learnings in the store (including superseded)."""
         with self._lock:
             cur = self._conn.execute("SELECT COUNT(*) FROM learnings")
             return int(cur.fetchone()[0])

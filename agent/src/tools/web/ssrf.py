@@ -1,16 +1,16 @@
-"""Chống SSRF cho mọi request web ra ngoài.
+"""Anti-SSRF for every outbound web request.
 
-Quy tắc validate_url:
-  - chỉ cho scheme http/https (chặn file://, gopher://, dict://, ...).
-  - hostname không được rỗng; chặn userinfo trong URL (user:pass@host).
-  - resolve hostname qua DNS rồi kiểm tra MỌI IP trả về: bất kỳ IP nào thuộc
+validate_url rules:
+  - http/https schemes only (blocks file://, gopher://, dict://, ...).
+  - hostname must not be empty; userinfo in URLs (user:pass@host) blocked.
+  - resolves the hostname via DNS then checks EVERY returned IP: any IP in
     loopback / private (RFC1918, CGNAT 100.64/10, IPv6 ULA) / link-local /
-    multicast / reserved / unspecified -> từ chối. Kiểm tra sau resolve để
-    chống DNS rebinding cơ bản (attacker không đổi được IP sau khi ta check).
-  - chặn trực tiếp các tên localhost và dạng số (0x7f000001, 0177.0.0.1...).
+    multicast / reserved / unspecified -> rejected. Checks after resolving to
+    counter basic DNS rebinding (the attacker can't swap IPs after our check).
+  - blocks the localhost names and numeric forms directly (0x7f000001, 0177.0.0.1...).
 
-Lưu ý: đây là lớp phòng thủ ở tầng ứng dụng. Môi trường production nên bổ
-sung egress firewall / proxy allowlist ở tầng hạ tầng.
+Note: this is an application-layer defense. Production should add an egress
+firewall / proxy allowlist at the infrastructure layer.
 """
 
 import ipaddress
@@ -22,21 +22,21 @@ __all__ = ["SSRFError", "validate_url"]
 
 
 class SSRFError(ValueError):
-    """URL bị chặn vì nguy cơ SSRF."""
+    """URL blocked for SSRF risk."""
 
 
 def _test_allowlist() -> set:
-    """Danh sách IP/host được phép trong test nội bộ.
+    """IPs/hosts allowed in internal tests.
 
-    Đọc từ env ``BOOM_SSRF_TEST_ALLOW`` (VD: "127.0.0.1,::1").
-    Mặc định rỗng -> chặn hết IP nội bộ. CHỈ dùng cho test, không bật
-    trên production.
+    Read from the ``BOOM_SSRF_TEST_ALLOW`` env var (e.g. "127.0.0.1,::1").
+    Default empty -> blocks all internal IPs. TEST USE ONLY, never enable
+    in production.
     """
     raw = os.environ.get("BOOM_SSRF_TEST_ALLOW", "")
     return {h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip()}
 
 
-# Tên host luôn nguy hiểm, không cần resolve.
+# Hostnames always dangerous, no resolution needed.
 _BLOCKED_HOSTNAMES = {
     "localhost",
     "localhost.",
@@ -46,7 +46,7 @@ _BLOCKED_HOSTNAMES = {
 
 
 def _is_dangerous_ip(ip: ipaddress._BaseAddress) -> bool:
-    """True nếu IP không được phép làm đích request ra ngoài."""
+    """True when the IP must not be an outbound request target."""
     return (
         ip.is_private
         or ip.is_loopback
@@ -58,38 +58,38 @@ def _is_dangerous_ip(ip: ipaddress._BaseAddress) -> bool:
 
 
 def validate_url(url: str) -> str:
-    """Validate URL chống SSRF, trả về URL đã strip.
+    """Validates a URL against SSRF, returns the stripped URL.
 
-    Raise:
-      - ValueError: URL rỗng / không phải str / scheme không phải http(s).
-      - SSRFError : hostname bị chặn hoặc resolve ra IP nội bộ/nguy hiểm.
+    Raises:
+      - ValueError: empty URL / not a str / scheme not http(s).
+      - SSRFError : hostname blocked or resolving to internal/dangerous IPs.
     """
     if not isinstance(url, str) or not url.strip():
-        raise ValueError("url phải là string không rỗng")
+        raise ValueError("url must be a non-empty string")
     target = url.strip()
 
     parts = urllib.parse.urlsplit(target)
     scheme = parts.scheme.lower()
     if scheme not in ("http", "https"):
         raise SSRFError(
-            "chỉ cho phép scheme http/https, nhận được %r" % (parts.scheme or target[:32])
+            "only http/https schemes allowed, got %r" % (parts.scheme or target[:32])
         )
 
     host = (parts.hostname or "").lower().rstrip(".")
     if not host:
-        raise SSRFError("URL thiếu hostname")
-    # Chặn userinfo kiểu http://user:pass@internal/ (đánh lừa parser).
+        raise SSRFError("URL is missing a hostname")
+    # Blocks userinfo like http://user:pass@internal/ (parser trickery).
     if parts.username or parts.password:
-        raise SSRFError("URL chứa userinfo — bị chặn vì nguy cơ SSRF")
+        raise SSRFError("URL contains userinfo — blocked for SSRF risk")
     if host in _BLOCKED_HOSTNAMES and host not in _test_allowlist():
-        raise SSRFError("hostname %r bị chặn (localhost)" % host)
+        raise SSRFError("hostname %r blocked (localhost)" % host)
 
-    # Resolve rồi kiểm tra TỪNG IP: chống cả hostname trỏ về 127.0.0.1.
+    # Resolve then check EACH IP: also catches hostnames pointing at 127.0.0.1.
     try:
         infos = socket.getaddrinfo(host, None, family=socket.AF_UNSPEC,
                                    type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise SSRFError("không resolve được hostname %r: %s" % (host, exc))
+        raise SSRFError("cannot resolve hostname %r: %s" % (host, exc))
 
     allow = _test_allowlist()
     bad = []
@@ -99,14 +99,14 @@ def validate_url(url: str) -> str:
         except ValueError:
             bad.append(sockaddr[0])
             continue
-        # Host/IP nằm trong allowlist test thì bỏ qua kiểm tra.
+        # Hosts/IPs on the test allowlist skip the checks.
         if host in allow or str(ip).lower() in allow:
             continue
         if _is_dangerous_ip(ip):
             bad.append(str(ip))
     if bad:
         raise SSRFError(
-            "hostname %r resolve ra IP nội bộ/nguy hiểm (%s) — bị chặn"
+            "hostname %r resolves to internal/dangerous IP(s) (%s) — blocked"
             % (host, ", ".join(sorted(set(bad))))
         )
     return target

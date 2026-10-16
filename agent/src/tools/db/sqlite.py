@@ -1,19 +1,19 @@
-"""SQLite an toàn cho Boom: chống SQL injection bằng thiết kế.
+"""Safe SQLite for Boom: SQL-injection-proof by design.
 
-Nguyên tắc (không tin input dù là từ agent):
-  1. KHÔNG có API chạy SQL thô — chỉ có query()/insert()/update() dựng câu
-     lệnh từ tham số đã validate.
-  2. Tên bảng phải nằm trong whitelist (đăng ký lúc khởi tạo hoặc
-     register_table) VÀ khớp regex identifier.
-  3. Tên cột validate qua PRAGMA table_info của bảng thật.
-  4. Mọi giá trị đi qua placeholder "?" (parameterized) — không bao giờ nối
-     chuỗi vào câu lệnh.
-  5. Mệnh đề WHERE chỉ cho phép dạng đơn giản: "col OP ?" nối bằng AND/OR,
-     OP thuộc {=, !=, <>, <, >, <=, >=, LIKE, IS NULL, IS NOT NULL}.
-  6. Đường dẫn file DB phải nằm trong base_dir (chống path traversal),
-     mặc định là thư mục hiện tại.
+Principles (never trust input, even from the agent):
+  1. NO raw-SQL API — only query()/insert()/update() building statements
+     from validated parameters.
+  2. Table names must be whitelisted (registered at init or via
+     register_table) AND match the identifier regex.
+  3. Column names validated against the real table's PRAGMA table_info.
+  4. Every value goes through "?" placeholders (parameterized) — never string
+     concatenation into the statement.
+  5. WHERE clauses only allow simple "col OP ?" joined by AND/OR,
+     OP in {=, !=, <>, <, >, <=, >=, LIKE, IS NULL, IS NOT NULL}.
+  6. The DB file path must be inside base_dir (anti path traversal),
+     defaulting to the current directory.
 
-Chỉ dùng stdlib (sqlite3, re, os).
+Stdlib only (sqlite3, re, os).
 """
 
 import os
@@ -23,18 +23,18 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 __all__ = ["SQLiteError", "SQLiteClient"]
 
-# Tên bảng/cột hợp lệ: identifier SQL đơn giản (không dấu cách, không quote).
+# Valid table/column names: simple SQL identifiers (no spaces, no quotes).
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# WHERE cho phép: "col OP ?" hoặc "col IS [NOT] NULL", nối AND/OR, có ngoặc.
+# Allowed WHERE: "col OP ?" or "col IS [NOT] NULL", joined by AND/OR, outer parens ok.
 _WHERE_TOKEN_RE = re.compile(
     r"""
     ^\s*
-    (?P<col>[A-Za-z_][A-Za-z0-9_]*)          # tên cột
+    (?P<col>[A-Za-z_][A-Za-z0-9_]*)          # column name
     \s*
-    (?P<op>=|!=|<>|<=|>=|<|>|LIKE|IS)       # toán tử cho phép
+    (?P<op>=|!=|<>|<=|>=|<|>|LIKE|IS)       # allowed operators
     \s*
-    (?P<rest>\?|NOT\s+NULL|NULL)?            # "?" hoặc NULL / NOT NULL
+    (?P<rest>\?|NOT\s+NULL|NULL)?            # "?" or NULL / NOT NULL
     \s*$
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -43,11 +43,11 @@ _WHERE_SPLIT_RE = re.compile(r"\s+(AND|OR)\s+", re.IGNORECASE)
 
 
 class SQLiteError(Exception):
-    """Lỗi DB: validate thất bại, bảng chưa whitelist, hoặc lỗi sqlite."""
+    """DB error: validation failed, table not whitelisted, or sqlite error."""
 
 
 class SQLiteClient:
-    """Client SQLite với whitelist bảng + parameterized query bắt buộc."""
+    """SQLite client with a table whitelist + mandatory parameterized queries."""
 
     def __init__(
         self,
@@ -55,15 +55,15 @@ class SQLiteClient:
         allowed_tables: Optional[Sequence[str]] = None,
         base_dir: Optional[str] = None,
     ):
-        """db_path: file .db (tạo mới nếu chưa có). base_dir: root cho phép
-        chứa file DB (mặc định: thư mục làm việc hiện tại)."""
+        """db_path: the .db file (created if missing). base_dir: allowed root
+        for the DB file (default: current working directory)."""
         if not isinstance(db_path, str) or not db_path.strip():
-            raise SQLiteError("db_path phải là string không rỗng")
+            raise SQLiteError("db_path must be a non-empty string")
         root = os.path.realpath(base_dir or os.getcwd())
         resolved = os.path.realpath(db_path.strip())
         if resolved != root and not resolved.startswith(root + os.sep):
             raise SQLiteError(
-                "db_path nằm ngoài base_dir (chống path traversal): %r" % db_path
+                "db_path is outside base_dir (anti path traversal): %r" % db_path
             )
         parent = os.path.dirname(resolved)
         if parent:
@@ -72,31 +72,31 @@ class SQLiteClient:
             self._conn = sqlite3.connect(resolved, timeout=10.0)
             self._conn.row_factory = sqlite3.Row
         except sqlite3.Error as exc:
-            raise SQLiteError(f"không mở được DB {resolved}: {exc}")
+            raise SQLiteError(f"could not open DB {resolved}: {exc}")
         self._whitelist: set = set()
         for t in allowed_tables or []:
             self.register_table(t)
 
-    # ---------------------------------------------------------- validate
+    # ---------------------------------------------------------- validation
     def _check_table(self, table: str) -> str:
-        """Validate tên bảng: identifier hợp lệ + đã whitelist + tồn tại thật."""
+        """Validates a table name: valid identifier + whitelisted + really exists."""
         if not isinstance(table, str) or not _IDENTIFIER_RE.match(table):
-            raise SQLiteError(f"tên bảng không hợp lệ: {table!r}")
+            raise SQLiteError(f"invalid table name: {table!r}")
         if table not in self._whitelist:
             raise SQLiteError(
-                f"bảng {table!r} chưa được whitelist — gọi register_table() trước"
+                f"table {table!r} is not whitelisted — call register_table() first"
             )
-        # Bảng whitelist nhưng bị xóa ngoài luồng? kiểm tra tồn tại thật.
+        # Whitelisted but deleted out-of-band? verify it really exists.
         cur = self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (table,),
         )
         if cur.fetchone() is None:
-            raise SQLiteError(f"bảng {table!r} không tồn tại trong DB")
+            raise SQLiteError(f"table {table!r} does not exist in the DB")
         return table
 
     def _columns(self, table: str) -> List[str]:
-        """Danh sách cột thật của bảng (từ PRAGMA) — dùng để validate."""
+        """The table's real column list (from PRAGMA) — used for validation."""
         self._check_table(table)
         cur = self._conn.execute(f'PRAGMA table_info("{table}")')
         return [row["name"] for row in cur.fetchall()]
@@ -106,67 +106,67 @@ class SQLiteClient:
         out = []
         for c in cols:
             if not isinstance(c, str) or not _IDENTIFIER_RE.match(c):
-                raise SQLiteError(f"tên cột không hợp lệ: {c!r}")
+                raise SQLiteError(f"invalid column name: {c!r}")
             if c not in real:
-                raise SQLiteError(f"cột {c!r} không tồn tại trong bảng {table!r}")
+                raise SQLiteError(f"column {c!r} does not exist in table {table!r}")
             out.append(c)
         return out
 
     def _parse_where(
         self, table: str, where: Optional[str]
     ) -> Tuple[str, List[str]]:
-        """Validate mệnh đề WHERE đơn giản, trả về (sql_where, [cột dùng]).
+        """Validates a simple WHERE clause, returns (sql_where, [columns used]).
 
-        Chỉ chấp nhận các điều kiện "col OP ?" / "col IS [NOT] NULL" nối
-        bằng AND/OR (có thể bọc ngoặc tròn ở ngoài). Mọi thứ khác -> từ chối.
+        Only accepts "col OP ?" / "col IS [NOT] NULL" conditions joined by
+        AND/OR (one outer paren pair allowed). Everything else -> rejected.
         """
         if not where:
             return "", []
         w = where.strip()
-        # Cho phép 1 cặp ngoặc bọc ngoài cùng.
+        # Allow one wrapping paren pair.
         if w.startswith("(") and w.endswith(")"):
             w = w[1:-1].strip()
         if not w:
-            raise SQLiteError("mệnh đề WHERE rỗng")
+            raise SQLiteError("empty WHERE clause")
         if ";" in w or "--" in w or "/*" in w:
-            raise SQLiteError("WHERE chứa ký tự/cụm bị cấm (chống injection)")
+            raise SQLiteError("WHERE contains banned chars/sequences (anti injection)")
         cols = self._columns(table)
         parts = _WHERE_SPLIT_RE.split(w)
         used: List[str] = []
         for i, part in enumerate(parts):
             if i % 2 == 1:  # AND / OR
                 if part.upper() not in ("AND", "OR"):
-                    raise SQLiteError(f"toán tử logic không cho phép: {part!r}")
+                    raise SQLiteError(f"disallowed logic operator: {part!r}")
                 continue
             m = _WHERE_TOKEN_RE.match(part)
             if not m:
                 raise SQLiteError(
-                    f"điều kiện WHERE không hỗ trợ: {part!r} "
-                    "(chỉ cho: col = ? / col LIKE ? / col IS [NOT] NULL, nối AND/OR)"
+                    f"unsupported WHERE condition: {part!r} "
+                    "(only: col = ? / col LIKE ? / col IS [NOT] NULL, joined by AND/OR)"
                 )
             col = m.group("col")
             if col not in cols:
-                raise SQLiteError(f"cột {col!r} không tồn tại trong bảng {table!r}")
+                raise SQLiteError(f"column {col!r} does not exist in table {table!r}")
             used.append(col)
         return w, used
 
     # ------------------------------------------------------------- API
     def register_table(self, table: str) -> None:
-        """Thêm bảng vào whitelist (tên phải là identifier + bảng tồn tại)."""
+        """Adds a table to the whitelist (must be a valid identifier + exist)."""
         if not isinstance(table, str) or not _IDENTIFIER_RE.match(table):
-            raise SQLiteError(f"tên bảng không hợp lệ: {table!r}")
+            raise SQLiteError(f"invalid table name: {table!r}")
         cur = self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (table,),
         )
         if cur.fetchone() is None:
             raise SQLiteError(
-                f"không whitelist được: bảng {table!r} không tồn tại trong DB"
+                f"cannot whitelist: table {table!r} does not exist in the DB"
             )
         self._whitelist.add(table)
 
     def tables(self) -> List[str]:
-        """Danh sách bảng đã whitelist."""
+        """Whitelisted tables."""
         return sorted(self._whitelist)
 
     def query(
@@ -178,10 +178,10 @@ class SQLiteClient:
         order_by: Optional[str] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """SELECT an toàn: chỉ đọc, mọi giá trị qua placeholder.
+        """Safe SELECT: read-only, every value through placeholders.
 
-        columns=None -> SELECT *. where: xem _parse_where. params: tuple/list
-        giá trị cho các dấu "?" trong where (đếm phải khớp).
+        columns=None -> SELECT *. where: see _parse_where. params: tuple/list
+        of values for the "?" marks in where (counts must match).
         """
         self._check_table(table)
         if columns:
@@ -193,12 +193,12 @@ class SQLiteClient:
         n_marks = where_sql.count("?") if where_sql else 0
         if n_marks != len(params):
             raise SQLiteError(
-                f"WHERE cần {n_marks} param nhưng nhận {len(params)}"
+                f"WHERE needs {n_marks} param(s) but got {len(params)}"
             )
         order_sql = ""
         if order_by:
             if not isinstance(order_by, str):
-                raise SQLiteError("order_by phải là string")
+                raise SQLiteError("order_by must be a string")
             ob = order_by.strip()
             desc = ob.upper().endswith(" DESC")
             base = ob[:-5].strip() if desc else ob[:-4].strip() if ob.upper().endswith(" ASC") else ob
@@ -216,14 +216,14 @@ class SQLiteClient:
             cur = self._conn.execute(sql, tuple(params))
             return [dict(row) for row in cur.fetchall()]
         except sqlite3.Error as exc:
-            raise SQLiteError(f"query thất bại: {exc}")
+            raise SQLiteError(f"query failed: {exc}")
 
     def insert(self, table: str, row: Dict[str, Any]) -> int:
-        """INSERT 1 dòng (dict {cột: giá trị}); trả về rowid. Toàn bộ giá trị
-        qua placeholder — không nối chuỗi."""
+        """INSERTs 1 row (dict {column: value}); returns the rowid. Every value
+        goes through placeholders — no string concatenation."""
         self._check_table(table)
         if not isinstance(row, dict) or not row:
-            raise SQLiteError("row phải là dict không rỗng")
+            raise SQLiteError("row must be a non-empty dict")
         cols = self._check_columns(table, list(row.keys()))
         placeholders = ", ".join("?" for _ in cols)
         col_sql = ", ".join(f'"{c}"' for c in cols)
@@ -234,7 +234,7 @@ class SQLiteClient:
             return int(cur.lastrowid)
         except sqlite3.Error as exc:
             self._conn.rollback()
-            raise SQLiteError(f"insert thất bại: {exc}")
+            raise SQLiteError(f"insert failed: {exc}")
 
     def update(
         self,
@@ -243,20 +243,20 @@ class SQLiteClient:
         where: str,
         params: Sequence[Any] = (),
     ) -> int:
-        """UPDATE an toàn: values là dict {cột: giá trị mới} (placeholder),
-        where BẮT BUỘC (chống update toàn bảng do quên điều kiện). Trả về số
-        dòng bị ảnh hưởng."""
+        """Safe UPDATE: values is a dict {column: new value} (placeholders),
+        where is MANDATORY (guards against whole-table updates from a forgotten
+        condition). Returns affected rows."""
         self._check_table(table)
         if not isinstance(values, dict) or not values:
-            raise SQLiteError("values phải là dict không rỗng")
+            raise SQLiteError("values must be a non-empty dict")
         if not where or not where.strip():
-            raise SQLiteError("update bắt buộc có WHERE (chống update toàn bảng)")
+            raise SQLiteError("update requires a WHERE (anti whole-table update)")
         cols = self._check_columns(table, list(values.keys()))
         where_sql, _used = self._parse_where(table, where)
         n_marks = where_sql.count("?")
         if n_marks != len(params):
             raise SQLiteError(
-                f"WHERE cần {n_marks} param nhưng nhận {len(params)}"
+                f"WHERE needs {n_marks} param(s) but got {len(params)}"
             )
         set_sql = ", ".join(f'"{c}" = ?' for c in cols)
         sql = f'UPDATE "{table}" SET {set_sql} WHERE {where_sql}'
@@ -268,13 +268,13 @@ class SQLiteClient:
             return int(cur.rowcount)
         except sqlite3.Error as exc:
             self._conn.rollback()
-            raise SQLiteError(f"update thất bại: {exc}")
+            raise SQLiteError(f"update failed: {exc}")
 
     def execute_script(self, script: str) -> None:
-        """Chạy script DDL (CREATE TABLE...) — chỉ cho setup, không phải tool
-        cho agent. Validate: cấm mọi statement ngoài CREATE TABLE / CREATE INDEX."""
+        """Runs a DDL script (CREATE TABLE...) — for setup only, not an agent
+        tool. Validates: bans every statement except CREATE TABLE / CREATE INDEX."""
         if not isinstance(script, str) or not script.strip():
-            raise SQLiteError("script rỗng")
+            raise SQLiteError("empty script")
         for stmt in script.split(";"):
             s = stmt.strip()
             if not s:
@@ -282,14 +282,14 @@ class SQLiteClient:
             head = s.split(None, 1)[0].upper() if s.split() else ""
             if head != "CREATE":
                 raise SQLiteError(
-                    f"execute_script chỉ cho CREATE TABLE/INDEX, gặp: {head!r}"
+                    f"execute_script only allows CREATE TABLE/INDEX, got: {head!r}"
                 )
         try:
             self._conn.executescript(script)
             self._conn.commit()
         except sqlite3.Error as exc:
             self._conn.rollback()
-            raise SQLiteError(f"script thất bại: {exc}")
+            raise SQLiteError(f"script failed: {exc}")
 
     def close(self) -> None:
         try:

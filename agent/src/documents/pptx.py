@@ -1,7 +1,7 @@
-"""PptxBuilder — tạo file PowerPoint (.pptx) bằng python-pptx nếu có,
-fallback sang writer thuần Python (zip + XML) nếu thiếu lib.
+"""PptxBuilder — creates PowerPoint (.pptx) files with python-pptx when available,
+falling back to a pure-Python writer (zip + XML) without it.
 
-Cả hai đường đều cho ra file .pptx hợp lệ, API fluent (method chaining).
+Both paths produce valid .pptx files, fluent API (method chaining).
 """
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from typing import List
 from xml.sax.saxutils import escape as _xml_escape
 
 # ---------------------------------------------------------------------------
-# Fallback writer thuần Python: dựng file .pptx tối giản bằng tay.
+# Pure-Python fallback writer: builds a minimal .pptx by hand.
 #
-# .pptx thực chất là 1 file ZIP chứa các part XML theo chuẩn OOXML.
-# Để PowerPoint/LibreOffice mở được, tối thiểu cần:
-#   [Content_Types].xml, _rels/.rels, ppt/presentation.xml (+ rels của nó),
+# A .pptx is really a ZIP file of OOXML parts.
+# For PowerPoint/LibreOffice to open it, the minimum needed is:
+#   [Content_Types].xml, _rels/.rels, ppt/presentation.xml (+ its rels),
 #   ppt/slideMasters/slideMaster1.xml, ppt/slideLayouts/slideLayout1.xml,
-#   ppt/theme/theme1.xml, và mỗi slide: ppt/slides/slideN.xml (+ rels).
+#   ppt/theme/theme1.xml, and per slide: ppt/slides/slideN.xml (+ rels).
 # ---------------------------------------------------------------------------
 
 _EMU_PER_INCH = 914400
@@ -41,7 +41,7 @@ _REL_THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationship
 
 def _para_xml(text: str, level: int = 0, bullet: bool = False,
               size: int = 1800, bold: bool = False, align: str = "") -> str:
-    """Render 1 đoạn văn DrawingML (<a:p>). size tính bằng 1/100 pt."""
+    """Renders one DrawingML paragraph (<a:p>). size is in 1/100 pt."""
     t = _xml_escape(text)
     ppr_attrs = f' marL="0" indent="0"{f" algn=\"{align}\"" if align else ""}'
     if bullet:
@@ -56,7 +56,7 @@ def _para_xml(text: str, level: int = 0, bullet: bool = False,
 
 def _shape_xml(sid: int, name: str, x: int, y: int, cx: int, cy: int,
                paras: list, ph: str | None = None) -> str:
-    """Render 1 textbox shape (<p:sp>) đặt tại (x, y), kích thước (cx, cy)."""
+    """Renders one textbox shape (<p:sp>) at (x, y), size (cx, cy)."""
     nvpr = f'<p:nvPr><p:ph type="{ph}"/></p:nvPr>' if ph else "<p:nvPr/>"
     return (
         f'<p:sp><p:nvSpPr><p:cNvPr id="{sid}" name="{_xml_escape(name)}"/>'
@@ -91,7 +91,7 @@ def _title_shape(sid: int, title: str, x: int, y: int, cx: int, cy: int,
 
 
 def _slide_shapes_for_op(op: tuple) -> str:
-    """Chuyển 1 op (định nghĩa slide) thành XML shapes cho fallback writer."""
+    """Converts 1 op (a slide definition) into XML shapes for the fallback writer."""
     kind = op[0]
     inch = _EMU_PER_INCH
     tx, ty, tcx, tcy = int(0.5 * inch), int(0.25 * inch), int(9 * inch), int(1 * inch)
@@ -115,8 +115,8 @@ def _slide_shapes_for_op(op: tuple) -> str:
 
     if kind == "table":
         _, title, headers, rows = op
-        # Fallback: bảng vẽ thành text căn cột bằng ký tự ' | ' (không đẹp bằng
-        # bảng thật của python-pptx nhưng vẫn đọc được đầy đủ dữ liệu).
+        # Fallback: the table is drawn as column-aligned text joined by ' | ' (not as
+        # pretty as python-pptx's real table but fully readable).
         cols = len(headers)
         widths = [0] * cols
         all_rows = [headers] + rows
@@ -184,11 +184,11 @@ _THEME_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 
 def _build_minimal_pptx(ops: list) -> bytes:
-    """Dựng toàn bộ file .pptx (ZIP các part XML) từ danh sách ops."""
+    """Builds the complete .pptx file (ZIP of XML parts) from the op list."""
     n = len(ops)
     parts: list[tuple[str, str]] = []
 
-    # [Content_Types].xml — khai báo MIME cho từng part
+    # [Content_Types].xml — MIME declaration for each part
     overrides = [
         '<Override PartName="/ppt/presentation.xml" '
         'ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
@@ -210,14 +210,14 @@ def _build_minimal_pptx(ops: list) -> bytes:
                   '<Default Extension="xml" ContentType="application/xml"/>'
                   + "".join(overrides) + "</Types>"))
 
-    # _rels/.rels — trỏ package tới presentation chính
+    # _rels/.rels — points the package at the main presentation
     parts.append(("_rels/.rels",
                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                   f'<Relationships {_REL_NS}>'
                   f'<Relationship Id="rId1" Type="{_REL_OFFICEDOC}" Target="ppt/presentation.xml"/>'
                   "</Relationships>"))
 
-    # ppt/presentation.xml — danh sách slide + kích thước slide
+    # ppt/presentation.xml — slide list + slide size
     sld_ids = "".join(f'<p:sldId id="{256 + i}" r:id="rId{i + 2}"/>' for i in range(n))
     parts.append(("ppt/presentation.xml",
                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -236,7 +236,7 @@ def _build_minimal_pptx(ops: list) -> bytes:
                   f'<Relationship Id="rId1" Type="{_REL_SLIDEMASTER}" Target="slideMasters/slideMaster1.xml"/>'
                   f"{pres_rels}</Relationships>"))
 
-    # Slide master tối giản
+    # Minimal slide master
     parts.append(("ppt/slideMasters/slideMaster1.xml",
                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                   f'<p:sldMaster {_NS}>'
@@ -261,7 +261,7 @@ def _build_minimal_pptx(ops: list) -> bytes:
                   f'<Relationship Id="rId2" Type="{_REL_THEME}" Target="../theme/theme1.xml"/>'
                   "</Relationships>"))
 
-    # Slide layout: chứa sẵn 2 placeholder title + body để slide kế thừa
+    # Slide layout: ships with 2 title + body placeholders for slides to inherit
     layout_shapes = (
         _shape_xml(2, "Title Placeholder", int(0.5 * _EMU_PER_INCH), int(0.25 * _EMU_PER_INCH),
                    int(9 * _EMU_PER_INCH), int(1 * _EMU_PER_INCH),
@@ -290,7 +290,7 @@ def _build_minimal_pptx(ops: list) -> bytes:
 
     parts.append(("ppt/theme/theme1.xml", _THEME_XML))
 
-    # Từng slide + rels của nó
+    # Each slide + its rels
     for i, op in enumerate(ops, start=1):
         parts.append((f"ppt/slides/slide{i}.xml", _slide_xml(_slide_shapes_for_op(op))))
         parts.append((f"ppt/slides/_rels/slide{i}.xml.rels",
@@ -307,10 +307,10 @@ def _build_minimal_pptx(ops: list) -> bytes:
 
 
 class PptxBuilder:
-    """Fluent builder tạo file .pptx.
+    """Fluent builder for .pptx files.
 
-    Dùng python-pptx khi có sẵn; nếu không, fallback sang writer thuần Python
-    (không cần cài thêm gì). Không bao giờ crash vì thiếu lib.
+    Uses python-pptx when available; otherwise falls back to the pure-Python
+    writer (nothing to install). Never crashes over a missing lib.
     """
 
     def __init__(self, force_fallback: bool = False):
@@ -325,7 +325,7 @@ class PptxBuilder:
 
     @property
     def available(self) -> bool:
-        """True nếu đang dùng python-pptx (chế độ native), False nếu fallback."""
+        """True when using python-pptx (native mode), False for the fallback."""
         return self._native
 
     @property
@@ -405,7 +405,7 @@ class PptxBuilder:
                     for j in range(ncols):
                         cell = tbl.cell(i, j)
                         cell.text = row[j] if j < len(row) else ""
-                        if i == 0:  # header: in đậm
+                        if i == 0:  # header: bold
                             for par in cell.text_frame.paragraphs:
                                 for run in par.runs:
                                     run.font.bold = True

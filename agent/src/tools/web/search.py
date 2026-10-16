@@ -1,13 +1,13 @@
-"""web_search: tìm kiếm web qua DuckDuckGo (không cần API key).
+"""web_search: web search via DuckDuckGo (no API key needed).
 
-Gộp điểm mạnh của 2 bản cũ:
-  - từ ``web.py``      : httpx + retry với backoff (1s, 2s) cho lỗi transport.
-  - từ ``web_tools.py``: cache kết quả search trong RAM (TTL 3600s,
-                         tối đa 128 entries, FIFO evict, thread-safe,
-                         chỉ cache kết quả thành công, deep-copy khi trả về).
+Merges the strengths of the 2 old implementations:
+  - from ``web.py``      : httpx + retry with backoff (1s, 2s) on transport errors.
+  - from ``web_tools.py``: in-RAM search result cache (TTL 3600s,
+                         max 128 entries, FIFO evict, thread-safe,
+                         only successful results cached, deep-copy on return).
 
-SSRF: URL kết quả trong SERP không bị fetch ở đây, nhưng query POST tới
-DuckDuckGo vẫn đi qua validate_url để đồng nhất chính sách.
+SSRF: result URLs in the SERP aren't fetched here, but the query POST to
+DuckDuckGo still goes through validate_url for policy consistency.
 """
 
 import copy
@@ -35,21 +35,21 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36 Boom/1.0"
 )
 
-# --- retry (kế thừa từ web.py) -------------------------------------------
-_MAX_RETRIES = 2                    # số lần retry sau attempt đầu
-_BACKOFF = (1.0, 2.0)               # giây nghỉ trước retry 1 và retry 2
-_sleep = time.sleep                 # test seam: test có thể thay bằng no-op
+# --- retry (inherited from web.py) -----------------------------------------
+_MAX_RETRIES = 2                    # retries after the first attempt
+_BACKOFF = (1.0, 2.0)               # seconds to sleep before retry 1 and retry 2
+_sleep = time.sleep                 # test seam: tests can swap in a no-op
 _RETRYABLE = (httpx.TransportError,)
 
 
 class WebSearchError(Exception):
-    """Search thất bại sau khi đã retry hết."""
+    """Search failed after all retries."""
 
 
 def _new_client(timeout: float) -> httpx.Client:
-    """1 httpx client cho mỗi request: follow redirect, header giống browser."""
-    # trust_env=False: bỏ qua proxy env (tránh lỗi parse no_proxy
-    # IPv6 trong sandbox; SSRF đã validate ở tầng URL).
+    """1 httpx client per request: follows redirects, browser-like headers."""
+    # trust_env=False: ignores proxy env (avoids no_proxy IPv6 parse errors
+    # in sandboxes; SSRF is already validated at the URL layer).
     return httpx.Client(
         trust_env=False,
         timeout=httpx.Timeout(timeout, connect=min(5.0, timeout)),
@@ -63,7 +63,7 @@ def _new_client(timeout: float) -> httpx.Client:
 
 
 def _with_retry(fn, what: str):
-    """Chạy fn(); retry lỗi transport, hết lượt thì raise WebSearchError."""
+    """Runs fn(); retries transport errors, raises WebSearchError when exhausted."""
     last_exc: Optional[BaseException] = None
     for attempt in range(_MAX_RETRIES + 1):
         try:
@@ -72,12 +72,12 @@ def _with_retry(fn, what: str):
             last_exc = exc
             if attempt < _MAX_RETRIES:
                 _sleep(_BACKOFF[attempt])
-    raise WebSearchError(f"{what} thất bại sau {_MAX_RETRIES + 1} lần thử: {last_exc}")
+    raise WebSearchError(f"{what} failed after {_MAX_RETRIES + 1} attempts: {last_exc}")
 
 
-# --- parse SERP DuckDuckGo (stdlib html.parser, kế thừa từ cả 2 bản) -----
+# --- DuckDuckGo SERP parsing (stdlib html.parser, inherited from both) ----
 def _clean_ddg_url(href: str) -> str:
-    """Gỡ redirect /l/?uddg=... của DuckDuckGo để lấy URL thật."""
+    """Unwraps DuckDuckGo's /l/?uddg=... redirect to get the real URL."""
     href = (href or "").strip()
     if href.startswith("//"):
         href = "https:" + href
@@ -92,7 +92,7 @@ def _clean_ddg_url(href: str) -> str:
 
 
 class _DDGResults(HTMLParser):
-    """Thu thập {title, url, snippet} từ trang kết quả DuckDuckGo no-JS."""
+    """Collects {title, url, snippet} from DuckDuckGo's no-JS results page."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -139,19 +139,19 @@ class _DDGResults(HTMLParser):
 
 
 def parse_ddg_html(markup: str) -> List[Dict[str, str]]:
-    """Pure: [{title, url, snippet}] từ HTML trang kết quả DuckDuckGo."""
+    """Pure: [{title, url, snippet}] from DuckDuckGo results page HTML."""
     parser = _DDGResults()
     parser.feed(markup or "")
     parser.close()
     return parser.rows
 
 
-# --- cache search (kế thừa từ web_tools.py) --------------------------------
-# Cache trong RAM: key=(query đã strip, limit), value=(monotonic ts, deep copy
-# kết quả). TTL 3600s, tối đa 128 entries, evict FIFO (entry chèn sớm nhất
-# bị xóa trước). Chỉ cache kết quả thành công — lỗi không bao giờ cache để
-# lỗi thoáng qua không che mất lần thử lại. Trả về deep copy nên caller sửa
-# dict kết quả cũng không làm hỏng cache.
+# --- search cache (inherited from web_tools.py) ------------------------------
+# In-RAM cache: key=(stripped query, limit), value=(monotonic ts, deep copy
+# of the results). TTL 3600s, max 128 entries, FIFO evict (earliest-inserted
+# entry removed first). Only successful results are cached — errors are never
+# cached, so a transient failure can't shadow a retry. Returns a deep copy so
+# callers mutating the result dicts can't corrupt the cache.
 _SEARCH_CACHE_TTL = 3600.0
 _SEARCH_CACHE_MAX = 128
 _search_cache: Dict[Tuple[str, int], Tuple[float, Any]] = {}
@@ -159,7 +159,7 @@ _search_cache_lock = threading.Lock()
 
 
 def clear_web_search_cache() -> int:
-    """Xóa toàn bộ cache search; trả về số entry đã xóa (cho test/eval)."""
+    """Clears the whole search cache; returns entries removed (for test/eval)."""
     with _search_cache_lock:
         n = len(_search_cache)
         _search_cache.clear()
@@ -173,8 +173,8 @@ def _decode(body: bytes, content_type: str) -> str:
 
 
 def _fetch_search(q: str, limit: int, timeout: float) -> List[Dict[str, str]]:
-    """1 vòng search thật: POST query lên DuckDuckGo, parse SERP. Không cache."""
-    validate_url(DDG_ENDPOINT)  # đồng nhất chính sách SSRF cho mọi request ra ngoài
+    """1 real search round: POSTs the query to DuckDuckGo, parses the SERP. No cache."""
+    validate_url(DDG_ENDPOINT)  # uniform SSRF policy for every outbound request
 
     def _one() -> httpx.Response:
         with _new_client(timeout) as client:
@@ -186,22 +186,22 @@ def _fetch_search(q: str, limit: int, timeout: float) -> List[Dict[str, str]]:
 
     resp = _with_retry(_one, f"web_search({q!r})")
     if resp.status_code >= 400:
-        raise WebSearchError(f"DuckDuckGo trả về HTTP {resp.status_code}")
+        raise WebSearchError(f"DuckDuckGo returned HTTP {resp.status_code}")
     markup = _decode(resp.content, resp.headers.get("content-type", ""))
     return parse_ddg_html(markup)[:limit]
 
 
 def web_search(query: str, max_results: int = 5, timeout: int = 15) -> List[Dict[str, str]]:
-    """Tìm kiếm web qua DuckDuckGo (no-JS endpoint, không cần API key).
+    """Searches the web via DuckDuckGo (no-JS endpoint, no API key).
 
-    Trả về ``[{title, url, snippet}]`` (tối đa max_results). Kết quả thành
-    công được cache 1 giờ theo (query, limit) — gọi lại query cũ trong TTL
-    không tốn network. Raise ValueError nếu query rỗng, WebSearchError khi
-    SERP không lấy được sau retry.
+    Returns ``[{title, url, snippet}]`` (up to max_results). Successful
+    results are cached for 1 hour by (query, limit) — repeating an old query
+    within the TTL costs no network. Raises ValueError on empty query,
+    WebSearchError when the SERP can't be fetched after retries.
     """
     q = (query or "").strip()
     if not q:
-        raise ValueError("query phải là string không rỗng")
+        raise ValueError("query must be a non-empty string")
     try:
         limit = max(1, int(max_results))
     except (TypeError, ValueError):
@@ -214,8 +214,8 @@ def web_search(query: str, max_results: int = 5, timeout: int = 15) -> List[Dict
         if entry is not None:
             ts, stored = entry
             if now - ts <= _SEARCH_CACHE_TTL:
-                return copy.deepcopy(stored)  # cache hit: không network
-            del _search_cache[key]  # hết hạn: xóa, fetch lại bên dưới
+                return copy.deepcopy(stored)  # cache hit: no network
+            del _search_cache[key]  # expired: drop, refetch below
 
     rows = _fetch_search(q, limit, float(timeout))
 

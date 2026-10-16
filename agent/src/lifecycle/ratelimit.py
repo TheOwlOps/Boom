@@ -1,10 +1,10 @@
-"""Rate limiter per-key kiểu token bucket cho Boom gateway.
+"""Per-key token-bucket rate limiter for the Boom gateway.
 
-Chỉ dùng stdlib (time, threading). Thread-safe vì gateway dùng
-``ThreadingHTTPServer`` — mỗi request chạy trên một thread riêng nên mọi
-truy cập state đều bọc trong ``threading.Lock``.
+Stdlib only (time, threading). Thread-safe because the gateway uses
+``ThreadingHTTPServer`` — each request runs on its own thread, so all
+state access is wrapped in ``threading.Lock``.
 
-Đặt module ở ``agent/src/lifecycle/ratelimit.py`` để deploy vào repo.
+The module lives at ``agent/src/lifecycle/ratelimit.py`` for repo deployment.
 """
 
 from __future__ import annotations
@@ -15,15 +15,15 @@ import time
 
 
 class RateLimiter:
-    """Token bucket rate limiter, độc lập theo key.
+    """Token bucket rate limiter, independent per key.
 
-    - ``rate``: số token nạp lại mỗi phút (mặc định 60 requests/minute).
-    - ``burst``: sức chứa tối đa của bucket — số request cho phép vượt tức
-      thời trước khi bị chặn (mặc định = ``rate``).
-    - ``key``: bất kỳ hashable nào — IP, user_id, channel, ... caller tự chọn.
+    - ``rate``: tokens refilled per minute (default 60 requests/minute).
+    - ``burst``: bucket capacity — requests allowed to exceed momentarily
+      before being blocked (default = ``rate``).
+    - ``key``: any hashable — IP, user_id, channel, ... the caller's choice.
 
-    Mỗi key có một bucket riêng; mỗi ``allow(key)`` tiêu 1 token. Token nạp
-    lại tuyến tính theo thời gian: ``rate`` token / 60 giây.
+    Each key has its own bucket; each ``allow(key)`` spends 1 token. Tokens
+    refill linearly with time: ``rate`` tokens / 60 seconds.
     """
 
     def __init__(self, rate: float = 60.0, burst: float | None = None,
@@ -44,7 +44,7 @@ class RateLimiter:
     # ------------------------------------------------------------------ api
 
     def allow(self, key) -> bool:
-        """Trả True nếu request được phép (tiêu 1 token), False nếu từ chối."""
+        """Returns True when the request is allowed (spends 1 token), False when denied."""
         now = time.monotonic()
         with self._lock:
             bucket = self._buckets.get(key)
@@ -54,7 +54,7 @@ class RateLimiter:
             else:
                 elapsed = now - bucket[1]
                 if elapsed > 0:
-                    # Nạp token theo thời gian đã trôi qua, không vượt capacity.
+                    # Refill tokens by elapsed time, capped at capacity.
                     bucket[0] = min(self.burst, bucket[0] + elapsed * self._tokens_per_sec)
                     bucket[1] = now
             if bucket[0] >= 1.0:
@@ -62,19 +62,19 @@ class RateLimiter:
                 ok = True
             else:
                 ok = False
-            # Tự dọn bucket cũ (lazy cleanup): thay vì chạy thread nền định
-            # kỳ (tốn tài nguyên + phức tạp lifecycle), ta tranh thủ mỗi lần
-            # allow() gọi: nếu đã quá `cleanup_interval` giây kể từ lần dọn
-            # trước thì quét xóa các bucket đã đầy từ lâu. Bucket đầy nghĩa là
-            # key đó đã không tiêu token một thời gian dài → key chết (IP cũ,
-            # user đã offline). Cách này tránh memory leak khi attacker spam
-            # key mới liên tục, mà không cần timer riêng.
+            # Self-cleaning old buckets (lazy cleanup): instead of a periodic
+            # background thread (resource waste + lifecycle complexity), we
+            # piggyback each allow() call: when `cleanup_interval` seconds have
+            # passed since the last sweep, delete long-full buckets. A full
+            # bucket means the key hasn't spent tokens in a long time → dead
+            # key (old IP, offline user). This avoids memory leaks when an
+            # attacker spams new keys, with no dedicated timer.
             if now - self._last_cleanup >= self.cleanup_interval:
                 self._cleanup_locked(now)
             return ok
 
     def get_retry_after(self, key) -> float:
-        """Số giây caller nên chờ trước khi thử lại (0.0 nếu đang cho phép)."""
+        """Seconds the caller should wait before retrying (0.0 when currently allowed)."""
         now = time.monotonic()
         with self._lock:
             bucket = self._buckets.get(key)
@@ -84,12 +84,12 @@ class RateLimiter:
             tokens = min(self.burst, bucket[0] + elapsed * self._tokens_per_sec)
             if tokens >= 1.0:
                 return 0.0
-            # Thời gian để nạp đủ 1 token.
+            # Time to refill 1 token.
             wait = (1.0 - tokens) / self._tokens_per_sec
             return max(0.0, wait)
 
     def remaining(self, key) -> float:
-        """Số token hiện còn của key (hữu ích cho header X-RateLimit)."""
+        """Tokens currently left for a key (useful for the X-RateLimit header)."""
         now = time.monotonic()
         with self._lock:
             bucket = self._buckets.get(key)
@@ -99,7 +99,7 @@ class RateLimiter:
             return min(self.burst, bucket[0] + elapsed * self._tokens_per_sec)
 
     def reset(self, key=None) -> None:
-        """Xóa bucket của một key, hoặc toàn bộ nếu ``key`` là None."""
+        """Clears one key's bucket, or everything when ``key`` is None."""
         with self._lock:
             if key is None:
                 self._buckets.clear()
@@ -109,10 +109,10 @@ class RateLimiter:
     # -------------------------------------------------------------- internal
 
     def _cleanup_locked(self, now: float) -> None:
-        """Xóa bucket đã đầy (>= capacity) — key chết, không tốn refill."""
-        # Bucket đầy + đã lâu không chạm = key đã ngừng dùng. Chỉ xóa khi
-        # full để không vô tình xóa key đang bị throttle (token < 1) — làm
-        # vậy sẽ reset bộ đếm và cho attacker lách limit.
+        """Deletes full (>= capacity) buckets — dead keys, no refill cost."""
+        # A full + long-untouched bucket = the key stopped being used. Only
+        # delete full ones so a currently-throttled key (tokens < 1) is never
+        # wiped — that would reset the counter and let an attacker bypass the limit.
         dead = [k for k, (tokens, last) in self._buckets.items()
                 if tokens >= self.burst and now - last >= self.cleanup_interval]
         for k in dead:
@@ -121,15 +121,15 @@ class RateLimiter:
 
 
 def rate_limit_middleware(handler, limiter: RateLimiter, key_fn):
-    """Kiểm tra rate limit cho một request của BaseHTTPRequestHandler.
+    """Checks the rate limit for one BaseHTTPRequestHandler request.
 
-    - ``handler``: instance của ``BaseHTTPRequestHandler`` (ví dụ ``_Handler``).
-    - ``limiter``: ``RateLimiter`` dùng chung.
-    - ``key_fn``: ``handler -> hashable`` — trích key từ request
-      (ví dụ ``lambda h: h.client_address[0]`` cho IP, hoặc user_id từ header).
+    - ``handler``: a ``BaseHTTPRequestHandler`` instance (e.g. ``_Handler``).
+    - ``limiter``: the shared ``RateLimiter``.
+    - ``key_fn``: ``handler -> hashable`` — extracts the key from the request
+      (e.g. ``lambda h: h.client_address[0]`` for IP, or user_id from a header).
 
-    Trả ``True`` nếu được phép đi tiếp, ``False`` nếu đã trả 429
-    (kèm header ``Retry-After`` + body JSON theo contract của api.py).
+    Returns ``True`` to proceed, ``False`` when a 429 was already sent
+    (with ``Retry-After`` header + JSON body per api.py's contract).
     """
     key = key_fn(handler)
     if limiter.allow(key):
@@ -142,7 +142,7 @@ def rate_limit_middleware(handler, limiter: RateLimiter, key_fn):
     handler.send_response(429)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(body)))
-    # Retry-After theo RFC 7231: số giây (nguyên, làm tròn lên).
+    # Retry-After per RFC 7231: seconds (integer, rounded up).
     handler.send_header("Retry-After", str(max(1, math.ceil(retry_after))))
     handler.end_headers()
     handler.wfile.write(body)
@@ -150,12 +150,12 @@ def rate_limit_middleware(handler, limiter: RateLimiter, key_fn):
 
 
 class RateLimitMixin:
-    """Mixin cho ``_Handler``: gọi ``self._check_rate_limit()`` ở đầu
-    ``do_GET``/``do_POST``/``do_OPTIONS``; trả False → dừng xử lý ngay.
+    """Mixin for ``_Handler``: call ``self._check_rate_limit()`` at the top of
+    ``do_GET``/``do_POST``/``do_OPTIONS``; a False return stops handling right away.
 
-    Cách dùng: ``class _Handler(RateLimitMixin, BaseHTTPRequestHandler)``,
-    gán ``_Handler.rate_limiter`` và ``_Handler.rate_limit_key`` ở nơi khởi
-    tạo server (xem README).
+    Usage: ``class _Handler(RateLimitMixin, BaseHTTPRequestHandler)``,
+    then assign ``_Handler.rate_limiter`` and ``_Handler.rate_limit_key`` where
+    the server is created (see README).
     """
 
     rate_limiter: RateLimiter | None = None
@@ -163,6 +163,6 @@ class RateLimitMixin:
 
     def _check_rate_limit(self) -> bool:
         limiter = self.rate_limiter
-        if limiter is None:  # chưa cấu hình → cho qua (fail-open ở dev)
+        if limiter is None:  # not configured → let through (fail-open in dev)
             return True
         return rate_limit_middleware(self, limiter, self.rate_limit_key)

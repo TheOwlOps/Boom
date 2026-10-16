@@ -2,7 +2,7 @@
 
 Fail-fast checks run once at process startup (called from the top of
 ``boom.py`` / ``agent.src.cli.main``) so misconfiguration surfaces as a
-clear Vietnamese message instead of a cryptic crash mid-run.
+clear message instead of a cryptic crash mid-run.
 
 Only the standard library is used (os, socket, sqlite3, shutil, subprocess,
 sys, tempfile, pathlib, dataclasses).
@@ -11,7 +11,7 @@ Usage:
     from agent.src.lifecycle.validate import validate_startup
 
     report = validate_startup()          # no crash; inspect report
-    report.raise_if_errors()             # raise StartupError (Vietnamese) on errors
+    report.raise_if_errors()             # raise StartupError on errors
     # or in one line:
     validate_startup().raise_if_errors()
 """
@@ -76,7 +76,7 @@ class ValidationReport:
         return [c for c in self.checks if c.level == "warning"]
 
     def summary(self) -> str:
-        """One-line per check, Vietnamese."""
+        """One line per check."""
         lines = []
         icon = {"ok": "✓", "warning": "⚠", "error": "✗"}
         for c in self.checks:
@@ -84,7 +84,11 @@ class ValidationReport:
         return "\n".join(lines)
 
     def raise_if_errors(self) -> "ValidationReport":
-        """Raise StartupError with a Vietnamese summary if any check errored."""
+        """Raise StartupError with a summary if any check errored.
+
+        NOTE: the header/footer below stay in Vietnamese — pinned by
+        evals/test_harden_validate.py ("Khởi động", "lỗi" must be present).
+        """
         if not self.has_errors:
             return self
         errs = self.errors()
@@ -123,16 +127,16 @@ def _check_env_vars(config: Any) -> List[CheckResult]:
             name="env.telegram_token",
             level="warning",
             message=(
-                "Kênh Telegram đang BẬT nhưng chưa có token (BOOM_TELEGRAM_BOT_TOKEN hoặc "
-                "TELEGRAM_BOT_TOKEN). Bot Telegram sẽ không nhận được tin nhắn. "
-                "Cách sửa: đặt biến môi trường BOOM_TELEGRAM_BOT_TOKEN=<token_bot> hoặc tắt "
-                "kênh Telegram trong cấu hình."
+                "The Telegram channel is ON but no token is set "
+                "(BOOM_TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN). The Telegram bot "
+                "will not receive messages. Fix: set the BOOM_TELEGRAM_BOT_TOKEN=<token> "
+                "environment variable or disable the Telegram channel in the config."
             ),
         ))
     else:
         results.append(CheckResult(
             name="env.telegram_token", level="ok",
-            message="Token Telegram OK (hoặc kênh Telegram đang tắt)."))
+            message="Telegram token OK (or the Telegram channel is off)."))
 
     # LLM keys: OpenAI / Anthropic / OpenRouter
     has_any_llm_key = any(os.environ.get(v) for v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"))
@@ -144,16 +148,16 @@ def _check_env_vars(config: Any) -> List[CheckResult]:
             name="env.llm_api_key",
             level="warning",
             message=(
-                "Không tìm thấy API key LLM nào (OPENAI_API_KEY / ANTHROPIC_API_KEY / "
-                "OPENROUTER_API_KEY). Boom vẫn chạy ở chế độ local nhưng mọi tác vụ cần "
-                "mô hình ngôn ngữ sẽ thất bại. Cách sửa: đặt một trong các biến môi "
-                "trường trên, hoặc cấu hình api_key trong ~/.boom/config.json."
+                "No LLM API key found (OPENAI_API_KEY / ANTHROPIC_API_KEY / "
+                "OPENROUTER_API_KEY). Boom still runs locally but every task needing "
+                "a language model will fail. Fix: set one of the env vars above, or "
+                "configure api_key in ~/.boom/config.json."
             ),
         ))
     else:
         results.append(CheckResult(
             name="env.llm_api_key", level="ok",
-            message="Đã có API key cho provider LLM."))
+            message="LLM provider API key is set."))
     return results
 
 
@@ -166,8 +170,8 @@ def _check_port(env_name: str, default: int) -> CheckResult:
             name=f"port.{env_name.lower()}",
             level="error",
             message=(
-                f"Biến {env_name}='{raw}' không phải số port hợp lệ. "
-                f"Hãy đặt {env_name} là số nguyên từ 1 đến 65535."
+                f"{env_name}='{raw}' is not a valid port number. "
+                f"Set {env_name} to an integer from 1 to 65535."
             ),
         )
     if not 1 <= port <= 65535:
@@ -175,8 +179,8 @@ def _check_port(env_name: str, default: int) -> CheckResult:
             name=f"port.{env_name.lower()}",
             level="error",
             message=(
-                f"Port {port} ({env_name}) nằm ngoài khoảng hợp lệ 1-65535. "
-                f"Hãy đặt {env_name} trong khoảng 1-65535."
+                f"Port {port} ({env_name}) is outside the valid 1-65535 range. "
+                f"Set {env_name} within 1-65535."
             ),
         )
     try:
@@ -188,14 +192,14 @@ def _check_port(env_name: str, default: int) -> CheckResult:
             name=f"port.{env_name.lower()}",
             level="error",
             message=(
-                f"Port {port} đang bị chiếm bởi tiến trình khác. "
-                f"Hãy dừng tiến trình đó hoặc đặt {env_name} khác."
+                f"Port {port} is already taken by another process. "
+                f"Stop that process or set a different {env_name}."
             ),
         )
     return CheckResult(
         name=f"port.{env_name.lower()}",
         level="ok",
-        message=f"Port {port} còn trống, sẵn sàng bind.",
+        message=f"Port {port} is free, ready to bind.",
     )
 
 
@@ -211,7 +215,7 @@ def _check_db_writable(config: Any) -> CheckResult:
     path = _db_path(config)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # An toàn: test trên file tạm trong cùng thư mục, không đụng vào DB thật.
+        # Safe: probes a temp file in the same dir, never touches the real DB.
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".boom_dbtest_")
         os.close(fd)
         try:
@@ -222,7 +226,7 @@ def _check_db_writable(config: Any) -> CheckResult:
                 conn.commit()
                 row = conn.execute("SELECT v FROM _boom_startup_probe").fetchone()
                 if not row or row[0] != "ok":
-                    raise OSError("đọc lại dữ liệu kiểm tra thất bại")
+                    raise OSError("read-back of the probe data failed")
             finally:
                 conn.close()
         finally:
@@ -232,15 +236,15 @@ def _check_db_writable(config: Any) -> CheckResult:
             name="db.writable",
             level="error",
             message=(
-                f"Không ghi được database tại '{path}': {exc}. "
-                f"Cách sửa: kiểm tra quyền ghi thư mục '{path.parent}' (vd: chmod u+w), "
-                f"hoặc đặt BOOM_DB_PATH tới đường dẫn có quyền ghi."
+                f"Cannot write the database at '{path}': {exc}. "
+                f"Fix: check write permission on '{path.parent}' (e.g. chmod u+w), "
+                f"or point BOOM_DB_PATH to a writable location."
             ),
         )
     return CheckResult(
         name="db.writable",
         level="ok",
-        message=f"Database path '{path}' ghi được bình thường.",
+        message=f"Database path '{path}' is writable.",
     )
 
 
@@ -251,9 +255,9 @@ def _check_tesseract() -> CheckResult:
             name="tesseract",
             level="warning",
             message=(
-                "Không tìm thấy tesseract trên PATH — tính năng OCR ảnh sẽ không hoạt "
-                "động. Cách sửa: cài tesseract-ocr (vd: sudo apt install tesseract-ocr "
-                "tesseract-ocr-vie) rồi chạy lại."
+                "tesseract not found on PATH — image OCR will not work. "
+                "Fix: install tesseract-ocr (e.g. sudo apt install tesseract-ocr "
+                "tesseract-ocr-vie) and rerun."
             ),
         )
     try:
@@ -266,19 +270,19 @@ def _check_tesseract() -> CheckResult:
             name="tesseract",
             level="warning",
             message=(
-                f"Không chạy được 'tesseract --version': {exc}. "
-                "OCR ảnh có thể không hoạt động; hãy cài đặt lại tesseract-ocr."
+                f"Could not run 'tesseract --version': {exc}. "
+                "Image OCR may not work; try reinstalling tesseract-ocr."
             ),
         )
     version_line = (proc.stdout or proc.stderr or "").strip().splitlines()
-    version = version_line[0] if version_line else "không rõ phiên bản"
-    # Check dữ liệu tiếng Việt
+    version = version_line[0] if version_line else "unknown version"
+    # Check for Vietnamese language data
     tessdata_prefix = os.environ.get("TESSDATA_PREFIX", "")
     vie_found = False
     search_dirs = []
     if tessdata_prefix:
         search_dirs.append(Path(tessdata_prefix))
-    # Vị trí phổ biến trên Debian/Ubuntu
+    # Common locations on Debian/Ubuntu
     search_dirs += [Path("/usr/share/tesseract-ocr/4.00/tessdata"),
                     Path("/usr/share/tesseract-ocr/5/tessdata"),
                     Path("/usr/share/tessdata")]
@@ -291,15 +295,15 @@ def _check_tesseract() -> CheckResult:
             name="tesseract",
             level="warning",
             message=(
-                f"Tesseract đã cài ({version}) nhưng thiếu dữ liệu tiếng Việt "
-                "(vie.traineddata) — OCR tiếng Việt sẽ kém/không chạy. "
-                "Cách sửa: sudo apt install tesseract-ocr-vie."
+                f"Tesseract is installed ({version}) but missing Vietnamese language "
+                "data (vie.traineddata) — Vietnamese OCR will be poor or broken. "
+                "Fix: sudo apt install tesseract-ocr-vie."
             ),
         )
     return CheckResult(
         name="tesseract",
         level="ok",
-        message=f"Tesseract OK ({version}), đã có dữ liệu tiếng Việt.",
+        message=f"Tesseract OK ({version}), Vietnamese data present.",
     )
 
 
@@ -311,15 +315,15 @@ def _check_python_version() -> CheckResult:
             name="runtime.python_version",
             level="error",
             message=(
-                f"Python hiện tại là {cur}, Boom yêu cầu Python >= {req}. "
-                f"Hãy nâng cấp Python (khuyến nghị Python 3.12) rồi chạy lại."
+                f"Current Python is {cur}, Boom requires Python >= {req}. "
+                f"Upgrade Python (Python 3.12 recommended) and rerun."
             ),
         )
     cur = ".".join(map(str, sys.version_info[:3]))
     return CheckResult(
         name="runtime.python_version",
         level="ok",
-        message=f"Python {cur} đáp ứng yêu cầu (>= 3.10).",
+        message=f"Python {cur} meets the requirement (>= 3.10).",
     )
 
 
@@ -331,8 +335,8 @@ def _check_disk_free() -> CheckResult:
             name="runtime.disk_free",
             level="warning",
             message=(
-                f"Không đọc được dung lượng ổ đĩa: {exc}. "
-                "Hãy tự kiểm tra còn ít nhất 100MB trống."
+                f"Cannot read disk usage: {exc}. "
+                "Manually verify at least 100MB is free."
             ),
         )
     if usage.free < MIN_DISK_FREE_BYTES:
@@ -341,15 +345,15 @@ def _check_disk_free() -> CheckResult:
             name="runtime.disk_free",
             level="error",
             message=(
-                f"Ổ đĩa chỉ còn {free_mb:.1f}MB trống, dưới mức tối thiểu 100MB. "
-                "Boom cần chỗ trống cho database và log — hãy dọn dẹp ổ đĩa rồi chạy lại."
+                f"Only {free_mb:.1f}MB free on disk, below the 100MB minimum. "
+                "Boom needs space for its database and logs — free up disk space and rerun."
             ),
         )
     free_mb = usage.free / (1024 * 1024)
     return CheckResult(
         name="runtime.disk_free",
         level="ok",
-        message=f"Còn {free_mb:.0f}MB trống trên ổ đĩa (>= 100MB).",
+        message=f"{free_mb:.0f}MB free on disk (>= 100MB).",
     )
 
 
@@ -359,7 +363,7 @@ def validate_startup(config: Any = None) -> ValidationReport:
     Pass a BoomConfig (or dict) to let env-var checks consider channel/LLM
     settings; when ``config`` is None the checks degrade to environment-only
     heuristics. Hard failures are reported as level="error"; call
-    ``report.raise_if_errors()`` to fail fast with a Vietnamese StartupError.
+    ``report.raise_if_errors()`` to fail fast with a StartupError.
     """
     report = ValidationReport()
     report.checks.extend(_check_env_vars(config))

@@ -1,18 +1,18 @@
-"""Plugin marketplace/registry cho Boom.
+"""Plugin marketplace/registry for Boom.
 
-Đóng gói, lưu trữ, liệt kê, tìm kiếm và cài đặt plugin từ một
-registry local (thư mục trên đĩa). Chỉ dùng stdlib + pydantic.
+Packages, stores, lists, searches, and installs plugins from a local registry
+(on-disk directory). Stdlib + pydantic only.
 
-Bố cục registry trên đĩa::
+On-disk registry layout::
 
     <registry_path>/
-        index.json                 # chỉ mục: name -> danh sách version + metadata
-        <name>-<version>.zip       # gói plugin đã đóng gói
+        index.json                 # index: name -> list of versions + metadata
+        <name>-<version>.zip       # packaged plugin
 
-Mỗi plugin (thư mục nguồn) tuân thủ chuẩn Boom: ``plugin.json`` (manifest)
-+ ``entry.py`` (định nghĩa hàm ``register(ctx)``).
+Each plugin (source directory) follows the Boom standard: ``plugin.json``
+(manifest) + ``entry.py`` (defines ``register(ctx)``).
 
-Toàn bộ lỗi ném ra đều là ``ValueError`` với thông điệp tiếng Việt.
+All raised errors are ``ValueError`` with English messages.
 """
 from __future__ import annotations
 
@@ -25,22 +25,22 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, field_validator
 
-# --- Quy tắc đặt tên/version (giữ đồng bộ với extensibility/manifest.py) ---
+# --- Naming/version rules (kept in sync with extensibility/manifest.py) ---
 
-# Tên plugin: chữ thường, số, '-'/'_', không bắt đầu bằng dấu gạch
+# Plugin name: lowercase, digits, '-'/'_', must not start with a dash
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
-# Semver X.Y.Z, cho phép prerelease như 1.0.0-beta
+# Semver X.Y.Z, prereleases allowed like 1.0.0-beta
 _SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 
-# Phiên bản Boom mà marketplace này đang chạy cùng
-# (dùng để kiểm tra min_boom_version khi cài đặt)
+# The Boom version this marketplace runs against
+# (used to check min_boom_version at install time)
 CURRENT_BOOM_VERSION = "0.1.0"
 
-# Thư mục/file bỏ qua khi đóng gói (không đưa vào .zip)
+# Directories/files skipped when packaging (excluded from the .zip)
 _SKIP_NAMES = {".git", "__pycache__", ".DS_Store", ".venv", "venv"}
 
 
@@ -50,22 +50,22 @@ _SKIP_NAMES = {".git", "__pycache__", ".DS_Store", ".venv", "venv"}
 
 
 class PluginMetadata(BaseModel):
-    """Metadata đăng ký của một plugin trong marketplace."""
+    """Registration metadata of a plugin in the marketplace."""
 
-    name: str                     # tên duy nhất, ví dụ: hello-world
-    version: str                  # semver, ví dụ: 1.2.0
-    description: str              # mô tả ngắn
-    author: str = ""              # tác giả
-    tags: List[str] = []          # từ khóa tìm kiếm, ví dụ: ["weather", "api"]
-    min_boom_version: str = "0.0.0"  # Boom tối thiểu yêu cầu để chạy plugin
+    name: str                     # unique name, e.g. hello-world
+    version: str                  # semver, e.g. 1.2.0
+    description: str              # short description
+    author: str = ""              # author
+    tags: List[str] = []          # search keywords, e.g. ["weather", "api"]
+    min_boom_version: str = "0.0.0"  # minimum Boom version required to run the plugin
 
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
         if not v or not _NAME_RE.match(v):
             raise ValueError(
-                f"tên plugin '{v}' không hợp lệ "
-                "(chỉ gồm chữ thường, số, '-', '_' và không bắt đầu bằng dấu gạch)"
+                f"invalid plugin name '{v}' "
+                "(lowercase, digits, '-', '_' only, must not start with a dash)"
             )
         return v
 
@@ -74,7 +74,7 @@ class PluginMetadata(BaseModel):
     def _check_version(cls, v: str) -> str:
         if not v or not _SEMVER_RE.match(v):
             raise ValueError(
-                f"version '{v}' không đúng định dạng semver (ví dụ: 1.2.3)"
+                f"version '{v}' is not valid semver (e.g. 1.2.3)"
             )
         return v
 
@@ -82,22 +82,23 @@ class PluginMetadata(BaseModel):
     @classmethod
     def _check_description(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("description không được để trống")
+            raise ValueError("description must not be empty")
         return v
 
 
 # ---------------------------------------------------------------------------
-# Hàm phụ trợ
+# helpers
 # ---------------------------------------------------------------------------
 
 
 def _version_tuple(ver: str) -> tuple:
-    """Chuyển semver thành tuple (major, minor, patch, prerelease_key) để so sánh.
+    """Convert semver to (major, minor, patch, prerelease_key) for comparison.
 
-    Bản release (1.0.0) luôn lớn hơn prerelease cùng số (1.0.0-beta).
+    A release (1.0.0) always ranks above a prerelease with the same numbers
+    (1.0.0-beta).
     """
     m = _SEMVER_RE.match(ver.strip())
-    assert m, ver  # đã validate bằng pydantic trước khi gọi
+    assert m, ver  # already validated by pydantic before being called
     major, minor, patch, pre = m.group(1), m.group(2), m.group(3), m.group(4)
     if pre is None:
         pre_key: tuple = (1,)
@@ -108,16 +109,16 @@ def _version_tuple(ver: str) -> tuple:
 
 
 def _metadata_from_plugin_json(plugin_dir: Path) -> PluginMetadata:
-    """Đọc metadata từ plugin.json trong thư mục plugin."""
+    """Read metadata from plugin.json inside the plugin directory."""
     manifest_file = plugin_dir / "plugin.json"
     if not manifest_file.exists():
-        raise ValueError(f"không tìm thấy plugin.json trong: {plugin_dir}")
+        raise ValueError(f"plugin.json not found in: {plugin_dir}")
     try:
         data = json.loads(manifest_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise ValueError(f"plugin.json không phải JSON hợp lệ: {e}")
+        raise ValueError(f"plugin.json is not valid JSON: {e}")
     if not isinstance(data, dict):
-        raise ValueError("plugin.json phải là một JSON object")
+        raise ValueError("plugin.json must be a JSON object")
     try:
         return PluginMetadata(
             name=data["name"],
@@ -128,20 +129,20 @@ def _metadata_from_plugin_json(plugin_dir: Path) -> PluginMetadata:
             min_boom_version=data.get("min_boom_version", "0.0.0"),
         )
     except KeyError as e:
-        raise ValueError(f"plugin.json thiếu trường bắt buộc: {e.args[0]}")
-    except Exception as e:  # lỗi validate pydantic
-        raise ValueError(f"metadata không hợp lệ: {e}")
+        raise ValueError(f"plugin.json is missing a required field: {e.args[0]}")
+    except Exception as e:  # pydantic validation errors
+        raise ValueError(f"invalid metadata: {e}")
 
 
 def _zip_name(name: str, version: str) -> str:
-    """Tên file .zip chuẩn của một gói: <name>-<version>.zip."""
+    """Standard .zip filename of a package: <name>-<version>.zip."""
     return f"{name}-{version}.zip"
 
 
 def _safe_member_name(raw: str) -> str:
-    """Kiểm tra tên file trong zip — chặn zip-slip (../ hoặc đường dẫn tuyệt đối)."""
+    """Validate a filename inside a zip — blocks zip-slip (../ or absolute paths)."""
     if raw.startswith(("/", "\\")) or ".." in Path(raw).parts:
-        raise ValueError(f"tên file trong gói không an toàn: {raw!r}")
+        raise ValueError(f"unsafe filename inside package: {raw!r}")
     return raw
 
 
@@ -151,40 +152,40 @@ def _safe_member_name(raw: str) -> str:
 
 
 class PluginMarketplace:
-    """Marketplace/registry plugin local của Boom.
+    """Boom's local plugin marketplace/registry.
 
-    ``registry_path`` có thể truyền lúc khởi tạo hoặc truyền riêng cho từng
-    phương thức (ưu tiên tham số của phương thức).
+    ``registry_path`` can be passed at construction or per method (the method
+    argument wins).
     """
 
     def __init__(self, registry_path: Optional[Path | str] = None) -> None:
         self.registry_path = Path(registry_path) if registry_path else None
 
-    # -- nội bộ -----------------------------------------------------------
+    # -- internal -----------------------------------------------------------
 
     def _registry(self, registry_path: Optional[Path | str]) -> Path:
-        """Lấy đường dẫn registry: tham số > constructor > lỗi."""
+        """Resolve the registry path: argument > constructor > error."""
         if registry_path is not None:
             return Path(registry_path)
         if self.registry_path is not None:
             return self.registry_path
-        raise ValueError("chưa chỉ định registry_path")
+        raise ValueError("registry_path not specified")
 
     def _read_index(self, registry: Path) -> Dict[str, List[dict]]:
-        """Đọc index.json; registry chưa có thì coi như rỗng."""
+        """Read index.json; a missing registry counts as empty."""
         index_file = registry / "index.json"
         if not index_file.exists():
             return {}
         try:
             data = json.loads(index_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            raise ValueError(f"index.json hỏng, không đọc được: {e}")
+            raise ValueError(f"index.json is corrupted, cannot read: {e}")
         if not isinstance(data, dict):
-            raise ValueError("index.json phải là một JSON object")
+            raise ValueError("index.json must be a JSON object")
         return data
 
     def _write_index(self, registry: Path, index: Dict[str, List[dict]]) -> None:
-        """Ghi index.json (ghi tạm rồi đổi tên để tránh file hỏng giữa chừng)."""
+        """Write index.json (write-then-rename to avoid mid-write corruption)."""
         registry.mkdir(parents=True, exist_ok=True)
         tmp = registry / "index.json.tmp"
         tmp.write_text(
@@ -192,38 +193,38 @@ class PluginMarketplace:
         )
         tmp.replace(registry / "index.json")
 
-    # -- công khai --------------------------------------------------------
+    # -- public -------------------------------------------------------------
 
     def publish(
         self,
         plugin_dir: Path | str,
         registry_path: Optional[Path | str] = None,
     ) -> PluginMetadata:
-        """Đóng gói một thư mục plugin thành .zip + cập nhật metadata vào registry.
+        """Package a plugin directory into .zip + update registry metadata.
 
-        Quy trình:
-          1. Đọc + validate metadata từ ``plugin_dir/plugin.json``.
-          2. Kiểm tra ``entry.py`` tồn tại (chuẩn plugin Boom).
-          3. Nén toàn bộ file (bỏ qua .git, __pycache__...) thành
-             ``<name>-<version>.zip`` trong registry.
-          4. Thêm metadata vào ``index.json``.
+        Process:
+          1. Read + validate metadata from ``plugin_dir/plugin.json``.
+          2. Verify ``entry.py`` exists (Boom plugin standard).
+          3. Zip every file (skipping .git, __pycache__, ...) into
+             ``<name>-<version>.zip`` inside the registry.
+          4. Add the metadata to ``index.json``.
 
-        Xung đột version: nếu cặp (name, version) đã tồn tại trong registry
-        thì ném ``ValueError`` — muốn phát hành bản mới phải tăng version.
+        Version conflicts: if (name, version) already exists in the registry,
+        raises ``ValueError`` — bump the version to publish a new release.
 
-        Trả về PluginMetadata đã publish.
+        Returns the published PluginMetadata.
         """
         plugin_dir = Path(plugin_dir)
         registry = self._registry(registry_path)
 
         if not plugin_dir.is_dir():
-            raise ValueError(f"thư mục plugin không tồn tại: {plugin_dir}")
+            raise ValueError(f"plugin directory does not exist: {plugin_dir}")
 
         meta = _metadata_from_plugin_json(plugin_dir)
 
         if not (plugin_dir / "entry.py").exists():
             raise ValueError(
-                f"plugin '{meta.name}' thiếu entry.py — không đúng chuẩn plugin Boom"
+                f"plugin '{meta.name}' is missing entry.py — not a valid Boom plugin"
             )
 
         index = self._read_index(registry)
@@ -232,13 +233,13 @@ class PluginMarketplace:
         if existing:
             raise ValueError(
                 f"version conflict: plugin '{meta.name}' version "
-                f"{meta.version} đã tồn tại trong registry — hãy tăng version"
+                f"{meta.version} already exists in the registry — bump the version"
             )
 
         registry.mkdir(parents=True, exist_ok=True)
         zip_path = registry / _zip_name(meta.name, meta.version)
 
-        # Đóng gói: giữ cấu trúc thư mục tương đối, bỏ qua file/thư mục rác
+        # Package: keep relative directory structure, skip junk files/dirs
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for src in sorted(plugin_dir.rglob("*")):
                 if src.is_dir() or any(part in _SKIP_NAMES for part in src.parts):
@@ -246,7 +247,7 @@ class PluginMarketplace:
                 arcname = src.relative_to(plugin_dir).as_posix()
                 zf.write(src, arcname)
 
-        # Cập nhật index: thêm version mới, sắp xếp theo semver tăng dần
+        # Update index: add the new version, sorted by semver ascending
         entries = index.setdefault(meta.name, [])
         entries.append(meta.model_dump())
         entries.sort(key=lambda e: _version_tuple(e["version"]))
@@ -257,7 +258,7 @@ class PluginMarketplace:
     def list_available(
         self, registry_path: Optional[Path | str] = None
     ) -> List[PluginMetadata]:
-        """Liệt kê mọi plugin có trong registry (mọi version), sắp xếp theo tên."""
+        """List every plugin in the registry (all versions), sorted by name."""
         registry = self._registry(registry_path)
         index = self._read_index(registry)
         result: List[PluginMetadata] = []
@@ -269,9 +270,9 @@ class PluginMarketplace:
     def search(
         self, query: str, registry_path: Optional[Path | str] = None
     ) -> List[PluginMetadata]:
-        """Tìm plugin theo tên, mô tả, tác giả hoặc tags (không phân biệt hoa/thường).
+        """Search plugins by name, description, author, or tags (case-insensitive).
 
-        Trả về danh sách khớp, sắp xếp theo tên.
+        Returns the matches, sorted by name.
         """
         q = (query or "").strip().lower()
         if not q:
@@ -293,66 +294,68 @@ class PluginMarketplace:
         plugins_dir: Optional[Path | str] = None,
         boom_version: str = CURRENT_BOOM_VERSION,
     ) -> Path:
-        """Cài đặt một plugin từ registry vào thư mục plugins của Boom.
+        """Install a plugin from the registry into Boom's plugins directory.
 
-        Quy trình:
-          1. Tìm gói ``<name>-<version>.zip`` trong registry.
-          2. Kiểm tra ``min_boom_version`` của plugin so với ``boom_version``.
-          3. Giải nén an toàn (chặn zip-slip) vào ``plugins_dir/<name>``.
+        Process:
+          1. Find the ``<name>-<version>.zip`` package in the registry.
+          2. Check the plugin's ``min_boom_version`` against ``boom_version``.
+          3. Safely extract (zip-slip blocked) into ``plugins_dir/<name>``.
 
-        Xử lý xung đột:
-          - Cài đúng version đã có sẵn → ``ValueError`` (không cài đè vô ích).
-          - Cài version khác → ghi đè thư mục cũ (nâng cấp/hạ cấp).
+        Conflict handling:
+          - Installing the exact version already installed → ``ValueError``
+            (no pointless reinstall).
+          - Installing a different version → overwrites the old directory
+            (upgrade/downgrade).
 
-        Trả về đường dẫn thư mục plugin đã cài.
+        Returns the installed plugin's directory path.
         """
         registry = self._registry(registry_path)
         if plugins_dir is None:
-            raise ValueError("chưa chỉ định plugins_dir")
+            raise ValueError("plugins_dir not specified")
 
         index = self._read_index(registry)
         entries = index.get(name, [])
         match = next((e for e in entries if e.get("version") == version), None)
         if match is None:
             available = [e.get("version") for e in entries]
-            hint = f" (các version có sẵn: {', '.join(available)})" if available else ""
+            hint = f" (available versions: {', '.join(available)})" if available else ""
             raise ValueError(
-                f"không tìm thấy plugin '{name}' version {version}"
-                f" trong registry{hint}"
+                f"plugin '{name}' version {version} not found"
+                f" in the registry{hint}"
             )
 
         meta = PluginMetadata(**match)
         if _version_tuple(boom_version) < _version_tuple(meta.min_boom_version):
             raise ValueError(
-                f"plugin '{name}' {version} yêu cầu Boom tối thiểu "
-                f"{meta.min_boom_version}, hiện tại là {boom_version}"
+                f"plugin '{name}' {version} requires Boom "
+                f"{meta.min_boom_version} minimum, current is {boom_version}"
             )
 
         zip_path = registry / _zip_name(name, version)
         if not zip_path.exists():
             raise ValueError(
-                f"gói {_zip_name(name, version)} ghi trong index nhưng "
-                f"không tìm thấy file trong registry"
+                f"package {_zip_name(name, version)} is listed in the index but "
+                f"its file is missing from the registry"
             )
 
         plugins_dir = Path(plugins_dir)
         dest = plugins_dir / name
 
-        # Xung đột version: đã cài đúng version này rồi thì không cài lại
+        # Version conflict: already installed at this exact version → skip
         existing_manifest = dest / "plugin.json"
         if existing_manifest.exists():
             try:
                 installed_meta = _metadata_from_plugin_json(dest)
             except ValueError:
-                # manifest cũ hỏng → coi như chưa cài, cho phép ghi đè để sửa
+                # broken old manifest → treat as not installed, allow overwrite to fix it
                 installed_meta = None
             if installed_meta is not None and installed_meta.version == version:
                 raise ValueError(
                     f"version conflict: plugin '{name}' version {version} "
-                    "đã được cài đặt — không cần cài lại"
+                    "is already installed — nothing to do"
                 )
 
-        # Giải nén an toàn: chặn zip-slip trước khi ghi file
+        # Safe extraction: validate ALL filenames before extracting any
         plugins_dir.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
@@ -360,7 +363,7 @@ class PluginMarketplace:
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             members = zf.infolist()
-            # Kiểm tra TẤT CẢ tên file trước khi giải nén bất kỳ file nào
+            # Validate ALL filenames before extracting any file
             for m in members:
                 _safe_member_name(m.filename)
             for m in members:
@@ -372,13 +375,13 @@ class PluginMarketplace:
                     with zf.open(m) as src, open(target, "wb") as dst:
                         shutil.copyfileobj(src, dst)
 
-        # Kiểm tra lại: gói phải chứa plugin.json khớp name/version đã yêu cầu
+        # Verify: the package must contain a plugin.json matching the requested name/version
         installed = _metadata_from_plugin_json(dest)
         if installed.name != name or installed.version != version:
             shutil.rmtree(dest, ignore_errors=True)
             raise ValueError(
-                f"gói trong registry không khớp: mong đợi {name} {version}, "
-                f"nhận được {installed.name} {installed.version}"
+                f"registry package mismatch: expected {name} {version}, "
+                f"got {installed.name} {installed.version}"
             )
 
         return dest

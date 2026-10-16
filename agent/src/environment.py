@@ -70,7 +70,7 @@ class AgentEnvironment:
         self.guardrail = SecurityGuardrail(self.root_dir)
         self.approval_gate = ApprovalGate(yolo=yolo)
         # Overnight hardening: per-user rate limiter (token bucket).
-        # Gateway/loop gọi self.user_limiter.allow_or_raise("channel:user_id") trước tool nguy hiểm.
+        # Gateway/loop calls self.user_limiter.allow_or_raise("channel:user_id") before dangerous tools.
         self.user_limiter = UserRateLimiter()
         self.compressor = ContextCompressor(self.root_dir / "scratch")
         self.delegation = DelegationManager()
@@ -88,8 +88,8 @@ class AgentEnvironment:
         self._init_tools()
 
     def _init_tools(self):
-        # Refactor 2026-10-16: tách thành 7 nhóm trong agent/src/tool_groups.py.
-        # Thứ tự merge giữ nguyên override semantics của bản gốc (~800 dòng).
+        # Refactor 2026-10-16: split into 7 groups in agent/src/tool_groups.py.
+        # Merge order preserves the original's override semantics (~800 lines).
         from tool_groups import (
             _init_filesystem_tools,
             _init_terminal_tools,

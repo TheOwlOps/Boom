@@ -1,6 +1,6 @@
 ---
 name: cron-manager
-description: "Quản lý cron jobs: add/list/remove (lưu JSON) + validate cron expression, hỗ trợ @daily/@hourly và dạng 5 trường như '*/5 * * * *'."
+description: "Manage cron jobs: add/list/remove (stored as JSON) + validate cron expressions, supporting @daily/@hourly and 5-field forms like '*/5 * * * *'."
 version: 1.0.0
 author: Boom Agent
 license: MIT
@@ -13,73 +13,73 @@ metadata:
 
 # Cron Manager
 
-Quản lý danh sách cron jobs của agent (lưu vào file JSON) kèm bộ
-validate cron expression viết tay — không cần cài thêm gì, chạy
-được ngay cả khi máy chưa có cron daemon.
+Manage an agent's list of cron jobs (stored in a JSON file) with a hand-written
+cron expression validator — no extra installs needed, works even when the
+machine has no cron daemon running.
 
-## Khi nào dùng
+## When to use
 
-- User nói "chạy cái này mỗi sáng", "lên lịch backup hằng ngày"
-- Agent cần validate cron expression trước khi ghi vào crontab thật
-- Lưu/tải danh sách job đã lên lịch để agent nhớ giữa các phiên
-- Khi user hỏi "job này chạy khi nào" → dùng `describe()` trả lời tiếng Việt
+- The user says "run this every morning", "schedule a daily backup"
+- An agent needs to validate a cron expression before writing it to a real crontab
+- Save/load a list of scheduled jobs so the agent remembers them across sessions
+- When the user asks "when does this job run" → use `describe()` to answer
 
-**Không dùng cho:** ghi thẳng vào crontab hệ thống — skill chỉ quản lý
-danh sách + validate; muốn cài thật thì tự `crontab -e` hoặc dùng API
-cron của Boom.
+**Not for:** writing directly to the system crontab — this skill only manages
+the list + validation; to actually install, run `crontab -e` yourself or use
+Boom's cron API.
 
-## Cron expression được hỗ trợ
+## Supported cron expressions
 
-| Dạng | Ví dụ | Ý nghĩa |
+| Form | Example | Meaning |
 |------|-------|---------|
 | Alias | `@daily`, `@hourly` | `@reboot`, `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly` |
-| 5 trường | `*/5 * * * *` | `phút giờ ngày tháng thứ` |
-| Bước nhảy | `*/15`, `0 */2 * * *` | mỗi 15 phút / mỗi 2 giờ |
-| Khoảng | `9-17 * * * *` | từ 9h tới 17h |
-| Liệt kê | `0 9,18 * * *` | lúc 9h và 18h |
-| Tên | `0 9 * * mon-fri` | thứ 2–6 lúc 9h (`jan`–`dec`, `sun`–`sat`) |
+| 5 fields | `*/5 * * * *` | `minute hour day month weekday` |
+| Step | `*/15`, `0 */2 * * *` | every 15 minutes / every 2 hours |
+| Range | `9-17 * * * *` | from 9am to 5pm |
+| List | `0 9,18 * * *` | at 9am and 6pm |
+| Names | `0 9 * * mon-fri` | Mon–Fri at 9am (`jan`–`dec`, `sun`–`sat`) |
 
-Khoảng giá trị: phút 0–59, giờ 0–23, ngày 1–31, tháng 1–12, thứ 0–7
-(7 = Chủ nhật, tự chuẩn hóa về 0).
+Value ranges: minute 0–59, hour 0–23, day 1–31, month 1–12, weekday 0–7
+(7 = Sunday, normalized to 0).
 
 ## Input
 
-- **add(name, schedule, command, store):** tên job (chỉ `a-z 0-9 _ . -`),
-  schedule (đã validate), command (câu lệnh chạy)
-- **list_jobs(store):** không cần input
-- **remove(name, store):** tên job
-- **parse_cron(expr) / describe(expr):** chuỗi cron
-- **store:** đường dẫn file JSON (mặc định `~/.boom/cron_jobs.json`)
+- **add(name, schedule, command, store):** job name (only `a-z 0-9 _ . -`),
+  schedule (validated), command (the command to run)
+- **list_jobs(store):** no input needed
+- **remove(name, store):** job name
+- **parse_cron(expr) / describe(expr):** cron string
+- **store:** path to the JSON file (default `~/.boom/cron_jobs.json`)
 
 ## Output
 
 - `parse_cron()` → `CronExpression{minute, hour, day, month, weekday, raw, alias}`
-  (mỗi trường là list int đã chuẩn hóa); sai → ném `CronError`
-- `add()` → `CronJob{name, schedule, command, created_at, enabled}`; tên
-  trùng hoặc schedule sai → ném `CronError`
+  (each field is a normalized list of ints); invalid input → raises `CronError`
+- `add()` → `CronJob{name, schedule, command, created_at, enabled}`; duplicate
+  name or invalid schedule → raises `CronError`
 - `list_jobs()` → `list[CronJob]`
-- `remove()` → `True` (đã xóa) / `False` (không tồn tại)
-- `describe()` → chuỗi tiếng Việt, vd: `"mỗi 5 phút một lần"`
+- `remove()` → `True` (deleted) / `False` (not found)
+- `describe()` → human-readable string, e.g. `"every 5 minutes"`
 
-## Ví dụ
+## Example
 
 ### Python API
 
 ```python
 import sys
-sys.path.insert(0, "skills/cron-manager")  # trỏ vào thư mục của skill
+sys.path.insert(0, "skills/cron-manager")  # point to the skill's directory
 from manager import add, list_jobs, remove, parse_cron, describe
 
-# Validate trước khi làm gì khác
+# Validate before doing anything else
 c = parse_cron("*/5 * * * *")
 print(c.minute)          # [0, 5, 10, ..., 55]
-print(describe("@daily"))  # "mỗi ngày một lần (00:00)"
+print(describe("@daily"))  # "once a day (00:00)"
 
-# Thêm job (tự validate schedule, tên trùng thì báo lỗi)
+# Add a job (schedule auto-validated, duplicate name raises)
 job = add("backup-db", "0 2 * * *", "python3 /opt/boom/backup.py")
 print(job.created_at)
 
-# Liệt kê / xóa
+# List / delete
 for j in list_jobs():
     print(j.name, "->", describe(j.schedule))
 remove("backup-db")
@@ -88,23 +88,24 @@ remove("backup-db")
 ### CLI
 
 ```bash
-# Thêm job
+# Add a job
 python3 skills/cron-manager/manager.py add backup-db "0 2 * * *" "python3 backup.py"
 
-# Liệt kê
+# List
 python3 skills/cron-manager/manager.py list
 
-# Xóa
+# Delete
 python3 skills/cron-manager/manager.py remove backup-db
 
-# Chỉ validate + xem mô tả tiếng Việt
+# Only validate + show description
 python3 skills/cron-manager/manager.py validate "*/5 * * * *"
 ```
 
 ## Pitfalls
 
-- Skill **không** tự ghi vào crontab hệ thống — `add()` chỉ lưu vào file
-  JSON để agent quản lý; cài lịch thật là bước riêng do user/agent quyết
-- `@reboot` parse được nhưng không có 5 trường giờ giấc (các list rỗng)
-- Tên job giới hạn ký tự an toàn để tránh injection khi ghép vào crontab
-- File JSON hỏng định dạng → `CronError` rõ ràng thay vì crash lặng
+- This skill **does not** write to the system crontab — `add()` only stores into
+  the JSON file for the agent to manage; installing the schedule for real is a
+  separate step decided by the user/agent
+- `@reboot` parses fine but has no 5 time fields (the lists are empty)
+- Job names are limited to safe characters to avoid injection when concatenated into a crontab
+- Malformed JSON file → explicit `CronError` instead of a silent crash

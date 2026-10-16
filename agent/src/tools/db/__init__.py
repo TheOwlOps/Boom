@@ -1,15 +1,15 @@
-"""Tools nhóm db: truy vấn SQLite an toàn (chống SQL injection).
+"""DB tool group: safe SQLite queries (SQL-injection-proof).
 
-Hiện tại chỉ có SQLite (đủ cho nhu cầu local của Boom: memory, cron store,
-audit...). Thiết kế tool:
-  - db_query(table, columns, where, params, ...)  -> SELECT chỉ đọc
-  - db_insert(table, row)                         -> INSERT, trả rowid
-  - db_update(table, values, where, params)       -> UPDATE, bắt buộc WHERE
+SQLite only for now (enough for Boom's local needs: memory, cron store,
+audit...). Tool design:
+  - db_query(table, columns, where, params, ...)  -> read-only SELECT
+  - db_insert(table, row)                         -> INSERT, returns rowid
+  - db_update(table, values, where, params)       -> UPDATE, WHERE mandatory
 
-Mỗi tool mở 1 SQLiteClient riêng theo db_path truyền vào (không giữ state
-global). Đường dẫn DB bị giới hạn trong base_dir (mặc định: thư mục làm việc
-hiện tại) để chống path traversal. Bảng phải được whitelist qua
-allowed_tables (list truyền vào tool).
+Each tool opens its own SQLiteClient per the given db_path (no global state
+kept). DB paths are confined to base_dir (default: current working dir) to
+block path traversal. Tables must be whitelisted via allowed_tables (a list
+passed into the tool).
 """
 
 from typing import Any, Dict, List, Optional, Sequence
@@ -29,7 +29,7 @@ __all__ = [
 def _client(db_path: str, allowed_tables: Optional[Sequence[str]],
             base_dir: Optional[str]) -> SQLiteClient:
     if not isinstance(db_path, str) or not db_path.strip():
-        raise ValueError("db_path phải là string không rỗng")
+        raise ValueError("db_path must be a non-empty string")
     return SQLiteClient(
         db_path.strip(),
         allowed_tables=list(allowed_tables or []),
@@ -48,10 +48,10 @@ def db_query(
     limit: int = 100,
     base_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """SELECT an toàn trên bảng đã whitelist. Không có SQL thô.
+    """Safe SELECT on a whitelisted table. No raw SQL.
 
-    where chỉ cho dạng "col OP ?" nối AND/OR (xem sqlite._parse_where);
-    mọi giá trị qua params (placeholder). Trả về {table, rows, count}.
+    where only accepts "col OP ?" joined by AND/OR (see sqlite._parse_where);
+    all values go through params (placeholders). Returns {table, rows, count}.
     """
     client = _client(db_path, allowed_tables, base_dir)
     try:
@@ -70,7 +70,7 @@ def db_insert(
     row: Dict[str, Any],
     base_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """INSERT 1 dòng {cột: giá trị} vào bảng đã whitelist. Trả về {rowid}."""
+    """INSERTs 1 row {column: value} into a whitelisted table. Returns {rowid}."""
     client = _client(db_path, allowed_tables, base_dir)
     try:
         rowid = client.insert(table, dict(row or {}))
@@ -88,8 +88,8 @@ def db_update(
     params: Sequence[Any] = (),
     base_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """UPDATE bảng đã whitelist; WHERE bắt buộc (chống update toàn bảng).
-    Trả về {table, affected} = số dòng bị ảnh hưởng."""
+    """UPDATEs a whitelisted table; WHERE is mandatory (blocks whole-table updates).
+    Returns {table, affected} = rows affected."""
     client = _client(db_path, allowed_tables, base_dir)
     try:
         affected = client.update(table, dict(values or {}), where,
@@ -103,7 +103,7 @@ def db_update(
 def _guard(fn):
     try:
         return fn()
-    except Exception as exc:  # tool không bao giờ raise vào agent loop
+    except Exception as exc:  # tools never raise into the agent loop
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -114,16 +114,16 @@ def _schema(properties=None, required=None):
 
 def _db_props(extra: dict) -> dict:
     base = {
-        "db_path": {"type": "string", "description": "Đường dẫn file .db."},
-        "table": {"type": "string", "description": "Tên bảng (phải có trong allowed_tables)."},
+        "db_path": {"type": "string", "description": "Path to the .db file."},
+        "table": {"type": "string", "description": "Table name (must be in allowed_tables)."},
         "allowed_tables": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Whitelist bảng được phép chạm.",
+            "description": "Whitelist of tables that may be touched.",
         },
         "base_dir": {
             "type": "string",
-            "description": "Root cho phép chứa file DB. Mặc định thư mục hiện tại.",
+            "description": "Root allowed to contain the DB file. Defaults to the current dir.",
         },
     }
     base.update(extra)
@@ -131,7 +131,7 @@ def _db_props(extra: dict) -> dict:
 
 
 def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
-    """Registry-ready tool dicts cho environment của Boom."""
+    """Registry-ready tool dicts for Boom's environment."""
 
     def t_db_query(db_path: str, table: str, allowed_tables: list,
                    columns=None, where: str = "", params=None,
@@ -161,20 +161,20 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
             "name": "db_query",
             "func": t_db_query,
             "description": (
-                "SELECT chỉ-đọc trên bảng SQLite đã whitelist. Không có SQL "
-                "thô: where chỉ cho 'col OP ?' nối AND/OR, giá trị qua params."
+                "Read-only SELECT on a whitelisted SQLite table. No raw SQL: "
+                "where only accepts 'col OP ?' joined by AND/OR, values via params."
             ),
             "schema": _schema(
                 _db_props({
                     "columns": {"type": "array", "items": {"type": "string"},
-                                "description": "Cột cần lấy. Mặc định *."},
+                                "description": "Columns to fetch. Default *."},
                     "where": {"type": "string",
-                              "description": "VD 'age > ? AND name = ?'."},
+                              "description": "E.g. 'age > ? AND name = ?'."},
                     "params": {"type": "array",
-                               "description": "Giá trị cho các dấu ? trong where."},
+                               "description": "Values for the ? placeholders in where."},
                     "order_by": {"type": "string",
-                                 "description": "VD 'created DESC'."},
-                    "limit": {"type": "integer", "description": "Mặc định 100."},
+                                 "description": "E.g. 'created DESC'."},
+                    "limit": {"type": "integer", "description": "Default 100."},
                 }),
                 ["db_path", "table", "allowed_tables"],
             ),
@@ -182,10 +182,10 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
         "db_insert": {
             "name": "db_insert",
             "func": t_db_insert,
-            "description": "INSERT 1 dòng {cột: giá trị} vào bảng đã whitelist. Trả về rowid.",
+            "description": "INSERTs 1 row {column: value} into a whitelisted table. Returns rowid.",
             "schema": _schema(
                 _db_props({
-                    "row": {"type": "object", "description": "{cột: giá trị} cần insert."},
+                    "row": {"type": "object", "description": "{column: value} to insert."},
                 }),
                 ["db_path", "table", "allowed_tables", "row"],
             ),
@@ -194,14 +194,14 @@ def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
             "name": "db_update",
             "func": t_db_update,
             "description": (
-                "UPDATE bảng đã whitelist. WHERE bắt buộc (chống update toàn "
-                "bảng). Trả về số dòng bị ảnh hưởng."
+                "UPDATEs a whitelisted table. WHERE is mandatory (blocks "
+                "whole-table updates). Returns rows affected."
             ),
             "schema": _schema(
                 _db_props({
-                    "values": {"type": "object", "description": "{cột: giá trị mới}."},
-                    "where": {"type": "string", "description": "Điều kiện, VD 'id = ?'."},
-                    "params": {"type": "array", "description": "Giá trị cho các dấu ?."},
+                    "values": {"type": "object", "description": "{column: new value}."},
+                    "where": {"type": "string", "description": "Condition, e.g. 'id = ?'."},
+                    "params": {"type": "array", "description": "Values for the ? placeholders."},
                 }),
                 ["db_path", "table", "allowed_tables", "values", "where"],
             ),

@@ -1,28 +1,28 @@
-"""Multi-step approval flow cho Boom (doanh nghiệp).
+"""Multi-step approval flow for Boom (business).
 
-Flow chuẩn: operator gửi yêu cầu -> admin duyệt -> callback chạy execute.
+Standard flow: operator sends a request -> admin approves -> callback executes.
 
     flow = ApprovalFlow("approvals.db")
     res = flow.request_approval(
         "broadcast",
         requester="op_1",
-        details={"channel": "telegram", "text": "Khuyến mãi tháng 10"},
+        details={"channel": "telegram", "text": "October promo"},
         approvers=["admin_1", "admin_2"],
         timeout_minutes=30,
     )
     rid = res["request_id"]
     flow.on_approved(rid, lambda req: execute_broadcast(req["details"]))
-    flow.approve(rid, "admin_1")   # -> "approved", callback chạy
+    flow.approve(rid, "admin_1")   # -> "approved", callback runs
 
-Tích hợp Telegram: format_telegram_message() sinh text + inline keyboard
-2 nút, dùng đúng callback_data "approve:<request_id>" / "deny:<request_id>"
-như gateway/approval_telegram.py (cùng prefix, cùng label nút) nên hàm
-parse_approval_callback() bên đó parse được ngay. handle_telegram_callback()
-nhận webhook update và điều hướng vào approve()/reject() của flow này.
+Telegram integration: format_telegram_message() produces text + an inline
+keyboard with 2 buttons, using the same callback_data "approve:<request_id>" /
+"deny:<request_id>" scheme as gateway/approval_telegram.py (same prefix), so
+its parse_approval_callback() can parse it directly. handle_telegram_callback()
+takes a webhook update and routes it into this flow's approve()/reject().
 
-Pattern theo repo: SQLite + threading.Lock, stdlib only. Mỗi lần đổi trạng
-thái ghi 1 audit event nếu import được module audit của repo (try/except,
-thiếu audit vẫn chạy bình thường, không bao giờ crash vì audit).
+Repo pattern: SQLite + threading.Lock, stdlib only. Every state change writes
+1 audit event when the repo's audit module is importable (try/except —
+missing audit runs fine, never crashes because of audit).
 """
 
 from __future__ import annotations
@@ -36,22 +36,23 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
-# Tích hợp audit của repo (optional).
-# Khi file này nằm trong repo Boom (agent/src trên sys.path) thì import được
-# audit.store / audit.models và tự ghi audit. Chạy standalone thì bỏ qua.
+# Repo audit integration (optional).
+# When this file sits inside the Boom repo (agent/src on sys.path), audit.store
+# / audit.models import fine and audit is recorded automatically. Standalone
+# runs skip it.
 # ---------------------------------------------------------------------------
 try:
     from audit.models import AuditEvent as _AuditEvent  # type: ignore
     from audit.store import AuditStore as _AuditStore  # type: ignore
     _AUDIT_OK = True
-except Exception:  # noqa: BLE001 - thiếu audit không phải lỗi
+except Exception:  # noqa: BLE001 - missing audit is not an error
     _AuditEvent = None
     _AuditStore = None
     _AUDIT_OK = False
 
 # ---------------------------------------------------------------------------
-# Telegram: giữ đúng format với gateway/approval_telegram.py
-# (APPROVE_PREFIX / DENY_PREFIX / label nút giống hệt bên đó).
+# Telegram: keep the same scheme as gateway/approval_telegram.py
+# (APPROVE_PREFIX / DENY_PREFIX identical over there).
 # ---------------------------------------------------------------------------
 APPROVE_PREFIX = "approve:"
 DENY_PREFIX = "deny:"
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     decided_by       TEXT NOT NULL DEFAULT '',
     reason           TEXT NOT NULL DEFAULT ''
 );
--- Mỗi approver chỉ vote 1 lần cho 1 request (tránh đếm trùng khi
+-- Each approver votes only once per request (no double counting when
 -- required_approvals > 1).
 CREATE TABLE IF NOT EXISTS approval_votes (
     request_id TEXT NOT NULL,
@@ -85,22 +86,22 @@ CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals (status);
 
 
 def _build_keyboard(request_id: str) -> Dict[str, Any]:
-    """Inline keyboard 2 nút duyệt/từ chối.
+    """Inline keyboard with 2 approve/reject buttons.
 
-    Giống hệt gateway/approval_telegram.build_keyboard() để tương thích.
+    Mirrors gateway/approval_telegram.build_keyboard() for compatibility.
     """
     return {"inline_keyboard": [[
-        {"text": "✅ Đồng ý",
+        {"text": "✅ Approve",
          "callback_data": f"{APPROVE_PREFIX}{request_id}"},
-        {"text": "❌ Từ chối",
+        {"text": "❌ Reject",
          "callback_data": f"{DENY_PREFIX}{request_id}"},
     ]]}
 
 
 def _fmt_details(details: Dict[str, Any]) -> str:
-    """Render dict details thành nhiều dòng dễ đọc trên Telegram."""
+    """Render a details dict into readable multi-line Telegram text."""
     if not details:
-        return "(không có chi tiết)"
+        return "(no details)"
     lines = []
     for key, val in details.items():
         text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
@@ -111,7 +112,7 @@ def _fmt_details(details: Dict[str, Any]) -> str:
 
 
 class ApprovalFlow:
-    """Multi-step approval: request -> approve/reject/expire, có callback khi duyệt."""
+    """Multi-step approval: request -> approve/reject/expire, with an on-approve callback."""
 
     STATUSES = ("pending", "approved", "rejected", "expired")
 
@@ -122,11 +123,11 @@ class ApprovalFlow:
         audit_store: Any = None,
         required_approvals: int = 1,
     ) -> None:
-        """db_path: file SQLite (":memory:" cho test).
-        audit_db: đường dẫn file SQLite cho audit của repo (tự tạo AuditStore
-            nếu import được module audit).
-        audit_store: object có .log(event) — dùng cho test hoặc store tự chế.
-        required_approvals: số approve tối thiểu mặc định cho mỗi request.
+        """db_path: SQLite file (":memory:" for tests).
+        audit_db: SQLite file path for the repo's audit (builds an AuditStore
+            when the repo's audit module imports fine).
+        audit_store: object with .log(event) — for tests or custom stores.
+        required_approvals: default minimum approvals per request.
         """
         if not isinstance(required_approvals, int) or required_approvals < 1:
             raise ValueError("required_approvals must be an int >= 1")
@@ -138,20 +139,20 @@ class ApprovalFlow:
             self._db.executescript(_SCHEMA)
             self._db.commit()
 
-        # Ưu tiên audit_store được truyền vào; nếu không có thì thử tự dựng
-        # từ module audit của repo khi có audit_db.
+        # Prefer a passed-in audit_store; otherwise try building one from the
+        # repo's audit module when audit_db is given.
         self._audit_store = audit_store
         if self._audit_store is None and audit_db and _AUDIT_OK:
             try:
                 self._audit_store = _AuditStore(audit_db)
-            except Exception:  # noqa: BLE001 - audit lỗi thì bỏ qua
+            except Exception:  # noqa: BLE001 - audit failure is ignored
                 self._audit_store = None
 
     # -- audit ----------------------------------------------------------
     def _audit(self, actor: str, action: str, target: str,
                details: Optional[Dict[str, Any]] = None,
                result: str = "ok") -> None:
-        """Ghi 1 audit event. Không bao giờ raise (audit lỗi thì bỏ qua)."""
+        """Write 1 audit event. Never raises (audit errors are ignored)."""
         store = self._audit_store
         if store is None:
             return
@@ -161,15 +162,15 @@ class ApprovalFlow:
                 event = _AuditEvent(actor=actor, action=action, target=target,
                                     channel="", details=payload, result=result)
             else:
-                # Duck-typing: AuditStore.log chỉ đọc các attribute này.
+                # Duck-typing: AuditStore.log only reads these attributes.
                 event = SimpleNamespace(id="", ts="", actor=actor, action=action,
                                         target=target, channel="",
                                         details=payload, result=result)
             store.log(event)
-        except Exception:  # noqa: BLE001 - audit không được làm crash flow
+        except Exception:  # noqa: BLE001 - audit must never crash the flow
             pass
 
-    # -- helpers nội bộ (gọi trong lock) --------------------------------
+    # -- internal helpers (called under lock) ---------------------------
     def _row_to_dict(self, row: tuple) -> Dict[str, Any]:
         return {
             "request_id": row[0],
@@ -205,7 +206,7 @@ class ApprovalFlow:
 
     @staticmethod
     def _clean_approvers(approvers: Any) -> List[str]:
-        """Chuẩn hoá danh sách approver: bỏ trùng, bỏ rỗng, giữ thứ tự."""
+        """Normalize the approver list: dedupe, drop empties, keep order."""
         if not isinstance(approvers, (list, tuple)):
             return []
         seen = set()
@@ -217,7 +218,7 @@ class ApprovalFlow:
                 out.append(uid)
         return out
 
-    # -- API chính ------------------------------------------------------
+    # -- main API -------------------------------------------------------
     def request_approval(
         self,
         action: str,
@@ -227,11 +228,11 @@ class ApprovalFlow:
         timeout_minutes: float = 30,
         required_approvals: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Tạo yêu cầu phê duyệt mới, status ban đầu "pending".
+        """Create a new approval request, initial status "pending".
 
-        Trả {"ok": True, "request_id", "status"} hoặc {"error": ...}.
-        request_id dạng apr_<ms>_<hex>, không chứa ":" để tương thích
-        callback_data của approval_telegram.py.
+        Returns {"ok": True, "request_id", "status"} or {"error": ...}.
+        request_id looks like apr_<ms>_<hex> and contains no ":" so
+        approval_telegram.py's callback_data parsing never confuses it.
         """
         if not isinstance(action, str) or not action.strip():
             return {"error": "action must be a non-empty string"}
@@ -259,7 +260,7 @@ class ApprovalFlow:
         except (TypeError, ValueError):
             return {"error": "details must be JSON-serializable"}
 
-        # request_id không chứa ":" để parse callback Telegram không bị nhầm.
+        # request_id contains no ":" so Telegram callback parsing stays safe.
         request_id = f"apr_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
         now = time.time()
         with self._lock:
@@ -282,11 +283,11 @@ class ApprovalFlow:
         return {"ok": True, "request_id": request_id, "status": "pending"}
 
     def approve(self, request_id: str, approver: str) -> Dict[str, Any]:
-        """1 approver trong danh sách duyệt. Đủ required_approvals -> "approved".
+        """One approver in the list approves. Enough approvals -> "approved".
 
-        Trả {"ok", "request_id", "status", "approvals", "required"} hoặc {"error"}.
-        Khi chuyển sang "approved", các callback đã đăng ký qua on_approved()
-        được gọi (ngoài lock, lỗi callback không làm sập flow).
+        Returns {"ok", "request_id", "status", "approvals", "required"} or {"error"}.
+        On transition to "approved", callbacks registered via on_approved()
+        fire (outside the lock; a failing callback can't crash the flow).
         """
         now = time.time()
         audits: List[tuple] = []
@@ -309,7 +310,7 @@ class ApprovalFlow:
                 result = {"error": f"approver not authorized: {approver}",
                           "status": "pending"}
             else:
-                # Mỗi approver chỉ vote 1 lần (INSERT OR IGNORE theo PK).
+                # Each approver votes once (INSERT OR IGNORE on the PK).
                 self._db.execute(
                     "INSERT OR IGNORE INTO approval_votes"
                     " (request_id, approver, decision, ts) VALUES (?,?,?,?)",
@@ -337,17 +338,17 @@ class ApprovalFlow:
         for entry in audits:
             self._audit(*entry)
         if result.get("status") == "approved":
-            record = self.get_status(request_id)  # bản mới nhất sau commit
+            record = self.get_status(request_id)  # freshest version post-commit
             for cb in fire:
                 try:
                     cb(record)
-                except Exception:  # noqa: BLE001 - callback lỗi không sập flow
+                except Exception:  # noqa: BLE001 - a callback error can't crash the flow
                     self._audit("system", "approval.callback_error", request_id,
                                 {"error": "on_approved callback raised"}, "error")
         return result
 
     def reject(self, request_id: str, approver: str, reason: str = "") -> Dict[str, Any]:
-        """Approver trong danh sách từ chối -> status "rejected" ngay."""
+        """An approver in the list rejects -> status "rejected" immediately."""
         now = time.time()
         audits: List[tuple] = []
         with self._lock:
@@ -375,7 +376,7 @@ class ApprovalFlow:
                 self._transition_locked(request_id, "rejected", approver, reason, now)
                 audits.append((approver, "approval.reject", request_id,
                                {"action": rec["action"], "reason": reason}, "ok"))
-                # Request bị từ chối: huỷ các callback chờ duyệt.
+                # Rejected request: drop pending-approval callbacks.
                 self._callbacks.pop(request_id, None)
                 result = {"ok": True, "request_id": request_id, "status": "rejected"}
         for entry in audits:
@@ -383,9 +384,9 @@ class ApprovalFlow:
         return result
 
     def get_status(self, request_id: str) -> Optional[Dict[str, Any]]:
-        """Trả record đầy đủ; tự đánh dấu "expired" nếu đã quá timeout.
+        """Returns the full record; auto-marks "expired" past the timeout.
 
-        None khi request_id không tồn tại.
+        None when the request_id doesn't exist.
         """
         now = time.time()
         expired_audit = None
@@ -403,7 +404,7 @@ class ApprovalFlow:
         return rec
 
     def list_pending(self) -> List[Dict[str, Any]]:
-        """Liệt kê các request đang pending (quét hết hạn trước)."""
+        """Lists pending requests (sweeps expired ones first)."""
         self.expire_old()
         with self._lock:
             rows = self._db.execute(
@@ -412,9 +413,10 @@ class ApprovalFlow:
             return [self._row_to_dict(r) for r in rows]
 
     def expire_old(self, now: Optional[float] = None) -> int:
-        """Quét request quá timeout -> "expired". Trả số request đã hết hạn.
+        """Sweeps timed-out requests -> "expired". Returns the number expired.
 
-        Gọi định kỳ từ cron/scheduler; get_status()/list_pending() cũng tự quét.
+        Called periodically from cron/scheduler; get_status()/list_pending()
+        sweep automatically too.
         """
         now = time.time() if now is None else now
         expired: List[Dict[str, Any]] = []
@@ -434,10 +436,10 @@ class ApprovalFlow:
 
     def on_approved(self, request_id: str,
                     callback: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
-        """Đăng ký callback chạy khi request được duyệt (để nối vào execution).
+        """Registers a callback to run when the request is approved (chains into execution).
 
-        Nếu request đã "approved" thì callback chạy ngay. Callback nhận 1 arg
-        là record đầy đủ từ get_status().
+        If the request is already "approved", the callback runs immediately.
+        The callback receives 1 arg: the full record from get_status().
         """
         if not callable(callback):
             return {"error": "callback must be callable"}
@@ -462,34 +464,35 @@ class ApprovalFlow:
 
     # -- Telegram -------------------------------------------------------
     def format_telegram_message(self, request: Any) -> Dict[str, Any]:
-        """Sinh text + inline keyboard gửi qua Telegram.
+        """Builds the text + inline keyboard for sending over Telegram.
 
-        request: request_id (str) hoặc record dict từ get_status().
-        Trả {"text", "reply_markup"} — reply_markup tương thích 100% với
-        gateway/approval_telegram.build_keyboard() (parse_approval_callback()
-        bên đó parse được callback_data).
+        request: a request_id (str) or a record dict from get_status().
+        Returns {"text", "reply_markup"} — reply_markup is 100% compatible with
+        gateway/approval_telegram.build_keyboard() (its parse_approval_callback()
+        parses the callback_data).
         """
         rec = self.get_status(request) if isinstance(request, str) else dict(request)
         if rec is None:
             return {"error": f"unknown request_id: {request}"}
         need, total = rec["required_approvals"], len(rec["approvers"])
         text = (
-            "🔐 Yêu cầu phê duyệt\n\n"
-            f"• Hành động: {rec['action']}\n"
-            f"• Người yêu cầu: {rec['requester']}\n"
-            f"• Người duyệt: {', '.join(rec['approvers'])} (cần {need}/{total})\n"
-            f"• Hết hạn sau: {rec['timeout_sec'] / 60:g} phút\n"
-            f"• Mã: {rec['request_id']}\n\n"
-            f"Chi tiết:\n{_fmt_details(rec['details'])}\n\n"
-            "Bấm nút bên dưới:"
+            "🔐 Approval request\n\n"
+            f"• Action: {rec['action']}\n"
+            f"• Requester: {rec['requester']}\n"
+            f"• Approvers: {', '.join(rec['approvers'])} (needs {need}/{total})\n"
+            f"• Expires in: {rec['timeout_sec'] / 60:g} minutes\n"
+            f"• Code: {rec['request_id']}\n\n"
+            f"Details:\n{_fmt_details(rec['details'])}\n\n"
+            "Tap a button below:"
         )
         return {"text": text, "reply_markup": _build_keyboard(rec["request_id"])}
 
     def handle_telegram_callback(self, update: Dict[str, Any]) -> Dict[str, Any]:
-        """Điều hướng webhook callback_query Telegram vào flow này.
+        """Routes a Telegram webhook callback_query into this flow.
 
-        update: dict webhook Telegram. Approver lấy từ callback_query.from.id.
-        Trả {"ok", "request_id", "decision", "status"} hoặc {"error"}.
+        update: a Telegram webhook dict. The approver comes from
+        callback_query.from.id.
+        Returns {"ok", "request_id", "decision", "status"} or {"error"}.
         """
         if not isinstance(update, dict):
             return {"error": "update must be a dict"}
@@ -521,6 +524,6 @@ class ApprovalFlow:
                 "decision": decision, "status": res["status"]}
 
     def close(self) -> None:
-        """Đóng kết nối SQLite."""
+        """Closes the SQLite connection."""
         with self._lock:
             self._db.close()

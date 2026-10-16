@@ -41,6 +41,7 @@ def vision_analyze(
     text = ocr_result.get("text", "")
     q = (question or "").lower()
     # Heuristic: if the question is about text/reading, answer from OCR.
+    # NOTE: text_keywords is a functional bilingual keyword list — keep Vietnamese entries.
     text_keywords = ("text", "chữ", "đọc", "read", "write", "viết", "nội dung", "content")
     about_text = any(k in q for k in text_keywords)
 

@@ -1,15 +1,15 @@
-"""Git workflow an toàn cho autonomous coding của Boom.
+"""Safe git workflow for Boom's autonomous coding.
 
-Module này cho phép agent kiểm tra trạng thái repo, xem tóm tắt diff,
-commit an toàn (chặn secret + chặn commit rỗng), và tránh commit thẳng
-lên nhánh protected (main/master) — trước khi thực hiện bất kỳ thao tác
-git nào gây thay đổi lịch sử.
+This module lets the agent check repo state, view diff summaries,
+commit safely (blocks secrets + empty commits), and avoid committing straight
+to a protected branch (main/master) — before performing any git operation that
+rewrites history.
 
-Mọi lệnh git đều chạy qua subprocess (không dùng lib ngoài).
-Mọi hàm nhận `repo` là đường dẫn thư mục chứa repo.
-Khi git lỗi, raise GitOpsError với message tiếng Việt.
+Every git command runs via subprocess (no external libs).
+Every function takes `repo` as the path to the directory containing the repo.
+When git fails, raises GitOpsError with an English message.
 
-Chỉ dùng stdlib: re, os, subprocess.
+Stdlib only: re, os, subprocess.
 """
 
 import os
@@ -22,23 +22,24 @@ import subprocess
 
 
 class GitOpsError(Exception):
-    """Lỗi thao tác git (repo không hợp lệ, lệnh git thất bại, input sai)."""
+    """Git operation error (invalid repo, git command failed, bad input)."""
     pass
 
 
 # ---------------------------------------------------------------------------
-# helper nội bộ
+# internal helpers
 # ---------------------------------------------------------------------------
 
-_TIMEOUT = 30  # giây, tránh git treo khi agent chạy nền
+_TIMEOUT = 30  # seconds, avoids git hanging when the agent runs in the background
 
-# Tên nhánh hợp lệ: chỉ chữ thường, số, dấu gạch ngang, gạch dưới, gạch chéo.
+# Valid branch names: lowercase, digits, dash, underscore, slash only.
 _BRANCH_RE = re.compile(r"^[a-z0-9][a-z0-9\-_/]*$")
 
-# Hunk header của unified diff: @@ -a,b +c,d @@ <context hàm>
+# Unified diff hunk header: @@ -a,b +c,d @@ <function context>
 _HUNK_RE = re.compile(r"^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@\s*(.*)$")
 
-# Pattern quét secret fallback (dùng khi không import được secretscan).
+# Fallback secret-scanning patterns (used when secretscan can't be imported).
+# NOTE: these regexes are functional security patterns — kept byte-identical.
 _SECRET_PATTERNS = [
     ("aws_secret_key", re.compile(
         r"aws_secret_access_key\s*[:=]\s*['\"]?[A-Za-z0-9/+=]{20,}", re.I)),
@@ -58,13 +59,13 @@ _SECRET_PATTERNS = [
 
 
 def _git(repo: str, *args: str) -> str:
-    """Chạy `git <args>` trong repo, trả về stdout.
+    """Runs `git <args>` inside the repo, returns stdout.
 
-    Raise GitOpsError (tiếng Việt) khi: repo không phải thư mục,
-    không phải git repo, hoặc lệnh git trả về exit code != 0.
+    Raises GitOpsError when: repo is not a directory, not a git repo, or the
+    git command exits with a non-zero code.
     """
     if not os.path.isdir(repo):
-        raise GitOpsError("thư mục không tồn tại: %s" % repo)
+        raise GitOpsError("directory does not exist: %s" % repo)
     try:
         proc = subprocess.run(
             ["git"] + list(args),
@@ -75,26 +76,27 @@ def _git(repo: str, *args: str) -> str:
             timeout=_TIMEOUT,
         )
     except FileNotFoundError:
-        raise GitOpsError("không tìm thấy lệnh git trên máy")
+        raise GitOpsError("git command not found on this machine")
     except subprocess.TimeoutExpired:
-        raise GitOpsError("lệnh git bị timeout: git %s" % " ".join(args))
+        raise GitOpsError("git command timed out: git %s" % " ".join(args))
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "lỗi không rõ").strip()
-        raise GitOpsError("git %s thất bại: %s" % (" ".join(args), err))
+        err = (proc.stderr or proc.stdout or "unknown error").strip()
+        raise GitOpsError("git %s failed: %s" % (" ".join(args), err))
     return proc.stdout
 
 
 def _staged_paths(repo: str):
-    """Danh sách file đang staged (sắp được commit)."""
+    """List of files currently staged (about to be committed)."""
     out = _git(repo, "diff", "--cached", "--name-only", "-z")
     return [p for p in out.split("\x00") if p]
 
 
 def _read_staged_content(repo: str, path: str) -> str:
-    """Đọc nội dung staged của file.
+    """Read the staged content of a file.
 
-    Ưu tiên đọc từ worktree (nhanh, đúng khi staged == worktree);
-    nếu file đã bị xóa khỏi worktree thì đọc blob staged qua `git show`.
+    Prefers reading from the worktree (fast, correct when staged == worktree);
+    falls back to reading the staged blob via `git show` if the file was
+    deleted from the worktree.
     """
     disk_path = os.path.join(repo, path)
     if os.path.isfile(disk_path):
@@ -103,21 +105,21 @@ def _read_staged_content(repo: str, path: str) -> str:
                 return fh.read()
         except OSError:
             pass
-    # File bị xóa/đổi tên khỏi worktree: đọc trực tiếp blob staged.
+    # File deleted/renamed away from the worktree: read the staged blob directly.
     blob = _git(repo, "show", ":" + path)
     return blob
 
 
 def _scan_secrets(repo: str, paths) -> list:
-    """Quét secret trong các file staged.
+    """Scan secrets in the staged files.
 
-    Thử dùng module secretscan nếu import được (ưu tiên tool có sẵn),
-    ngược lại dùng pattern regex đơn giản nội bộ.
-    Trả về list các phát hiện: [{path, pattern, line}].
+    Tries the secretscan module if importable (prefers the existing tool),
+    otherwise falls back to simple built-in regex patterns.
+    Returns a list of findings: [{path, pattern, line}].
     """
     findings = []
 
-    # 1) Ưu tiên secretscan ngoài nếu có.
+    # 1) Prefer the external secretscan if available.
     secretscan = None
     for modname in ("secretscan", "autonomous.secretscan"):
         try:
@@ -139,9 +141,9 @@ def _scan_secrets(repo: str, paths) -> list:
                         finding.setdefault("path", path)
                     findings.append(finding)
             return findings
-        # secretscan tồn tại nhưng không có hàm quen thuộc -> fallback
+        # secretscan exists but has no familiar function -> fall back
 
-    # 2) Fallback: pattern regex đơn giản nội bộ.
+    # 2) Fallback: simple built-in regex patterns.
     for path in paths:
         content = _read_staged_content(repo, path)
         for lineno, line in enumerate(content.splitlines(), 1):
@@ -149,19 +151,19 @@ def _scan_secrets(repo: str, paths) -> list:
                 if pattern.search(line):
                     findings.append(
                         {"path": path, "pattern": name, "line": lineno})
-                    break  # 1 dòng chỉ báo 1 lần, tránh spam
+                    break  # report each line only once, avoid spam
     return findings
 
 
 def _head_exists(repo: str) -> bool:
-    """True nếu repo đã có ít nhất 1 commit (HEAD hợp lệ)."""
+    """True if the repo has at least one commit (HEAD is valid)."""
     try:
         _git(repo, "rev-parse", "--verify", "--quiet", "HEAD")
         return True
     except GitOpsError:
         return False
 def _kind_from_xy(x: str, y: str) -> str:
-    """Phân loại file từ 2 ký tự XY của porcelain v1."""
+    """Classify a file from the 2 XY chars of porcelain v1."""
     if x == "?" and y == "?":
         return "untracked"
     codes = x + y
@@ -185,11 +187,11 @@ def _kind_from_xy(x: str, y: str) -> str:
 # ---------------------------------------------------------------------------
 
 def status(repo: str) -> list:
-    """Trả về trạng thái worktree dạng list dict.
+    """Returns the worktree status as a list of dicts.
 
-    Mỗi dict: {path, staged, unstaged, kind}.
-    - staged: True nếu có thay đổi đã `git add` (cột X của porcelain)
-    - unstaged: True nếu có thay đổi chưa add (cột Y), hoặc file untracked
+    Each dict: {path, staged, unstaged, kind}.
+    - staged: True if there are `git add`-ed changes (porcelain X column)
+    - unstaged: True if there are un-added changes (Y column), or untracked
     - kind: added | modified | deleted | renamed | copied | untracked
              | unmerged | unknown
     """
@@ -206,7 +208,7 @@ def status(repo: str) -> list:
         else:
             staged = x != " "
             unstaged = y != " "
-        # Dòng rename có dạng "old -> new": lấy tên mới.
+        # Rename lines look like "old -> new": take the new name.
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
         entries.append({
@@ -219,24 +221,24 @@ def status(repo: str) -> list:
 
 
 def diff_summary(repo: str) -> dict:
-    """Tóm tắt diff so với HEAD (gồm cả staged lẫn unstaged).
+    """Summarize the diff against HEAD (staged and unstaged alike).
 
-    Trả về:
+    Returns:
     {
       "files_changed": int,
-      "added": int,        # tổng số dòng thêm
-      "deleted": int,       # tổng số dòng xóa
+      "added": int,        # total lines added
+      "deleted": int,       # total lines deleted
       "files": [
         {"path": str, "added": int, "deleted": int,
-         "functions": [str]},  # hàm bị sửa, parse từ hunk header
+         "functions": [str]},  # touched functions, parsed from hunk headers
       ],
     }
-    Repo chưa có commit nào: so worktree với index (git diff thường)
-    thay vì so với HEAD.
+    Repos with no commits yet: compares the worktree against the index
+    (plain `git diff`) instead of HEAD.
     """
-    # Số dòng thêm/xóa từng file.
-    # Repo chưa có commit: HEAD không tồn tại -> dùng `git diff` thường
-    # (so worktree với index) thay vì `git diff HEAD`.
+    # Per-file added/deleted line counts.
+    # Repo without commits: HEAD doesn't exist -> use plain `git diff`
+    # (worktree vs index) instead of `git diff HEAD`.
     diff_args = ["diff", "HEAD"] if _head_exists(repo) else ["diff"]
     numstat = _git(repo, *(diff_args + ["--numstat", "-z"]))
     counts = {}
@@ -248,7 +250,7 @@ def diff_summary(repo: str) -> dict:
         if len(parts) != 3:
             continue
         added_s, deleted_s, path = parts
-        if " -> " in path:  # rename: lấy tên mới
+        if " -> " in path:  # rename: take the new name
             path = path.split(" -> ", 1)[1].strip("{}")
         try:
             added = int(added_s) if added_s != "-" else 0
@@ -259,7 +261,7 @@ def diff_summary(repo: str) -> dict:
         if path not in order:
             order.append(path)
 
-    # Tên hàm bị sửa: parse context sau hunk header @@ ... @@ <func>.
+    # Touched function names: parse the context after @@ ... @@ hunk headers.
     funcs = {p: [] for p in order}
     current = None
     for line in _git(repo, *(diff_args + ["-U0"])).splitlines():
@@ -296,34 +298,34 @@ def diff_summary(repo: str) -> dict:
 
 
 def safe_commit(repo: str, message: str) -> dict:
-    """Commit an toàn: chỉ commit khi đủ điều kiện.
+    """Safe commit: only commits when all conditions hold.
 
-    Điều kiện:
-    1. message không rỗng (sau khi strip)
-    2. có ít nhất 1 file đã staged
-    3. không phát hiện secret trong nội dung staged
-       (dùng secretscan nếu import được, ngược lại pattern đơn giản)
+    Conditions:
+    1. message is non-empty (after strip)
+    2. at least 1 file is staged
+    3. no secrets detected in staged content
+       (uses secretscan if importable, otherwise simple patterns)
 
-    Trả về {"ok": True, "commit_hash": str} hoặc
-            {"ok": False, "error": str} (tiếng Việt, KHÔNG raise).
+    Returns {"ok": True, "commit_hash": str} or
+            {"ok": False, "error": str} (does NOT raise).
     """
     if not message or not message.strip():
-        return {"ok": False, "error": "commit message rỗng, từ chối commit"}
+        return {"ok": False, "error": "empty commit message, commit refused"}
 
     staged = _staged_paths(repo)
     if not staged:
         return {"ok": False,
-                "error": "không có file nào staged, từ chối commit"}
+                "error": "nothing staged, commit refused"}
 
     findings = _scan_secrets(repo, staged)
     if findings:
         first = findings[0]
-        detail = "%s (pattern %s, dòng %s)" % (
+        detail = "%s (pattern %s, line %s)" % (
             first.get("path", "?"), first.get("pattern", "?"),
             first.get("line", "?"))
         return {"ok": False,
-                "error": "phát hiện secret trong file staged: %s "
-                         "(+%d phát hiện khác), từ chối commit"
+                "error": "secret detected in staged files: %s "
+                         "(+%d more finding(s)), commit refused"
                          % (detail, len(findings) - 1)}
 
     try:
@@ -339,29 +341,28 @@ def safe_commit(repo: str, message: str) -> dict:
 
 
 def branch_guard(repo: str, protected=("main", "master")) -> bool:
-    """True nếu đang ở nhánh protected -> agent PHẢI tạo branch mới,
-    không được commit thẳng.
+    """True when on a protected branch -> the agent MUST create a new branch,
+    never commit straight to it.
 
-    Raise GitOpsError khi không đọc được nhánh hiện tại.
+    Raises GitOpsError when the current branch can't be read.
     """
     branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
     return branch in protected
 
 
 def create_branch(repo: str, name: str) -> dict:
-    """Tạo và checkout sang branch mới.
+    """Create and check out a new branch.
 
-    Validate tên: chỉ cho [a-z0-9-_/], phải bắt đầu bằng chữ/số.
-    Trả về {"ok": True, "branch": name} hoặc
-            {"ok": False, "error": str} (tiếng Việt).
+    Name validation: only [a-z0-9-_/], must start with a letter/digit.
+    Returns {"ok": True, "branch": name} or {"ok": False, "error": str}.
     """
     if not name or not _BRANCH_RE.match(name):
         return {"ok": False,
-                "error": "tên branch không hợp lệ: %r "
-                         "(chỉ cho phép a-z 0-9 - _ /)" % (name,)}
+                "error": "invalid branch name: %r "
+                         "(only a-z 0-9 - _ / allowed)" % (name,)}
     if name.endswith("/") or ".." in name:
         return {"ok": False,
-                "error": "tên branch không hợp lệ: %r" % (name,)}
+                "error": "invalid branch name: %r" % (name,)}
     try:
         _git(repo, "checkout", "-b", name)
     except GitOpsError as exc:
@@ -370,18 +371,18 @@ def create_branch(repo: str, name: str) -> dict:
 
 
 def last_commit_info(repo: str) -> dict:
-    """Thông tin commit HEAD: {hash, message, author, date}.
+    """HEAD commit info: {hash, message, author, date}.
 
-    Raise GitOpsError khi repo chưa có commit nào.
+    Raises GitOpsError when the repo has no commits yet.
     """
     try:
         out = _git(repo, "log", "-1",
                    "--format=%H%n%s%n%an%n%ad", "--date=iso")
     except GitOpsError:
-        raise GitOpsError("repo chưa có commit nào")
+        raise GitOpsError("repo has no commits yet")
     lines = out.splitlines()
     if not lines or not lines[0].strip():
-        raise GitOpsError("repo chưa có commit nào")
+        raise GitOpsError("repo has no commits yet")
     return {
         "hash": lines[0].strip(),
         "message": lines[1].strip() if len(lines) > 1 else "",

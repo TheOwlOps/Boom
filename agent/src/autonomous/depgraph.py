@@ -1,12 +1,12 @@
-"""depgraph — phân tích dependency giữa các module Python trong một thư mục.
+"""depgraph — dependency analysis between Python modules in a directory.
 
-Nằm trên đường chạy: autonomous controller / surgery cần biết module nào
-phụ thuộc module nào trước khi sửa code nhiều file (đánh giá impact, phát
-hiện circular import).
+On the execution path: the autonomous controller / surgery needs to know
+which module depends on which before editing code across files (impact
+assessment, circular import detection).
 
-v1: stdlib only (ast + os), KHÔNG cần cài thêm gì.
+v1: stdlib only (ast + os), nothing to install.
 
-Cách dùng::
+Usage::
 
     from autonomous.depgraph import (
         build_graph, find_cycles, topological_order,
@@ -14,16 +14,16 @@ Cách dùng::
     )
 
     graph = build_graph("agent/src/autonomous")
-    print(find_cycles(graph))          # [] nếu không có circular import
-    print(topological_order(graph))    # thứ tự an toàn để load/sửa
-    print(impact_analysis(graph, ["planner.py"]))  # sửa planner.py ảnh hưởng ai
-    print(to_mermaid(graph))           # dán vào mermaid.live để vẽ sơ đồ
+    print(find_cycles(graph))          # [] when no circular imports
+    print(topological_order(graph))    # safe order to load/edit
+    print(impact_analysis(graph, ["planner.py"]))  # editing planner.py affects whom
+    print(to_mermaid(graph))           # paste into mermaid.live to draw
 
-Quy ước tên module: đường dẫn tương đối so với root_dir, bỏ đuôi .py,
-dấu "/" thành ".". Ví dụ: ``a.py`` -> ``"a"``,
+Module naming: path relative to root_dir, minus the .py suffix,
+"/" becomes ".". Example: ``a.py`` -> ``"a"``,
 ``pkg/mod.py`` -> ``"pkg.mod"``, ``pkg/__init__.py`` -> ``"pkg"``.
-Chỉ tính import NỘI BỘ (module tồn tại trong root_dir); import stdlib
-hay thư viện ngoài (os, sys, httpx, ...) bị bỏ qua.
+Only INTERNAL imports count (modules existing in root_dir); stdlib or
+third-party imports (os, sys, httpx, ...) are ignored.
 """
 
 import ast
@@ -33,21 +33,21 @@ from typing import Dict, List, Set
 
 
 # ---------------------------------------------------------------------------
-# Quét file và parse import
+# File scanning and import parsing
 # ---------------------------------------------------------------------------
 
 def _module_name(root_dir: str, file_path: str) -> str:
-    """Đổi đường dẫn file thành tên module dạng dotted.
+    """Converts a file path to a dotted module name.
 
-    Ví dụ với root_dir=/x: /x/a.py -> "a", /x/pkg/m.py -> "pkg.m",
-    /x/pkg/__init__.py -> "pkg". Trả về "" nếu không xác định được.
+    Example with root_dir=/x: /x/a.py -> "a", /x/pkg/m.py -> "pkg.m",
+    /x/pkg/__init__.py -> "pkg". Returns "" when undeterminable.
     """
     rel = os.path.relpath(file_path, root_dir)
     if not rel.endswith(".py"):
         return ""
     name = rel[:-3].replace(os.sep, ".")
     if name == "__init__":
-        # __init__.py ngay tại root: lấy tên thư mục làm tên module
+        # __init__.py right at the root: use the directory name as module name
         name = os.path.basename(os.path.abspath(root_dir)) or "__root__"
     elif name.endswith(".__init__"):
         name = name[: -len(".__init__")]
@@ -55,10 +55,10 @@ def _module_name(root_dir: str, file_path: str) -> str:
 
 
 def _collect_modules(root_dir: str) -> Dict[str, str]:
-    """Quét đệ quy root_dir, trả về {tên module: đường dẫn file}."""
+    """Recursively scans root_dir, returns {module name: file path}."""
     modules: Dict[str, str] = {}
     for dirpath, dirnames, filenames in os.walk(root_dir):
-        # Bỏ thư mục ẩn (.git, .venv, ...) cho đỡ ồn
+        # Skip hidden dirs (.git, .venv, ...) to reduce noise
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for fn in sorted(filenames):
             if not fn.endswith(".py"):
@@ -72,18 +72,18 @@ def _collect_modules(root_dir: str) -> Dict[str, str]:
 
 def _resolve_relative(current_module: str, is_package: bool,
                       level: int, modname: str):
-    """Giải quyết import tương đối (from . / .. import ...) thành tên dotted.
+    """Resolves a relative import (from . / .. import ...) to a dotted name.
 
-    Trả về None nếu level vượt quá gốc package (import lỗi, bỏ qua).
+    Returns None when level goes above the package root (broken import, skipped).
     """
-    # Package chứa module hiện tại: nếu là __init__.py thì chính nó,
-    # ngược lại là phần trước dấu "." cuối cùng.
+    # The package containing the current module: itself when __init__.py,
+    # otherwise the part before the last ".".
     if is_package:
         package = current_module
     else:
         package = current_module.rpartition(".")[0]
     parts = package.split(".") if package else []
-    up = level - 1  # level=1 -> ở yên package hiện tại
+    up = level - 1  # level=1 -> stay in the current package
     if up > len(parts):
         return None
     base = parts[: len(parts) - up]
@@ -94,9 +94,9 @@ def _resolve_relative(current_module: str, is_package: bool,
 
 def _imports_of_file(path: str, current_module: str, is_package: bool,
                      internal: Set[str]) -> List[str]:
-    """Parse AST của 1 file, trả về list module NỘI BỘ mà nó import.
+    """Parses one file's AST, returns the INTERNAL modules it imports.
 
-    File lỗi cú pháp / không đọc được -> trả về [] (không crash cả graph).
+    Unreadable/syntax-broken files -> [] (never crashes the whole graph).
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -125,17 +125,17 @@ def _imports_of_file(path: str, current_module: str, is_package: bool,
                     if base:
                         candidates.append(base)
                 else:
-                    # from pkg import mod: ưu tiên submodule "pkg.mod" nếu nó
-                    # tồn tại nội bộ, ngược lại fallback về "pkg".
+                    # from pkg import mod: prefer submodule "pkg.mod" when it
+                    # exists internally, otherwise fall back to "pkg".
                     full = base + "." + alias.name if base else alias.name
                     if full in internal:
                         candidates.append(full)
                     elif base and base in internal:
                         candidates.append(base)
                     else:
-                        candidates.append(full)  # import ngoài: bị lọc sau
+                        candidates.append(full)  # external import: filtered later
 
-    # Chỉ giữ import nội bộ, bỏ self-import, giữ thứ tự xuất hiện, bỏ trùng
+    # Keep internal imports only, drop self-imports, keep appearance order, dedupe
     result: List[str] = []
     seen: Set[str] = set()
     for cand in candidates:
@@ -146,10 +146,10 @@ def _imports_of_file(path: str, current_module: str, is_package: bool,
 
 
 def build_graph(root_dir: str) -> Dict[str, List[str]]:
-    """Quét root_dir, trả về {module: [module mà nó import trực tiếp]}.
+    """Scans root_dir, returns {module: [modules it imports directly]}.
 
-    Key bao gồm MỌI module .py tìm thấy (kể cả module không import ai ->
-    value là []). Chỉ tính import nội bộ trong root_dir.
+    Keys include EVERY .py module found (even ones importing nothing ->
+    empty value). Only internal imports within root_dir count.
     """
     root_dir = os.path.abspath(root_dir)
     modules = _collect_modules(root_dir)
@@ -162,23 +162,23 @@ def build_graph(root_dir: str) -> Dict[str, List[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Phát hiện circular import
+# Circular import detection
 # ---------------------------------------------------------------------------
 
 def _canonical_cycle(cycle: List[str]):
-    """Chuẩn hoá cycle: xoay để phần tử nhỏ nhất đứng đầu, trả về tuple.
+    """Normalizes a cycle: rotates so the smallest element leads, returns a tuple.
 
-    Để cùng 1 vòng tròn phát hiện từ nhiều điểm xuất phát chỉ tính 1 lần.
+    So the same loop discovered from different start points counts once.
     """
     i = cycle.index(min(cycle))
     return tuple(cycle[i:] + cycle[:i])
 
 
 def find_cycles(graph: Dict[str, List[str]]) -> List[List[str]]:
-    """Tìm circular imports bằng DFS tô màu (trắng/xám/đen).
+    """Finds circular imports with colored DFS (white/gray/black).
 
-    Trả về list các cycle, mỗi cycle là list module theo thứ tự import
-    (a -> b -> c -> a được biểu diễn ["a", "b", "c"]). Không có cycle -> [].
+    Returns a list of cycles, each a module list in import order
+    (a -> b -> c -> a is represented as ["a", "b", "c"]). No cycles -> [].
     """
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {m: WHITE for m in graph}
@@ -191,9 +191,9 @@ def find_cycles(graph: Dict[str, List[str]]) -> List[List[str]]:
         stack.append(node)
         for dep in graph.get(node, []):
             if dep not in color:
-                continue  # module import nhưng không có trong graph: bỏ qua
+                continue  # imported module not in the graph: skip
             if color[dep] == GRAY:
-                # Gặp node đang dở dang -> lôi cycle từ stack ra
+                # Hit an in-progress node -> pull the cycle out of the stack
                 idx = stack.index(dep)
                 canon = _canonical_cycle(stack[idx:])
                 if canon not in seen:
@@ -211,16 +211,16 @@ def find_cycles(graph: Dict[str, List[str]]) -> List[List[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Sắp xếp topo, reverse lookup, impact analysis
+# Topological order, reverse lookup, impact analysis
 # ---------------------------------------------------------------------------
 
 def topological_order(graph: Dict[str, List[str]]) -> List[str]:
-    """Sắp xếp module theo thứ tự: dependency đứng trước dependent (Kahn).
+    """Orders modules so dependencies come before dependents (Kahn).
 
-    Raise ValueError nếu graph có cycle (kèm danh sách module kẹt lại).
+    Raises ValueError when the graph has a cycle (lists the stuck modules).
     """
-    in_degree = {m: 0 for m in graph}      # số dependency (nội bộ) của mỗi node
-    rdeps: Dict[str, List[str]] = {m: [] for m in graph}  # dep -> ai import nó
+    in_degree = {m: 0 for m in graph}      # each node's (internal) dependency count
+    rdeps: Dict[str, List[str]] = {m: [] for m in graph}  # dep -> who imports it
     for module, deps in graph.items():
         for dep in deps:
             if dep in in_degree:
@@ -240,18 +240,18 @@ def topological_order(graph: Dict[str, List[str]]) -> List[str]:
     if len(order) != len(graph):
         stuck = sorted(m for m, deg in in_degree.items() if deg > 0)
         raise ValueError(
-            "Phát hiện circular import, không thể sắp xếp topo. "
-            "Module kẹt lại: %s" % ", ".join(stuck))
+            "Circular import detected, cannot sort topologically. "
+            "Stuck modules: %s" % ", ".join(stuck))
     return order
 
 
 def dependents(graph: Dict[str, List[str]], module: str) -> List[str]:
-    """Ai import trực tiếp module này? (reverse lookup, sắp xếp A-Z)."""
+    """Who directly imports this module? (reverse lookup, sorted A-Z)."""
     return sorted(m for m, deps in graph.items() if module in deps)
 
 
 def _normalize_module_name(name: str) -> str:
-    """Chấp nhận cả tên module ("pkg.m") lẫn đường dẫn file ("pkg/m.py")."""
+    """Accepts module names ("pkg.m") and file paths ("pkg/m.py") alike."""
     name = name.strip().replace(os.sep, "/").replace("\\", "/")
     if name.endswith(".py"):
         name = name[:-3]
@@ -263,11 +263,11 @@ def _normalize_module_name(name: str) -> str:
 
 def impact_analysis(graph: Dict[str, List[str]],
                     changed_files) -> List[str]:
-    """Sửa các file/module này thì những module nào bị ảnh hưởng?
+    """Editing these files/modules affects which modules?
 
-    BFS trên reverse graph: từ module bị sửa, lan ra tất cả module
-    (trực tiếp/gián tiếp) import nó. Trả về list sắp xếp A-Z, bao gồm
-    chính các module bị sửa (nếu có trong graph).
+    BFS over the reverse graph: from each edited module, spreads to every
+    module (direct/indirect) importing it. Returns a sorted A-Z list,
+    including the edited modules themselves (when in the graph).
     """
     changed = {_normalize_module_name(str(f)) for f in (changed_files or [])}
     affected: Set[str] = set()
@@ -283,18 +283,18 @@ def impact_analysis(graph: Dict[str, List[str]],
 
 
 # ---------------------------------------------------------------------------
-# Xuất Mermaid
+# Mermaid export
 # ---------------------------------------------------------------------------
 
 def _mermaid_id(module: str) -> str:
-    """ID node Mermaid: không dấu chấm/gạch ngang cho an toàn."""
+    """Mermaid node ID: no dots/dashes, to be safe."""
     return module.replace(".", "_").replace("-", "_")
 
 
 def to_mermaid(graph: Dict[str, List[str]], direction: str = "TD") -> str:
-    """Xuất graph thành Mermaid flowchart (dán vào mermaid.live để vẽ).
+    """Exports the graph as a Mermaid flowchart (paste into mermaid.live).
 
-    direction: "TD" (trên-xuống) hoặc "LR" (trái-phải).
+    direction: "TD" (top-down) or "LR" (left-right).
     """
     lines = ["graph %s" % direction]
     for module in sorted(graph):

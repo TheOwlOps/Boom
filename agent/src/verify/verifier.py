@@ -1,17 +1,17 @@
-"""Điều phối verify hoàn chỉnh: critic + codecheck + factcheck + Self-Refine.
+"""Full verification orchestration: critic + codecheck + factcheck + Self-Refine.
 
 Flow:
-  B1. critique(result, kind, llm) -> issues
-  B2. theo kind:
-      - "code": run_code_check -> fail thì self_debug -> re-critique, gộp issues
-      - "fact": check_claims (cần search_fn) -> refuted=high, uncertain=low
-      - "plan"/"text": chỉ critique
-  B3. Self-Refine: lặp sửa theo issues severity "high" tới khi hết high
-      hoặc hết max_iters. Với kind=="fact" KHÔNG re-run check_claims trong
-      refine để tránh tốn search (issue cũ được carry qua).
+  Step 1. critique(result, kind, llm) -> issues
+  Step 2. by kind:
+      - "code": run_code_check -> on failure self_debug -> re-critique, merge issues
+      - "fact": check_claims (needs search_fn) -> refuted=high, uncertain=low
+      - "plan"/"text": critique only
+  Step 3. Self-Refine: loop fixing "high"-severity issues until none remain
+      or max_iters is hit. For kind=="fact" check_claims is NOT re-run
+      during refine to avoid burning search (old issues are carried over).
 
-verified = True khi không còn issue severity "high".
-Mọi exception từ llm trong refine -> dừng refine, giữ bản hiện tại, không crash.
+verified = True when no "high"-severity issue remains.
+Any llm exception during refine -> stops refining, keeps the current version, no crash.
 """
 
 from verify.critic import critique
@@ -26,7 +26,7 @@ def _has_high(issues):
 
 
 def _merge_issues(*issue_lists):
-    """Gộp issues, dedupe theo (severity, issue)."""
+    """Merges issues, deduping on (severity, issue)."""
     seen = set()
     merged = []
     for issues in issue_lists:
@@ -39,7 +39,7 @@ def _merge_issues(*issue_lists):
 
 
 def _strip_fences(text):
-    """Bóc code block ```...``` ra lấy code thô (cho kind code sau refine)."""
+    """Unwraps a ```...``` code block to raw code (for kind code after refine)."""
     text = (text or "").strip()
     if text.startswith("```"):
         first_nl = text.find("\n")
@@ -50,36 +50,36 @@ def _strip_fences(text):
 
 
 def _refine_prompt(kind, content, issues):
-    """Dựng prompt refine: sửa content theo đúng issues, giữ nguyên phần đúng."""
+    """Builds the refine prompt: fixes content per the listed issues, keeps what's right."""
     issue_lines = "\n".join(
-        "- [%s] %s (gợi ý: %s)" % (
+        "- [%s] %s (suggestion: %s)" % (
             i.get("severity"), i.get("issue"), i.get("suggestion", "-"))
         for i in issues
     )
     if kind == "code":
         return (
-            "Sửa đoạn code Python bên dưới theo đúng các issues liệt kê, "
-            "giữ nguyên phần đúng. Trả về bản hoàn chỉnh, chỉ chứa code trong "
-            "block ```python:\n\n"
+            "Fix the Python code below according to the listed issues, "
+            "keeping what's correct. Return the complete fixed version, "
+            "containing only code in a ```python block:\n\n"
             "```python\n" + content + "\n```\n\n"
-            "Issues cần sửa:\n" + issue_lines
+            "Issues to fix:\n" + issue_lines
         )
     return (
-        "Sửa nội dung bên dưới theo đúng các issues liệt kê, giữ nguyên "
-        "phần đúng. Trả về bản hoàn chỉnh, không thêm giải thích thừa:\n\n"
-        + content + "\n\nIssues cần sửa:\n" + issue_lines
+        "Fix the content below according to the listed issues, keeping "
+        "what's correct. Return the complete version, no extra explanations:\n\n"
+        + content + "\n\nIssues to fix:\n" + issue_lines
     )
 
 
 def verify(result, kind, llm, search_fn=None, max_iters=2):
-    """Chạy 1 vòng verify hoàn chỉnh + Self-Refine.
+    """Runs 1 complete verify round + Self-Refine.
 
     Args:
-        result: nội dung cần verify (str).
+        result: content to verify (str).
         kind: "code" | "fact" | "plan" | "text".
-        llm: callable nhận prompt (str) -> text (str).
-        search_fn: callable cho factcheck; None -> bỏ qua check_claims.
-        max_iters: số vòng Self-Refine tối đa.
+        llm: callable taking a prompt (str) -> text (str).
+        search_fn: callable for factcheck; None -> skips check_claims.
+        max_iters: max Self-Refine rounds.
 
     Returns:
         {"verified": bool, "issues": [...], "refined": str,
@@ -92,10 +92,10 @@ def verify(result, kind, llm, search_fn=None, max_iters=2):
     refined = result
     refine_iters = 0
 
-    # B1 — critique
+    # Step 1 — critique
     issues = list(critique(result, kind, llm) or [])
 
-    # B2 — theo kind
+    # Step 2 — by kind
     if kind == "code":
         check = run_code_check(result) or {}
         if not check.get("passed"):
@@ -108,7 +108,7 @@ def verify(result, kind, llm, search_fn=None, max_iters=2):
                     "issue": "Code still fails after self-debug: %s" % dbg.get("error", error_hint),
                     "suggestion": "Fix manually",
                 }])
-            # re-critique code đã sửa, gộp với issues cũ
+            # re-critique the fixed code, merge with old issues
             issues = _merge_issues(issues, critique(refined, kind, llm))
         else:
             refined = result
@@ -135,19 +135,19 @@ def verify(result, kind, llm, search_fn=None, max_iters=2):
                         "issue": "Claim uncertain: %s" % claim,
                         "suggestion": "Verify this claim manually.",
                     }])
-    # plan/text: chỉ critique (issues B1)
+    # plan/text: critique only (issues from Step 1)
 
-    # B3 — Self-Refine: lặp khi còn high issue và còn lượt
+    # Step 3 — Self-Refine: loop while high issues remain and iters are left
     while _has_high(issues) and refine_iters < max_iters:
         try:
             prompt = _refine_prompt(kind, refined, issues)
             new_text = llm(prompt)
         except Exception:
-            # llm lỗi trong refine -> dừng, giữ bản hiện tại, không crash
+            # llm error during refine -> stops, keeps the current version, no crash
             break
         refined = _strip_fences(new_text) if kind == "code" else (new_text or "")
-        # re-critique bản mới; với fact KHÔNG re-run check_claims (tốn search)
-        # nên carry lại các issue fact cũ vào.
+        # re-critique the new version; for fact check_claims is NOT re-run
+        # (costs search), so old fact issues are carried over.
         fresh = list(critique(refined, kind, llm) or [])
         if kind == "fact":
             old_fact = [i for i in issues

@@ -1,27 +1,28 @@
-"""DynamicOrchestrator — điều phối subagent động theo nội dung task.
+"""DynamicOrchestrator — spawns subagents on the fly based on task content.
 
-Khác với MASSSwarm (roles cố định planner/coder/reviewer/critic/learner), module này
-KHÔNG hardcode team: nó phân tích task bằng heuristic keyword (tiếng Việt + Anh, không
-cần LLM), spawn đúng các roles cần thiết, thu kết quả, retire, rồi tổng hợp.
+Unlike MASSSwarm (fixed planner/coder/reviewer/critic/learner roles), this module
+does NOT hardcode a team: it analyzes the task with keyword heuristics (Vietnamese
++ English, no LLM needed), spawns exactly the roles required, collects results,
+retires them, and summarizes.
 
-Vai trò
--------
-- ``DynamicOrchestrator.analyze_task(task)`` → quyết định cần roles nào.
-- ``spawn(role, task)`` → tạo + chạy một SubAgent.
-- ``retire(agent_id)`` → đánh dấu done, dọn dẹp.
+Responsibilities
+----------------
+- ``DynamicOrchestrator.analyze_task(task)`` → decides which roles are needed.
+- ``spawn(role, task)`` → creates + runs one SubAgent.
+- ``retire(agent_id)`` → marks done, cleans up.
 - ``orchestrate(task)`` → full lifecycle: analyze → spawn → collect → retire → summary.
 
-Chạy thật vs mock
------------------
-- Nếu ``delegation_manager`` được truyền vào (đối tượng có method tương thích với
-  ``DelegationManager.execute_task(SubTask)``), ``spawn()`` sẽ gọi nó để chạy subagent
-  THẬT. Adapter: task của role được bọc thành ``SubTask(goal=subtask, role=role)``;
-  nếu delegation_manager không phải DelegationManager thật mà chỉ là mock/fake trong
-  test, spawn vẫn gọi nó như thường (duck-typing).
-- Nếu ``delegation_manager=None``: ``spawn()`` chạy ở chế độ **MOCK** — trả result mẫu
-  được sinh từ template theo role. Chế độ này chỉ phục vụ dev/test, **KHÔNG phải
-  kết quả thật**, và docstring của spawn ghi rõ điều này. ``result`` trong mock có
-  field ``"mock": True`` để không thể nhầm lẫn với kết quả thật.
+Real vs mock
+------------
+- If ``delegation_manager`` is provided (an object with a method compatible with
+  ``DelegationManager.execute_task(SubTask)``), ``spawn()`` calls it to run a REAL
+  subagent. Adapter: the role's task is wrapped as ``SubTask(goal=subtask, role=role)``;
+  if the delegation_manager is a mock/fake in tests rather than a real
+  DelegationManager, spawn still calls it normally (duck-typing).
+- If ``delegation_manager=None``: ``spawn()`` runs in **MOCK** mode — returns a
+  template-generated sample result per role. This mode is for dev/test only, **NOT
+  real output**, and spawn's docstring states this explicitly. The ``result`` in
+  mock mode carries ``"mock": True`` so it can't be mistaken for real output.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from pydantic import BaseModel, Field
 # SubAgent
 # ---------------------------------------------------------------------------
 class SubAgent(BaseModel):
-    """Một subagent trong vòng đời của DynamicOrchestrator."""
+    """A subagent in the DynamicOrchestrator lifecycle."""
 
     id: str = Field(default="")
     role: str
@@ -48,7 +49,7 @@ class SubAgent(BaseModel):
     result: Any = None
 
     def model_post_init(self, __context: Any) -> None:
-        # Tự sinh id duy nhất nếu caller không truyền: agent_<ms>_<hex8>.
+        # Auto-generate a unique id if the caller didn't pass one: agent_<ms>_<hex8>.
         if not self.id:
             self.id = f"agent_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
 
@@ -56,7 +57,7 @@ class SubAgent(BaseModel):
 # ---------------------------------------------------------------------------
 # Role catalogue + keyword heuristic
 # ---------------------------------------------------------------------------
-#: Các roles mà DynamicOrchestrator biết cách spawn.
+#: Roles the DynamicOrchestrator knows how to spawn.
 ROLES = (
     "coder",
     "researcher",
@@ -66,19 +67,20 @@ ROLES = (
     "validator",
 )
 
-#: Mô tả ngắn cho từng role, dùng khi sinh subtask prompt cho từng agent.
+#: Short description per role, used when building each agent's subtask prompt.
 ROLE_BRIEF = {
-    "coder": "Viết/sửa code để hoàn thành yêu cầu.",
-    "researcher": "Tìm kiếm, nghiên cứu thông tin liên quan.",
-    "data_scientist": "Phân tích số liệu, dữ liệu.",
-    "visual_analyst": "Phân tích ảnh/hình/video.",
-    "financial_modeler": "Mô hình hoá tài chính, giá, lợi nhuận.",
-    "validator": "Kiểm chứng, rà soát kết quả của các agent khác.",
+    "coder": "Write/fix code to fulfill the request.",
+    "researcher": "Search and research related information.",
+    "data_scientist": "Analyze numbers and data.",
+    "visual_analyst": "Analyze images/pictures/video.",
+    "financial_modeler": "Model finances, prices, profits.",
+    "validator": "Verify and review the other agents' results.",
 }
 
-# Mỗi entry: (role, compiled regex). Thứ tự giữ nguyên thứ tự xuất hiện của roles
-# trong task, và dict giữ thứ tự insert → output roles có thứ tự ổn định.
-# Keyword tiếng Việt có dấu + không dấu + tiếng Anh để match được nhiều cách viết.
+# Each entry: (role, compiled regex). Order preserves the roles' order of
+# appearance in the task, and dicts keep insertion order → stable output order.
+# NOTE: the regex bodies below are intentionally left as-is (Vietnamese keywords
+# with/without diacritics + English) so tasks written in many spellings still match.
 _ROLE_KEYWORDS: List[tuple] = [
     (
         "coder",
@@ -117,14 +119,14 @@ _ROLE_KEYWORDS: List[tuple] = [
     ),
 ]
 
-#: Result mẫu cho chế độ mock (delegation_manager=None). "mock": True để phân biệt.
+#: Sample results for mock mode (delegation_manager=None). "mock": True marks them.
 _MOCK_RESULTS = {
-    "coder": "Mock coder: đã viết/sửa code theo yêu cầu (kết quả giả lập).",
-    "researcher": "Mock researcher: đã tổng hợp thông tin tìm được (kết quả giả lập).",
-    "data_scientist": "Mock data_scientist: đã phân tích số liệu (kết quả giả lập).",
-    "visual_analyst": "Mock visual_analyst: đã phân tích ảnh/video (kết quả giả lập).",
-    "financial_modeler": "Mock financial_modeler: đã lập mô hình tài chính (kết quả giả lập).",
-    "validator": "Mock validator: đã kiểm chứng, không phát hiện lỗi (kết quả giả lập).",
+    "coder": "Mock coder: wrote/fixed code per request (simulated result).",
+    "researcher": "Mock researcher: summarized found information (simulated result).",
+    "data_scientist": "Mock data_scientist: analyzed the numbers (simulated result).",
+    "visual_analyst": "Mock visual_analyst: analyzed the image/video (simulated result).",
+    "financial_modeler": "Mock financial_modeler: built a financial model (simulated result).",
+    "validator": "Mock validator: verified, no issues found (simulated result).",
 }
 
 
@@ -132,27 +134,28 @@ _MOCK_RESULTS = {
 # DynamicOrchestrator
 # ---------------------------------------------------------------------------
 class DynamicOrchestrator:
-    """Spawn subagent động theo nội dung task.
+    """Spawns subagents dynamically based on task content.
 
     Args:
-        delegation_manager: object có method ``execute_task(subtask)`` tương thích
-            với ``DelegationManager`` thật. Nếu None → chế độ mock (xem module docstring).
+        delegation_manager: object with an ``execute_task(subtask)`` method
+            compatible with the real ``DelegationManager``. If None → mock mode
+            (see module docstring).
     """
 
     def __init__(self, delegation_manager: Any = None):
         self.delegation_manager = delegation_manager
-        # Registry các agent đang sống: agent_id -> SubAgent. retire() dọn khỏi đây.
+        # Registry of live agents: agent_id -> SubAgent. retire() removes from here.
         self._agents: Dict[str, SubAgent] = {}
 
-    # -- phân tích task -----------------------------------------------------
+    # -- task analysis ------------------------------------------------------
     def analyze_task(self, task: str) -> List[str]:
-        """Phân tích task → list roles cần thiết (không trùng, giữ thứ tự).
+        """Analyze the task → list of required roles (deduped, ordered).
 
-        Heuristic keyword, không gọi LLM. Quy tắc:
-        - mỗi keyword group match → thêm role tương ứng;
-        - không role nào match → fallback ``["researcher"]`` (task mơ hồ thì đi tìm
-          hiểu trước);
-        - nếu >1 agent → luôn thêm ``validator`` ở cuối để kiểm chứng chéo.
+        Keyword heuristics, no LLM. Rules:
+        - each matching keyword group → adds the corresponding role;
+        - no role matches → falls back to ``["researcher"]`` (ambiguous task?
+          research first);
+        - if >1 agent → always appends ``validator`` last for cross-checking.
         """
         text = task or ""
         roles: List[str] = []
@@ -167,67 +170,68 @@ class DynamicOrchestrator:
 
     # -- lifecycle ----------------------------------------------------------
     def _subtask_for(self, role: str, task: str) -> str:
-        """Sinh prompt subtask cho từng role: brief của role + task gốc."""
+        """Build a subtask prompt for one role: the role's brief + original task."""
         brief = ROLE_BRIEF.get(role, "")
-        return f"[role={role}] {brief}\nNhiệm vụ: {task}".strip()
+        return f"[role={role}] {brief}\nTask: {task}".strip()
 
     def spawn(self, role: str, task: str) -> SubAgent:
-        """Tạo và chạy một SubAgent cho ``role``.
+        """Create and run a SubAgent for ``role``.
 
-        - Có ``delegation_manager``: bọc subtask thành object có ``goal``/``role``
-          (tương thích ``SubTask`` của delegation.py) rồi gọi
-          ``delegation_manager.execute_task(...)``. Kết quả thật được gán vào
-          ``agent.result``; status ``done`` nếu thành công, ``failed`` nếu lỗi.
-          LƯU Ý: DelegationManager.execute_task là ``async`` — ở đây gọi đồng bộ
-          qua ``asyncio`` chỉ khi cần; caller dùng event loop sẵn có nên tự await.
-          Để giữ API đồng bộ đơn giản, spawn chạy coroutine bằng asyncio.run khi
-          chưa có loop đang chạy, ngược lại trả agent ở trạng thái running và
-          giao việc thu kết quả cho caller (xem orchestrate).
-        - Không có ``delegation_manager``: **MOCK** — gán ngay result mẫu
-          ``{"mock": True, "role": ..., "summary": ...}`` và status ``done``.
-          Đây KHÔNG phải kết quả thật, chỉ dùng cho dev/test.
+        - With ``delegation_manager``: wraps the subtask into an object with
+          ``goal``/``role`` (compatible with delegation.py's ``SubTask``) and
+          calls ``delegation_manager.execute_task(...)``. The real result lands
+          in ``agent.result``; status ``done`` on success, ``failed`` on error.
+          NOTE: DelegationManager.execute_task is ``async`` — here it's invoked
+          synchronously via ``asyncio`` only when needed; callers that already
+          have an event loop should await themselves. To keep a simple sync API,
+          spawn runs the coroutine with asyncio.run when no loop is running,
+          otherwise returns the agent in "running" state and leaves result
+          collection to the caller (see orchestrate).
+        - Without ``delegation_manager``: **MOCK** — immediately assigns the
+          sample result ``{"mock": True, "role": ..., "summary": ...}`` with
+          status ``done``. This is NOT real output, dev/test only.
         """
         agent = SubAgent(role=role, task=task, status="running")
         self._agents[agent.id] = agent
 
         if self.delegation_manager is None:
-            # --- Chế độ MOCK: không có runtime thật, trả kết quả giả lập ---
+            # --- MOCK mode: no real runtime, return simulated results ---
             agent.result = {
                 "mock": True,
                 "role": role,
-                "summary": _MOCK_RESULTS.get(role, f"Mock {role}: xong (kết quả giả lập)."),
+                "summary": _MOCK_RESULTS.get(role, f"Mock {role}: done (simulated result)."),
             }
             agent.status = "done"
             return agent
 
-        # --- Chế độ THẬT: ủy thác qua delegation_manager (duck-typing) ---
+        # --- REAL mode: delegate through delegation_manager (duck-typing) ---
         subtask = self._wrap_subtask(role, task)
         try:
             outcome = self._run_maybe_async(
                 self.delegation_manager.execute_task, subtask
             )
-        except Exception as e:  # một subagent lỗi không được giết cả orchestrate
+        except Exception as e:  # one failing subagent must not kill orchestrate
             agent.status = "failed"
             agent.result = {"error": f"{type(e).__name__}: {e}"}
             return agent
 
         if inspect.isawaitable(outcome):
-            # Đang ở trong event loop: không block được. Giữ agent ở running,
-            # nhét coroutine vào result để caller tự await rồi xử lý tiếp.
+            # Inside an event loop: can't block. Keep the agent "running",
+            # stash the coroutine in result for the caller to await.
             agent.result = outcome
             return agent
 
-        # DelegationManager.execute_task trả dict có "status": "completed"/"failed".
+        # DelegationManager.execute_task returns a dict with "status": "completed"/"failed".
         ok = isinstance(outcome, dict) and outcome.get("status") == "completed"
         agent.status = "done" if ok else "failed"
         agent.result = outcome
         return agent
 
     def _wrap_subtask(self, role: str, task: str) -> Any:
-        """Bọc (role, task) thành object giống SubTask để delegation_manager hiểu.
+        """Wrap (role, task) into a SubTask-like object for the delegation_manager.
 
-        Ưu tiên import SubTask thật từ agent.src.tools.delegation; nếu import lỗi
-        (chạy standalone trong test) thì dùng fallback dataclass tương thích.
+        Prefers importing the real SubTask from agent.src.tools.delegation; falls
+        back to a compatible dataclass when the import fails (standalone tests).
         """
         try:
             from agent.src.tools.delegation import SubTask  # type: ignore
@@ -245,11 +249,12 @@ class DynamicOrchestrator:
 
     @staticmethod
     def _run_maybe_async(fn: Any, *args: Any) -> Any:
-        """Gọi fn(*args); nếu trả về coroutine thì chạy tới xong.
+        """Call fn(*args); drive the coroutine to completion if it returns one.
 
-        - Chưa có event loop đang chạy → ``asyncio.run`` (đồng bộ, đơn giản).
-        - Đang ở trong loop (caller async) → không thể block; lúc này trả về
-          chính coroutine để caller tự await (spawn lúc đó giữ agent running).
+        - No running event loop → ``asyncio.run`` (simple, synchronous).
+        - Already inside a loop (async caller) → can't block; returns the
+          coroutine itself so the caller can await it (spawn keeps the agent
+          "running" in that case).
         """
         import asyncio
         import inspect
@@ -260,14 +265,14 @@ class DynamicOrchestrator:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(res)  # không có loop → chạy đồng bộ luôn
-        return res  # đang trong loop → trả coroutine, caller tự await
+            return asyncio.run(res)  # no loop → run synchronously right away
+        return res  # inside a loop → return coroutine, caller awaits it
 
     def retire(self, agent_id: str) -> bool:
-        """Đánh dấu agent xong và dọn khỏi registry. True nếu tìm thấy.
+        """Mark the agent done and remove it from the registry. True if found.
 
-        Giữ nguyên status terminal đã có (done/failed) để báo cáo trung thực;
-        chỉ agent còn pending/running mới bị đánh dấu done khi retire.
+        Preserves an existing terminal status (done/failed) for honest reporting;
+        only agents still pending/running are flipped to done on retire.
         """
         agent = self._agents.get(agent_id)
         if agent is None:
@@ -278,18 +283,18 @@ class DynamicOrchestrator:
         return True
 
     def get_agent(self, agent_id: str) -> Optional[SubAgent]:
-        """Lấy agent còn sống theo id (None nếu đã retire / không tồn tại)."""
+        """Fetch a live agent by id (None if retired / nonexistent)."""
         return self._agents.get(agent_id)
 
     def live_agents(self) -> List[SubAgent]:
-        """Danh sách agent chưa retire."""
+        """List of agents not yet retired."""
         return list(self._agents.values())
 
     # -- full pipeline ------------------------------------------------------
     def orchestrate(self, task: str) -> Dict[str, Any]:
-        """Chạy full lifecycle: analyze → spawn → collect → retire → tổng hợp.
+        """Run the full lifecycle: analyze → spawn → collect → retire → summarize.
 
-        Trả về dict::
+        Returns a dict::
             {
               "task": task,
               "roles": [...],
@@ -298,11 +303,11 @@ class DynamicOrchestrator:
               "summary": "...",
             }
 
-        Ở chế độ mock, spawn đã chạy xong ngay nên "thu kết quả" chỉ là đọc
-        ``agent.result``. Ở chế độ thật với delegation_manager đồng bộ, tương tự.
-        Nếu delegation_manager trả coroutine (caller đang trong event loop),
-        orchestrate giữ nguyên agent ở running và ghi chú trong summary — caller
-        async tự await rồi gọi retire sau.
+        In mock mode, spawn completes immediately so "collecting results" is just
+        reading ``agent.result``. Same for a synchronous delegation_manager.
+        If the delegation_manager returns coroutines (caller inside an event loop),
+        orchestrate leaves those agents "running" and notes it in the summary —
+        the async caller awaits and retires them afterwards.
         """
         roles = self.analyze_task(task)
         agents = [self.spawn(role, self._subtask_for(role, task)) for role in roles]
@@ -311,16 +316,16 @@ class DynamicOrchestrator:
         pending: List[str] = []
         snapshots: List[Dict[str, str]] = []
         for agent in agents:
-            # Chụp status TRƯỚC khi retire, vì retire dọn agent khỏi registry
-            # và ta muốn báo cáo trung thực (kể cả failed).
+            # Snapshot status BEFORE retiring: retire removes the agent from the
+            # registry, and we want honest reporting (including failures).
             snapshots.append({"id": agent.id, "role": agent.role, "status": agent.status})
             if agent.status in ("done", "failed"):
                 results[agent.role] = agent.result
             else:
-                # Trường hợp async: coroutine còn treo trong agent.result.
+                # Async case: a coroutine is still pending in agent.result.
                 pending.append(agent.id)
 
-        # Retire tất cả agent đã xong; agent còn pending thì caller tự xử lý.
+        # Retire every finished agent; pending ones are the caller's business.
         for agent in agents:
             if agent.id not in pending:
                 self.retire(agent.id)
@@ -338,7 +343,7 @@ class DynamicOrchestrator:
     def _summarize(
         task: str, roles: List[str], results: Dict[str, Any], pending: List[str]
     ) -> str:
-        """Tổng hợp text ngắn từ kết quả các agent (không gọi LLM)."""
+        """Build a short text summary from the agents' results (no LLM)."""
         lines = [f"Task: {task}", f"Roles: {', '.join(roles)}"]
         for role in roles:
             if role in results:
@@ -350,6 +355,6 @@ class DynamicOrchestrator:
                 lines.append(f"- {role}: {s}")
         if pending:
             lines.append(
-                f"(còn {len(pending)} agent đang chạy async — caller tự await và retire)"
+                f"({len(pending)} agent(s) still running async — caller awaits and retires them)"
             )
         return "\n".join(lines)

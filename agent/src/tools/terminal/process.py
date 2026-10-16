@@ -1,14 +1,14 @@
-"""terminal.process — quản lý tiến trình nền dài hạn cho Boom.
+"""terminal.process — long-lived background process management for Boom.
 
-Kế thừa từ agent/src/tools/process_manager.py: ProcessManager theo dõi
-tiến trình qua ledger JSON (sống sót qua restart agent), khác với job nền
-trong shell.py (chỉ sống trong tiến trình hiện tại).
+Inherits from agent/src/tools/process_manager.py: ProcessManager tracks
+processes through a JSON ledger (survives agent restarts), unlike shell.py's
+background jobs (which only live in the current process).
 
-API tool: list_processes() / kill_process() (+ poll/start để dùng đầy đủ).
-Ledger mặc định giữ nguyên như bản cũ (~/AppData/Local/boom/processes.json)
-để tương thích; có thể đổi bằng configure() hoặc env BOOM_PROCESS_LEDGER.
+Tool API: list_processes() / kill_process() (+ poll/start for full use).
+The default ledger stays the same as the old one (~/AppData/Local/boom/processes.json)
+for compatibility; change it via configure() or the BOOM_PROCESS_LEDGER env var.
 
-Chỉ dùng stdlib.
+Stdlib only.
 """
 
 from __future__ import annotations
@@ -22,15 +22,15 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
-# Pipe không ai đọc sẽ block writer ở ~64 KiB -> output được drain off-thread.
+# An unread pipe blocks its writer at ~64 KiB -> output is drained off-thread.
 MAX_CAPTURED_LINES = 500
 
-# Env var để đổi file ledger mà không cần sửa code.
+# Env var to change the ledger file without editing code.
 LEDGER_ENV = "BOOM_PROCESS_LEDGER"
 
 
 class ProcessManager:
-    """Quản lý tiến trình nền + ledger JSON (mirroring processes.json)."""
+    """Background process management + JSON ledger (mirroring processes.json)."""
 
     def __init__(self, ledger_file: Optional[Path] = None):
         if ledger_file is None:
@@ -55,7 +55,7 @@ class ProcessManager:
         self.ledger_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def _set_ledger_status(self, session_id: str, status: str, **extra) -> bool:
-        """Cập nhật 1 entry trong ledger. False nếu session không có trong ledger."""
+        """Updates 1 ledger entry. False when the session isn't in the ledger."""
         ledger = self._load_ledger()
         if session_id not in ledger:
             return False
@@ -64,18 +64,18 @@ class ProcessManager:
         self._save_ledger(ledger)
         return True
 
-    # -- drain output ----------------------------------------------------
+    # -- output draining ---------------------------------------------------
     @staticmethod
     def _drain(buffers: Dict[str, Deque[str]], stream, key: str) -> None:
         try:
             for line in iter(stream.readline, ""):
                 buffers[key].append(line)
         except (ValueError, OSError):
-            pass  # pipe bị đóng giữa chừng
+            pass  # pipe closed mid-read
 
     @staticmethod
     def _take(buf: Optional[Deque[str]]) -> str:
-        """Lấy (và xóa) toàn bộ output đã buffer từ lần poll trước."""
+        """Takes (and clears) all buffered output since the last poll."""
         if not buf:
             return ""
         chunks = []
@@ -86,16 +86,16 @@ class ProcessManager:
     # -- public API ------------------------------------------------------
     def start_process(self, session_id: str, cmd: List[str],
                       cwd: Optional[str] = None) -> Dict[str, Any]:
-        """Khởi động tiến trình nền, ghi vào ledger.
+        """Starts a background process, records it in the ledger.
 
         Returns: {"session_id", "pid", "status": "running"}
-                 hoặc {"session_id", "error"} khi cmd rỗng/không chạy được.
+                 or {"session_id", "error"} when cmd is empty/unlaunchable.
         """
         if not session_id or not isinstance(session_id, str):
-            return {"session_id": session_id, "error": "session_id phải non-empty"}
+            return {"session_id": session_id, "error": "session_id must be non-empty"}
         if not cmd:
             return {"session_id": session_id,
-                    "error": "cmd phải là list argv non-empty"}
+                    "error": "cmd must be a non-empty argv list"}
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -118,7 +118,7 @@ class ProcessManager:
         return {"session_id": session_id, "pid": proc.pid, "status": "running"}
 
     def poll_process(self, session_id: str) -> Dict[str, Any]:
-        """Đọc output mới + trạng thái tiến trình (running/exited/unknown/not_found)."""
+        """Reads new output + process state (running/exited/unknown/not_found)."""
         proc = self._active_procs.get(session_id)
         captured = self._captured.get(session_id)
         out = self._take(captured["stdout"]) if captured else ""
@@ -128,7 +128,7 @@ class ProcessManager:
             if ret is None:
                 return {"session_id": session_id, "status": "running",
                         "pid": proc.pid, "stdout": out, "stderr": err}
-            # Giữ buffer: caller vẫn cần đọc exit tail.
+            # Keep the buffer: the caller still needs to read the exit tail.
             del self._active_procs[session_id]
             self._set_ledger_status(session_id, "exited", exit_code=ret)
             return {"session_id": session_id, "status": "exited",
@@ -138,13 +138,13 @@ class ProcessManager:
             return {"session_id": session_id, "status": "not_found",
                     "stdout": out, "stderr": err}
         if info.get("status") == "running":
-            # Tiến trình do agent process cũ khởi động, pipe không còn giữ được
-            # -> không đoán bừa, báo unknown.
+            # A process started by an older agent process, its pipes no longer
+            # held -> don't guess, report unknown.
             info["status"] = "unknown"
         return {**info, "session_id": session_id, "stdout": out, "stderr": err}
 
     def kill_process(self, session_id: str) -> Dict[str, Any]:
-        """Dừng tiến trình (SIGTERM, 2s chưa chết thì SIGKILL), cập nhật ledger."""
+        """Stops a process (SIGTERM, SIGKILL after 2s), updates the ledger."""
         proc = self._active_procs.pop(session_id, None)
         captured = self._captured.pop(session_id, None)
         out = self._take(captured["stdout"]) if captured else ""
@@ -162,13 +162,13 @@ class ProcessManager:
                 "stdout": out, "stderr": err}
 
     def list_processes(self) -> List[Dict[str, Any]]:
-        """Liệt kê mọi tiến trình trong ledger."""
+        """Lists every process in the ledger."""
         ledger = self._load_ledger()
         return [{"session_id": k, **v} for k, v in ledger.items()]
 
 
 # ---------------------------------------------------------------------------
-# singleton + tool functions (API gọn cho agent)
+# singleton + tool functions (compact API for the agent)
 # ---------------------------------------------------------------------------
 
 _MANAGER: Optional[ProcessManager] = None
@@ -176,22 +176,22 @@ _LEDGER_OVERRIDE: Optional[Path] = None
 
 
 def configure(ledger_file: Optional[str] = None) -> Dict[str, Any]:
-    """Đổi file ledger cho singleton (gọi trước lần dùng đầu tiên).
+    """Changes the singleton's ledger file (call before first use).
 
     Args:
-        ledger_file: đường dẫn file ledger JSON, None để về mặc định.
+        ledger_file: path to the JSON ledger file, None for the default.
     Returns:
         {"ok": True, "ledger_file": str}.
     """
     global _MANAGER, _LEDGER_OVERRIDE
     _LEDGER_OVERRIDE = Path(ledger_file) if ledger_file else None
-    _MANAGER = None  # ép tạo lại ở lần get_manager() tới
+    _MANAGER = None  # force recreation on the next get_manager()
     return {"ok": True,
             "ledger_file": str(_LEDGER_OVERRIDE) if _LEDGER_OVERRIDE else "(default)"}
 
 
 def get_manager() -> ProcessManager:
-    """Lấy singleton ProcessManager (tạo lazy để tránh side-effect khi import)."""
+    """Gets the singleton ProcessManager (created lazily to avoid import-time side effects)."""
     global _MANAGER
     if _MANAGER is None:
         _MANAGER = ProcessManager(ledger_file=_LEDGER_OVERRIDE)
@@ -200,20 +200,20 @@ def get_manager() -> ProcessManager:
 
 def start_process(session_id: str, cmd: List[str],
                   cwd: Optional[str] = None) -> Dict[str, Any]:
-    """Tool: khởi động tiến trình nền có ledger.
+    """Tool: starts a ledger-tracked background process.
 
-    Returns: {"session_id", "pid", "status"} hoặc {"session_id", "error"}.
+    Returns: {"session_id", "pid", "status"} or {"session_id", "error"}.
     """
     return get_manager().start_process(session_id, cmd, cwd)
 
 
 def poll_process(session_id: str) -> Dict[str, Any]:
-    """Tool: đọc output mới + trạng thái tiến trình."""
+    """Tool: reads new output + process state."""
     return get_manager().poll_process(session_id)
 
 
 def list_processes() -> Dict[str, Any]:
-    """Tool: liệt kê mọi tiến trình trong ledger.
+    """Tool: lists every process in the ledger.
 
     Returns: {"ok": True, "processes": [...]}.
     """
@@ -224,13 +224,13 @@ def list_processes() -> Dict[str, Any]:
 
 
 def kill_process(session_id: str) -> Dict[str, Any]:
-    """Tool: dừng tiến trình theo session_id.
+    """Tool: stops a process by session_id.
 
     Returns: {"session_id", "status": "killed"|"not_found", ...}.
     """
     if not session_id or not isinstance(session_id, str):
         return {"session_id": session_id, "status": "error",
-                "error": "session_id phải non-empty"}
+                "error": "session_id must be non-empty"}
     try:
         return get_manager().kill_process(session_id)
     except OSError as exc:

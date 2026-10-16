@@ -1,25 +1,25 @@
-"""Routes nhóm "websocket" — giữ chỗ cho kênh realtime.
+"""The "websocket" route group — placeholder for a realtime channel.
 
-SỰ THẬT cần ghi rõ: HTTP API của gateway (``gateway/api.py``, stdlib
-``http.server``) hiện KHÔNG expose bất kỳ endpoint ``/ws`` hay ``/events``
-công khai nào. WebSocket chỉ tồn tại *nội bộ* trong các channel adapter
-(ví dụ ``gateway/channels/discord.py`` nối gateway Discord), không phải
-route HTTP.
+The FACT to state clearly: the gateway's HTTP API (``gateway/api.py``,
+stdlib ``http.server``) currently does NOT expose any public ``/ws`` or
+``/events`` endpoint. WebSocket exists only *internally* inside channel
+adapters (e.g. ``gateway/channels/discord.py`` connects to Discord's
+gateway) — not as HTTP routes.
 
-Realtime duy nhất mà HTTP API phục vụ là SSE — nhưng đó là một chế độ của
-``POST /api/chat`` (xem ``routes/chat.py``), không phải path riêng.
+The only realtime the HTTP API serves is SSE — but that is a mode of
+``POST /api/chat`` (see ``routes/chat.py``), not a separate path.
 
-Vì vậy module này export ``ROUTES = []`` một cách có chủ ý: giữ đúng vai trò
-"domain module" cho việc tách router, nhưng không bịa path không tồn tại.
-Khi gateway sau này mở /ws thật, chỉ cần thêm entry vào ROUTES bên dưới và
-``get_route_table()`` sẽ tự nhận.
+So this module deliberately exports ``ROUTES = []``: it keeps its role
+as a "domain module" for router splitting without inventing paths that
+don't exist. When the gateway genuinely opens /ws later, just add an
+entry to ROUTES below and ``get_route_table()`` will pick it up.
 """
 
-# Chưa có route /ws hay /events công khai trên gateway HTTP API.
+# No public /ws or /events route on the gateway HTTP API yet.
 ROUTES = []
 
 
 def register(router):
-    """Không có route để gắn — giữ no-op có chủ ý (xem docstring)."""
+    """No routes to attach — a deliberate no-op (see docstring)."""
     for method, path, handler in ROUTES:
         router.add(method, path, handler, __name__.rsplit(".", 1)[-1])

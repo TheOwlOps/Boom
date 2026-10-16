@@ -1,6 +1,6 @@
 ---
 name: api-designer
-description: "Thiết kế REST API từ mô tả: sinh OpenAPI 3.0 spec (paths, schemas, errors) + route stubs FastAPI/Flask, có validate chuẩn REST."
+description: "Design REST APIs from a description: generate OpenAPI 3.0 specs (paths, schemas, errors) + FastAPI/Flask route stubs, with REST-standard validation."
 version: 1.0.0
 author: Boom
 license: MIT
@@ -11,37 +11,37 @@ metadata:
     related_skills: [software-development/test-driven-development]
 ---
 
-# API-Designer — Sinh OpenAPI Spec + Route Stubs
+# API-Designer — Generate OpenAPI Spec + Route Stubs
 
-## Tên
+## Name
 `api-designer`
 
-## Mô tả
-Nhận mô tả resources (tên + fields) → sinh đặc tả **OpenAPI 3.0** đầy đủ: paths CRUD, schemas, error responses chuẩn; đồng thời sinh **route stubs** cho FastAPI và Flask để dev chỉ việc điền logic. Có bước **validate** tự động:
+## Description
+Takes resource descriptions (names + fields) → generates a complete **OpenAPI 3.0** specification: CRUD paths, schemas, standard error responses; also generates **route stubs** for FastAPI and Flask so developers only need to fill in the logic. Includes an automatic **validation** step:
 
-- resource name phải là danh từ số nhiều, kebab-case/plural hợp lệ
-- method chuẩn REST (GET/POST/PUT/PATCH/DELETE), không dùng GET để mutate
-- status code đúng quy ước (201 cho create, 204 cho delete, 404/422 cho lỗi)
-- endpoint list **bắt buộc** có pagination (`page`/`page_size`) và envelope `{items, total, page, page_size}`
+- resource names must be plural nouns with valid kebab-case/plural form
+- standard REST methods (GET/POST/PUT/PATCH/DELETE); never use GET to mutate
+- status codes follow convention (201 for create, 204 for delete, 404/422 for errors)
+- list endpoints **must** have pagination (`page`/`page_size`) and an envelope `{items, total, page, page_size}`
 
-## Khi nào dùng
-- Bắt đầu service/API mới, cần spec trước khi code
-- Cần tài liệu OpenAPI để import vào Swagger UI / Postman
-- Muốn route stubs nhất quán giữa các service
+## When to use
+- Starting a new service/API and need a spec before coding
+- Need OpenAPI documentation to import into Swagger UI / Postman
+- Want consistent route stubs across services
 
 ## Input
-- `title` (str): tên API
-- `version` (str): version API, mặc định `"1.0.0"`
-- `resources` (list): mỗi resource là dict `{name, fields: {field: type}, description?}`. Type hỗ trợ: `string`, `integer`, `number`, `boolean`, `date`, `datetime`, `uuid`, `email`, `array[<type>]`
-- `framework` ("fastapi" | "flask", mặc định `"fastapi"`): framework cho route stubs
+- `title` (str): API name
+- `version` (str): API version, default `"1.0.0"`
+- `resources` (list): each resource is a dict `{name, fields: {field: type}, description?}`. Supported types: `string`, `integer`, `number`, `boolean`, `date`, `datetime`, `uuid`, `email`, `array[<type>]`
+- `framework` ("fastapi" | "flask", default `"fastapi"`): framework for the route stubs
 
 ## Output
 Dict:
-- `openapi`: dict spec OpenAPI 3.0 (dump ra JSON/YAML được)
-- `validation`: list `{rule, status: pass|fail, detail}`
-- `stubs`: code Python route stubs cho framework đã chọn
+- `openapi`: OpenAPI 3.0 spec dict (can be dumped to JSON/YAML)
+- `validation`: list of `{rule, status: pass|fail, detail}`
+- `stubs`: Python route stub code for the chosen framework
 
-## Ví dụ
+## Example
 
 ```python
 from api_designer.design import design_api
@@ -57,5 +57,5 @@ result = design_api(
     framework="fastapi",
 )
 assert all(v["status"] == "pass" for v in result["validation"])
-print(result["stubs"])   # paste vào project, điền logic
+print(result["stubs"])   # paste into your project, fill in the logic
 ```

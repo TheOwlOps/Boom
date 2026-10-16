@@ -1,19 +1,19 @@
-"""Tiện ích web cho Boom: search / fetch / extract / scrape.
+"""Web utilities for Boom: search / fetch / extract / scrape.
 
-Cấu trúc mới (gộp điểm mạnh của 2 module cũ):
-  - ``web.py``        -> giữ circuit breaker + retry/backoff + httpx + body cap
-  - ``web_tools.py``  -> giữ cache search (TTL 3600s, 128 entries, FIFO)
-                         + batch fetch song song (web_extract_many)
+New structure (merging the 2 old modules' strengths):
+  - ``web.py``        -> keeps circuit breaker + retry/backoff + httpx + body cap
+  - ``web_tools.py``  -> keeps the search cache (TTL 3600s, 128 entries, FIFO)
+                         + parallel batch fetch (web_extract_many)
   - ``scraper.py``    -> scrape_basic (list crawl + field selector)
-  - ``browser_tool.py`` -> KHÔNG mang vào đây: cần Chrome thật + CDP, vẫn giữ
-                         nguyên ở tool cũ cho ca JS-heavy.
+  - ``browser_tool.py`` -> NOT brought in here: needs a real Chrome + CDP,
+                         stays in the old tool for JS-heavy cases.
 
-Bảo mật (bắt buộc):
-  - ``ssrf.validate_url``: chỉ cho http/https, chặn localhost, IP private,
-    loopback, link-local, multicast, unspecified — chống SSRF.
-    Mọi entry point có URL đều phải gọi nó (qua fetch.py / scrape.py).
+Security (mandatory):
+  - ``ssrf.validate_url``: http/https only; blocks localhost, private IPs,
+    loopback, link-local, multicast, unspecified — anti-SSRF.
+    Every URL entry point must call it (via fetch.py / scrape.py).
 
-Chỉ dùng stdlib + httpx (+ pydantic cho model kết quả).
+Stdlib + httpx only (+ pydantic for the result model).
 """
 
 from .fetch import (
@@ -61,7 +61,7 @@ def _schema(properties=None, required=None):
 
 
 def _guard(fn):
-    """Tool wrapper: không bao giờ raise vào agent loop, lỗi -> {"error"}."""
+    """Tool wrapper: never raises into the agent loop, errors -> {"error"}."""
     try:
         result = fn()
         if isinstance(result, FetchResult):
@@ -72,7 +72,7 @@ def _guard(fn):
 
 
 def build_tools(env=None) -> dict:
-    """Registry-ready tool dicts cho environment của Boom (repo convention)."""
+    """Registry-ready tool dicts for Boom's environment (repo convention)."""
 
     def t_web_search(query: str, max_results: int = 5):
         return _guard(lambda: web_search(query, int(max_results)))
@@ -96,13 +96,13 @@ def build_tools(env=None) -> dict:
             "name": "web_search",
             "func": t_web_search,
             "description": (
-                "Tìm kiếm web qua DuckDuckGo (không cần API key). Kết quả "
-                "[{title, url, snippet}], có cache 1 giờ. Lỗi -> {\"error\"}."
+                "Searches the web via DuckDuckGo (no API key). Results "
+                "[{title, url, snippet}], cached for 1 hour. Errors -> {\"error\"}."
             ),
             "schema": _schema(
                 {
-                    "query": {"type": "string", "description": "Câu truy vấn."},
-                    "max_results": {"type": "integer", "description": "Tối đa. Mặc định 5."},
+                    "query": {"type": "string", "description": "Search query."},
+                    "max_results": {"type": "integer", "description": "Max results. Default 5."},
                 },
                 ["query"],
             ),
@@ -111,14 +111,14 @@ def build_tools(env=None) -> dict:
             "name": "web_fetch",
             "func": t_web_fetch,
             "description": (
-                "Fetch 1 URL (http/https, chặn SSRF; follow redirect; body cap "
-                "500 KiB; retry + circuit breaker). Trả về {url, status, "
+                "Fetches 1 URL (http/https, SSRF-blocked; follows redirects; "
+                "500 KiB body cap; retry + circuit breaker). Returns {url, status, "
                 "content_type, text, title, truncated}."
             ),
             "schema": _schema(
                 {
-                    "url": {"type": "string", "description": "URL cần fetch."},
-                    "timeout": {"type": "integer", "description": "Timeout giây. Mặc định 15."},
+                    "url": {"type": "string", "description": "URL to fetch."},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds. Default 15."},
                 },
                 ["url"],
             ),
@@ -127,16 +127,16 @@ def build_tools(env=None) -> dict:
             "name": "web_extract",
             "func": t_web_extract,
             "description": (
-                "Fetch URL rồi trả về text hiển thị chính (bỏ script/style/nav/"
-                "footer). Có thể chỉ lấy 1 section bằng selector đơn giản "
+                "Fetches a URL and returns its main visible text (drops script/style/nav/"
+                "footer). Can grab one section with a simple selector "
                 "('article', '.content', '#main', 'div.post')."
             ),
             "schema": _schema(
                 {
-                    "url": {"type": "string", "description": "URL cần extract."},
+                    "url": {"type": "string", "description": "URL to extract."},
                     "selector": {
                         "type": "string",
-                        "description": "Selector CSS đơn giản, tùy chọn.",
+                        "description": "Simple CSS selector, optional.",
                     },
                 },
                 ["url"],
@@ -146,20 +146,20 @@ def build_tools(env=None) -> dict:
             "name": "web_extract_many",
             "func": t_web_extract_many,
             "description": (
-                "Fetch song song nhiều URL; trả về {results: {url: kết quả}}. "
-                "Dùng thay vì gọi web_extract từng URL khi cần nhiều trang. "
-                "URL lỗi chỉ lỗi ở slot của nó."
+                "Fetches many URLs in parallel; returns {results: {url: result}}. "
+                "Use instead of calling web_extract per URL when many pages are needed. "
+                "A failing URL only fails its own slot."
             ),
             "schema": _schema(
                 {
                     "urls": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Danh sách URL fetch song song.",
+                        "description": "URLs to fetch in parallel.",
                     },
                     "max_workers": {
                         "type": "integer",
-                        "description": "Số thread song song. Mặc định 5.",
+                        "description": "Parallel threads. Default 5.",
                     },
                 },
                 ["urls"],
@@ -169,25 +169,25 @@ def build_tools(env=None) -> dict:
             "name": "scrape_basic",
             "func": t_scrape_basic,
             "description": (
-                "Scrape cấu trúc 1 trang HTML tĩnh: mỗi element khớp "
-                "item_selector thành 1 item; fields {tên: selector}, hậu tố "
-                "'@attr' để lấy attribute (VD {'link': 'a@href'}). Trang "
-                "render bằng JS -> báo lỗi gợi ý dùng browser_tool."
+                "Structured scrape of one static HTML page: each element matching "
+                "item_selector becomes an item; fields {name: selector}, '@attr' "
+                "suffix to grab an attribute (e.g. {'link': 'a@href'}). "
+                "JS-rendered pages -> an error suggesting browser_tool."
             ),
             "schema": _schema(
                 {
-                    "url": {"type": "string", "description": "URL trang cần scrape."},
+                    "url": {"type": "string", "description": "Page URL to scrape."},
                     "item_selector": {
                         "type": "string",
-                        "description": "Selector cho mỗi item (VD 'div.product').",
+                        "description": "Selector for each item (e.g. 'div.product').",
                     },
                     "fields": {
                         "type": "object",
-                        "description": "{tên_field: selector}, VD {'title': 'h2', 'link': 'a@href'}.",
+                        "description": "{field_name: selector}, e.g. {'title': 'h2', 'link': 'a@href'}.",
                     },
                     "max_items": {
                         "type": "integer",
-                        "description": "Tối đa item. Mặc định 50.",
+                        "description": "Max items. Default 50.",
                     },
                 },
                 ["url", "item_selector", "fields"],

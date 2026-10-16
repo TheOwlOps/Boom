@@ -1,19 +1,19 @@
-"""Circuit breaker cho Boom agent.
+"""Circuit breaker for the Boom agent.
 
-Mục đích: chặn (fail fast) các call tới dịch vụ ngoài (Telegram API, LLM
-provider, webhook...) khi dịch vụ đang chết, tránh treo thread pool của
-gateway và tránh dội bom request vào dịch vụ đang lỗi.
+Purpose: fail fast on calls to external services (Telegram API, LLM
+providers, webhooks...) while a service is down, avoiding hanging the
+gateway's thread pool and avoiding request-bombing a failing service.
 
-Vòng đời trạng thái:
-    CLOSED  ──(fail liên tiếp >= threshold)──▶ OPEN
-      ▲                                        │
-      │                                        │ (chờ hết recovery_timeout)
-      │                                        ▼
-      └────(half-open call OK, reset đếm)◀── HALF_OPEN
-              (half-open call fail → OPEN lại, đếm thời gian chờ tiếp)
+State lifecycle:
+    CLOSED  ──(consecutive fails >= threshold)──▶ OPEN
+      ▲                                            │
+      │                                            │ (after recovery_timeout elapses)
+      │                                            ▼
+      └────(half-open call OK, counters reset)◀── HALF_OPEN
+              (half-open call fails → back to OPEN, wait clock resets)
 
-Thread-safe: mọi đọc/ghi trạng thái đều giữ `threading.Lock`, vì gateway
-dùng ThreadingHTTPServer (nhiều thread cùng bọc 1 breaker).
+Thread-safe: all state reads/writes hold `threading.Lock`, because the
+gateway uses ThreadingHTTPServer (many threads sharing one breaker).
 """
 
 from __future__ import annotations
@@ -27,25 +27,25 @@ from enum import Enum
 
 
 class CircuitState(str, Enum):
-    """Ba trạng thái của breaker."""
+    """The three states of a breaker."""
 
-    CLOSED = "closed"       # bình thường: cho mọi call qua, đếm số fail liên tiếp
-    OPEN = "open"           # fail fast: không gọi fn, raise CircuitOpenError ngay
-    HALF_OPEN = "half_open"  # thăm dò: cho tối đa half_open_max_calls call thử qua
+    CLOSED = "closed"       # normal: let every call through, count consecutive fails
+    OPEN = "open"           # fail fast: don't call fn, raise CircuitOpenError immediately
+    HALF_OPEN = "half_open"  # probing: let at most half_open_max_calls trial calls through
 
 
 class CircuitOpenError(Exception):
-    """Raise khi breaker đang OPEN (fail fast) hoặc HALF_OPEN đã hết lượt thăm dò."""
+    """Raised when the breaker is OPEN (fail fast) or HALF_OPEN is out of trial slots."""
 
     def __init__(self, message: str = "circuit is open"):
         super().__init__(message)
 
 
 class CircuitBreaker:
-    """Circuit breaker thread-safe bọc các call tới dịch vụ ngoài.
+    """Thread-safe circuit breaker wrapping calls to external services.
 
-    API chính: :meth:`call` (sync) và :meth:`acall` (async).
-    Cũng dùng được như decorator ``@breaker`` hoặc context manager ``with breaker:``.
+    Main API: :meth:`call` (sync) and :meth:`acall` (async).
+    Also usable as a decorator ``@breaker`` or a context manager ``with breaker:``.
     """
 
     def __init__(
@@ -57,22 +57,22 @@ class CircuitBreaker:
         expected_exception: type[BaseException] | tuple[type[BaseException], ...] = Exception,
         clock: callable = time.monotonic,  # type: ignore[valid-type]
     ) -> None:
-        """Khởi tạo breaker.
+        """Initialize the breaker.
 
-        :param name: tên định danh (để log/health check phân biệt từng dịch vụ)
-        :param failure_threshold: số fail LIÊN TIẾP để mở mạch (state CLOSED → OPEN)
-        :param recovery_timeout: số giây chờ (OPEN) trước khi cho thăm dò lại
-        :param half_open_max_calls: số call thăm dò tối đa khi HALF_OPEN
-        :param expected_exception: exception nào thì tính là fail (mặc định mọi Exception;
-            BaseException như KeyboardInterrupt không tính)
-        :param clock: hàm lấy thời gian (monotonic) — test truyền fake clock để không phải sleep thật
+        :param name: identifier (so logs/health checks can tell services apart)
+        :param failure_threshold: CONSECUTIVE fails to open the circuit (CLOSED → OPEN)
+        :param recovery_timeout: seconds to wait (OPEN) before probing again
+        :param half_open_max_calls: max concurrent trial calls while HALF_OPEN
+        :param expected_exception: which exceptions count as failures (default: all
+            Exceptions; BaseExceptions like KeyboardInterrupt don't count)
+        :param clock: time source (monotonic) — tests pass a fake clock to avoid real sleeps
         """
         if failure_threshold < 1:
-            raise ValueError("failure_threshold phải >= 1")
+            raise ValueError("failure_threshold must be >= 1")
         if recovery_timeout < 0:
-            raise ValueError("recovery_timeout phải >= 0")
+            raise ValueError("recovery_timeout must be >= 0")
         if half_open_max_calls < 1:
-            raise ValueError("half_open_max_calls phải >= 1")
+            raise ValueError("half_open_max_calls must be >= 1")
 
         self.name = name
         self.failure_threshold = failure_threshold
@@ -83,42 +83,42 @@ class CircuitBreaker:
 
         self._lock = threading.Lock()
         self._state = CircuitState.CLOSED
-        self._failure_count = 0      # số fail liên tiếp (reset khi có 1 success ở CLOSED)
-        self._success_count = 0      # tổng số success qua breaker (thống kê health)
-        self._last_failure_time: float | None = None  # thời điểm fail cuối (để tính timeout)
-        self._half_open_in_flight = 0  # số call thăm dò đang chạy khi HALF_OPEN
+        self._failure_count = 0      # consecutive fails (reset by one success in CLOSED)
+        self._success_count = 0      # total successes through the breaker (health stats)
+        self._last_failure_time: float | None = None  # last failure time (for timeout math)
+        self._half_open_in_flight = 0  # trial calls currently running while HALF_OPEN
 
     # ------------------------------------------------------------------
-    # Trạng thái công khai (đọc để health check) — mỗi getter đều giữ lock
+    # Public state (for health checks) — every getter holds the lock
     # ------------------------------------------------------------------
     @property
     def state(self) -> CircuitState:
-        """Trạng thái hiện tại. Nếu đang OPEN nhưng đã hết recovery_timeout,
-        tự chuyển sang HALF_OPEN (lazy transition) rồi mới trả về."""
+        """Current state. If OPEN but recovery_timeout has elapsed,
+        lazily transitions to HALF_OPEN before returning."""
         with self._lock:
             self._maybe_half_open_locked()
             return self._state
 
     @property
     def failure_count(self) -> int:
-        """Số fail liên tiếp hiện tại (chưa tính các lượt fail fast khi OPEN)."""
+        """Current consecutive failure count (fail-fast hits while OPEN excluded)."""
         with self._lock:
             return self._failure_count
 
     @property
     def last_failure_time(self) -> float | None:
-        """Thời điểm (theo clock) của lần fail cuối; None nếu chưa từng fail."""
+        """Clock time of the last failure; None if never failed."""
         with self._lock:
             return self._last_failure_time
 
     @property
     def success_count(self) -> int:
-        """Tổng số call thành công qua breaker kể từ khi tạo / reset."""
+        """Total successful calls through the breaker since creation / reset."""
         with self._lock:
             return self._success_count
 
     def reset(self) -> None:
-        """Đưa breaker về CLOSED như mới, xóa mọi thống kê."""
+        """Return the breaker to CLOSED like new, clearing all stats."""
         with self._lock:
             self._state = CircuitState.CLOSED
             self._failure_count = 0
@@ -127,35 +127,35 @@ class CircuitBreaker:
             self._half_open_in_flight = 0
 
     # ------------------------------------------------------------------
-    # Logic nội bộ (luôn gọi khi đã giữ lock)
+    # Internal logic (always called with the lock held)
     # ------------------------------------------------------------------
     def _maybe_half_open_locked(self) -> None:
-        """Nếu đang OPEN và đã quá recovery_timeout kể từ lần fail cuối,
-        chuyển sang HALF_OPEN để cho phép thăm dò. Đây là lazy transition:
-        chỉ đổi trạng thái khi có người đọc state / gọi call."""
+        """If OPEN and recovery_timeout has passed since the last failure,
+        move to HALF_OPEN to allow probing. Lazy transition: state only
+        changes when someone reads state / makes a call."""
         if (
             self._state is CircuitState.OPEN
             and self._last_failure_time is not None
             and (self._clock() - self._last_failure_time) >= self.recovery_timeout
         ):
-            # Mở thăm dò: reset số lượt thăm dò đang chạy
+            # Open for probing: reset the in-flight trial count
             self._state = CircuitState.HALF_OPEN
             self._half_open_in_flight = 0
 
     def _enter_call_locked(self) -> None:
-        """Kiểm tra trước khi gọi fn. Raise CircuitOpenError nếu không được phép.
+        """Pre-call check. Raises CircuitOpenError if the call isn't allowed.
 
-        - CLOSED: luôn cho qua.
-        - OPEN: raise ngay (fail fast), không chạm tới fn.
-        - HALF_OPEN: cho qua tối đa half_open_max_calls lượt đồng thời;
-          quá giới hạn → raise như OPEN.
+        - CLOSED: always let through.
+        - OPEN: raise immediately (fail fast), never touch fn.
+        - HALF_OPEN: let at most half_open_max_calls concurrent trials through;
+          over the limit → raise like OPEN.
         """
         self._maybe_half_open_locked()
         if self._state is CircuitState.CLOSED:
             return
         if self._state is CircuitState.OPEN:
             raise CircuitOpenError(f"circuit '{self.name}' is OPEN (fail fast)")
-        # HALF_OPEN: giới hạn số lượt thăm dò đồng thời
+        # HALF_OPEN: cap concurrent trial calls
         if self._half_open_in_flight >= self.half_open_max_calls:
             raise CircuitOpenError(
                 f"circuit '{self.name}' is HALF_OPEN and trial slots are full"
@@ -163,13 +163,14 @@ class CircuitBreaker:
         self._half_open_in_flight += 1
 
     def _record_success_locked(self) -> None:
-        """Call thành công:
-        - Ở HALF_OPEN → đóng mạch về CLOSED, reset mọi đếm.
-        - Ở CLOSED → reset chuỗi fail liên tiếp (vì fail phải LIÊN TIẾP mới mở mạch).
+        """Successful call:
+        - In HALF_OPEN → close the circuit back to CLOSED, reset all counters.
+        - In CLOSED → reset the consecutive-failure streak (only CONSECUTIVE
+          fails open the circuit).
         """
         self._success_count += 1
         if self._state is CircuitState.HALF_OPEN:
-            # Thăm dò thành công → dịch vụ đã hồi phục, đóng mạch
+            # Trial succeeded → service recovered, close the circuit
             self._state = CircuitState.CLOSED
             self._failure_count = 0
             self._last_failure_time = None
@@ -178,38 +179,38 @@ class CircuitBreaker:
             self._failure_count = 0
 
     def _record_failure_locked(self) -> None:
-        """Call thất bại:
-        - Ở CLOSED: tăng failure_count; đủ ngưỡng → mở mạch (OPEN).
-        - Ở HALF_OPEN: dịch vụ vẫn lỗi → mở mạch lại, đặt lại đồng hồ chờ.
+        """Failed call:
+        - In CLOSED: bump failure_count; hit the threshold → open (OPEN).
+        - In HALF_OPEN: service still failing → re-open, restart the wait clock.
         """
         self._failure_count += 1
         self._last_failure_time = self._clock()
         if self._state is CircuitState.HALF_OPEN:
-            # Thăm dò thất bại → dịch vụ chưa hồi, mở lại, chờ tiếp
+            # Trial failed → service not back, re-open and keep waiting
             self._state = CircuitState.OPEN
             self._half_open_in_flight = 0
         elif (
             self._state is CircuitState.CLOSED
             and self._failure_count >= self.failure_threshold
         ):
-            # Đủ số fail liên tiếp → mở mạch
+            # Enough consecutive fails → open the circuit
             self._state = CircuitState.OPEN
 
     def _release_half_open_slot_locked(self) -> None:
-        """Giải phóng 1 slot thăm dò (dùng khi fn bị cancel/interrupt mà
-        không đi qua đường success/failure thông thường)."""
+        """Release one trial slot (when fn was cancelled/interrupted without
+        going through the normal success/failure path)."""
         if self._half_open_in_flight > 0:
             self._half_open_in_flight -= 1
 
     # ------------------------------------------------------------------
-    # API chính
+    # Main API
     # ------------------------------------------------------------------
     def call(self, fn, *args, **kwargs):
-        """Chạy `fn` (sync) có breaker bảo vệ.
+        """Run sync `fn` behind the breaker.
 
-        Raise CircuitOpenError ngay nếu không được phép gọi (fail fast).
-        Exception từ fn (đúng loại expected_exception) được đếm là fail rồi
-        raise lại cho caller — breaker không nuốt lỗi.
+        Raises CircuitOpenError immediately if the call isn't allowed (fail fast).
+        Exceptions from fn (of the expected_exception type) are counted as
+        failures and re-raised to the caller — the breaker never swallows errors.
         """
         with self._lock:
             self._enter_call_locked()
@@ -220,7 +221,7 @@ class CircuitBreaker:
                 self._record_failure_locked()
             raise
         except BaseException:
-            # Lỗi không thuộc diện tính fail (vd KeyboardInterrupt) → chỉ nhả slot
+            # Non-counted error (e.g. KeyboardInterrupt) → just release the slot
             with self._lock:
                 if self._state is CircuitState.HALF_OPEN:
                     self._release_half_open_slot_locked()
@@ -230,10 +231,10 @@ class CircuitBreaker:
         return result
 
     async def acall(self, fn, *args, **kwargs):
-        """Chạy `fn` (sync hoặc async callable) có breaker bảo vệ.
+        """Run `fn` (sync or async callable) behind the breaker.
 
-        `fn` có thể là hàm thường hoặc coroutine function; nếu kết quả là
-        awaitable thì sẽ được await. Logic chuyển trạng thái giống `call`.
+        `fn` may be a plain function or a coroutine function; an awaitable
+        result is awaited. State transitions mirror `call`.
         """
         with self._lock:
             self._enter_call_locked()
@@ -255,10 +256,10 @@ class CircuitBreaker:
         return result
 
     def __call__(self, fn):
-        """Dùng như decorator: ``@breaker`` bọc hàm sync hoặc async.
+        """Use as a decorator: ``@breaker`` wraps a sync or async function.
 
-        - Hàm async (async def / trả về coroutine) → gọi qua `acall`.
-        - Hàm sync → gọi qua `call`.
+        - Async functions (async def / returning a coroutine) → via `acall`.
+        - Sync functions → via `call`.
         """
         if asyncio.iscoroutinefunction(fn):
 
@@ -275,13 +276,13 @@ class CircuitBreaker:
         return sync_wrapper
 
     def __enter__(self) -> "CircuitBreaker":
-        """Context manager: kiểm tra quyền gọi khi vào block, fail fast ở đây."""
+        """Context manager: checks call permission on entry, fails fast here."""
         with self._lock:
             self._enter_call_locked()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        """Thoát block: không exception → success; exception thuộc diện fail → đếm fail."""
+        """Exits the block: no exception → success; counted exception → failure."""
         with self._lock:
             if exc_type is None:
                 self._record_success_locked()
@@ -289,7 +290,7 @@ class CircuitBreaker:
                 self._record_failure_locked()
             elif self._state is CircuitState.HALF_OPEN:
                 self._release_half_open_slot_locked()
-        return False  # không nuốt exception, caller tự xử lý
+        return False  # don't swallow exceptions, the caller handles them
 
     def __repr__(self) -> str:
         return (

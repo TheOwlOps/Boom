@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-crossref.py — Cross-Reference cho DeepSearch (Boom).
+crossref.py — Cross-Reference for DeepSearch (Boom).
 
-Chức năng: nhận danh sách sources [{url, title, text}], tách mỗi source
-thành câu, gom các câu nói về cùng một claim (dựa trên overlap từ khóa),
-trả về các claim được sắp theo độ đồng thuận giảm dần.
+Job: takes a list of sources [{url, title, text}], splits each source into
+sentences, groups sentences talking about the same claim (by keyword
+overlap), and returns the claims sorted by decreasing consensus.
 
 Python stdlib only.
 """
@@ -12,8 +12,9 @@ Python stdlib only.
 import re
 
 # ---------------------------------------------------------------------------
-# Stopwords: ~30 từ phổ biến tiếng Việt / tiếng Anh, loại khỏi phép so sánh
-# vì chúng xuất hiện ở mọi câu và làm nhiễu overlap.
+# Stopwords: ~30 common Vietnamese / English words, excluded from comparison
+# because they appear in every sentence and pollute the overlap.
+# NOTE: functional keyword list — kept as-is.
 # ---------------------------------------------------------------------------
 STOPWORDS = {
     # tiếng Việt
@@ -24,29 +25,29 @@ STOPWORDS = {
     "this", "for", "on", "with", "as", "are", "was", "be", "by",
 }
 
-# Ngưỡng overlap để coi 2 câu là cùng claim:
-# |từ chung| / |từ của câu ngắn hơn| > 0.6
+# Overlap threshold for 2 sentences to count as the same claim:
+# |shared words| / |words of the shorter sentence| > 0.6
 OVERLAP_THRESHOLD = 0.6
 
-# Câu quá ngắn (sau khi chuẩn hóa) thì bỏ qua — câu 1-2 từ không đủ
-# thông tin để gọi là "claim".
+# Sentences too short (after normalization) are skipped — 1-2 word sentences
+# don't carry enough information to be a "claim".
 MIN_KEYWORD_COUNT = 3
 
-# Regex tách câu: ngắt tại . ! ? (kèm 1+ ký tự trắng hoặc hết chuỗi).
-# Cẩn thận với viết tắt: sau khi tách, các mảnh quá ngắn được bỏ.
+# Sentence splitter: breaks at . ! ? (followed by 1+ whitespace or end).
+# Careful with abbreviations: after splitting, too-short fragments are dropped.
 _SENTENCE_RE = re.compile(r"[^.!?]+[.!?]+(?:\s+|$)")
 
-# Tách từ: chữ Unicode + số. (bỏ dấu câu, ký tự đặc biệt)
+# Word tokenizer: Unicode letters + digits. (drops punctuation, special chars)
 _WORD_RE = re.compile(r"[\w]+", re.UNICODE)
 
 
 def split_sentences(text):
-    """Tách text thành câu. Trả về list câu đã strip, không rỗng."""
+    """Splits text into sentences. Returns stripped, non-empty sentence list."""
     if not text:
         return []
     sentences = [m.group(0).strip() for m in _SENTENCE_RE.finditer(text)]
-    # Fallback: nếu regex không tách được (text không có dấu câu),
-    # coi cả text là 1 câu.
+    # Fallback: when the regex can't split (text without punctuation),
+    # treat the whole text as 1 sentence.
     if not sentences:
         text = text.strip()
         return [text] if text else []
@@ -55,8 +56,8 @@ def split_sentences(text):
 
 def normalize_sentence(sentence):
     """
-    Chuẩn hóa câu thành set từ khóa:
-    lowercase -> tách từ -> bỏ stopwords và từ 1 ký tự.
+    Normalizes a sentence into a keyword set:
+    lowercase -> tokenize -> drop stopwords and 1-char words.
     """
     words = _WORD_RE.findall(sentence.lower())
     return {w for w in words if w not in STOPWORDS and len(w) > 1}
@@ -64,11 +65,11 @@ def normalize_sentence(sentence):
 
 def sentences_same_claim(keywords_a, keywords_b, threshold=OVERLAP_THRESHOLD):
     """
-    2 câu được coi là cùng claim khi:
-    |từ chung| / |từ của câu ngắn hơn| > threshold.
+    2 sentences count as the same claim when:
+    |shared words| / |words of the shorter sentence| > threshold.
 
-    Chia cho câu NGẮN hơn (thay vì union) để câu chi tiết dài hơn vẫn
-    match được với câu ngắn tóm tắt cùng ý.
+    Divides by the SHORTER sentence (rather than the union) so a long detailed
+    sentence still matches a short summary sentence with the same meaning.
     """
     if not keywords_a or not keywords_b:
         return False
@@ -79,32 +80,32 @@ def sentences_same_claim(keywords_a, keywords_b, threshold=OVERLAP_THRESHOLD):
 
 def cross_reference(sources, threshold=OVERLAP_THRESHOLD):
     """
-    Gom claim từ nhiều sources.
+    Groups claims from multiple sources.
 
     Args:
-        sources: list dict {url, title, text}
-        threshold: ngưỡng overlap (mặc định 0.6)
+        sources: list of dicts {url, title, text}
+        threshold: overlap threshold (default 0.6)
 
     Returns:
         {
           "claims": [
             {
-              "text": câu đại diện (câu dài nhất trong nhóm),
-              "sources": [url, ...],   # url duy nhất, giữ thứ tự xuất hiện
-              "count": int,            # số source đề cập
-              "agreement": bool,       # True khi >= 2 sources (không phát
-                                       # hiện mâu thuẫn ở mức đơn giản này
-                                       # — để DeepThink xử lý)
+              "text": representative sentence (the longest in the group),
+              "sources": [url, ...],   # unique urls, appearance order kept
+              "count": int,            # sources mentioning it
+              "agreement": bool,       # True when >= 2 sources (no contradiction
+                                       # detection at this simple level
+                                       # — DeepThink handles that)
             },
           ],
           "total_sources": int,
-          "coverage": float,  # số source có >= 1 claim chung / tổng sources
+          "coverage": float,  # sources with >= 1 shared claim / total sources
         }
     """
     total_sources = len(sources)
 
-    # Bước 1: tách câu + chuẩn hóa từng source.
-    # Mỗi phần tử: (url, câu gốc, set từ khóa)
+    # Step 1: split into sentences + normalize per source.
+    # Each element: (url, original sentence, keyword set)
     sentences = []
     for src in sources or []:
         url = src.get("url") or ""
@@ -113,8 +114,8 @@ def cross_reference(sources, threshold=OVERLAP_THRESHOLD):
             if len(kw) >= MIN_KEYWORD_COUNT:
                 sentences.append((url, sent, kw))
 
-    # Bước 2: gom nhóm — câu mới so với từng nhóm hiện có, match nhóm
-    # đầu tiên có bất kỳ câu nào "same claim" (single-linkage).
+    # Step 2: group — each new sentence is compared against existing groups,
+    # matching the first group where any sentence is "same claim" (single-linkage).
     groups = []  # list of {"sentences": [(url, text, kw), ...], "urls": [url, ...]}
     for url, sent, kw in sentences:
         matched = None
@@ -130,8 +131,8 @@ def cross_reference(sources, threshold=OVERLAP_THRESHOLD):
         if url not in matched["urls"]:
             matched["urls"].append(url)
 
-    # Bước 3: dựng claim. Câu đại diện = câu dài nhất (nhiều chữ nhất),
-    # giả định câu dài chứa nhiều chi tiết nhất.
+    # Step 3: build claims. Representative sentence = the longest (most chars),
+    # assuming the longest carries the most detail.
     claims = []
     for g in groups:
         urls = g["urls"]
@@ -143,11 +144,11 @@ def cross_reference(sources, threshold=OVERLAP_THRESHOLD):
             "agreement": len(urls) >= 2,
         })
 
-    # Bước 4: sắp xếp theo count giảm dần.
+    # Step 4: sort by decreasing count.
     claims.sort(key=lambda c: c["count"], reverse=True)
 
-    # Bước 5: coverage = số source xuất hiện trong ít nhất 1 claim
-    # CÓ agreement (claim chung 2+ sources) / tổng sources.
+    # Step 5: coverage = sources appearing in at least 1 claim WITH
+    # agreement (shared by 2+ sources) / total sources.
     shared_urls = {u for c in claims if c["agreement"] for u in c["sources"]}
     coverage = (len(shared_urls) / total_sources) if total_sources else 0.0
 

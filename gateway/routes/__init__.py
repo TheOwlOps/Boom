@@ -1,31 +1,33 @@
-"""Route table tách theo domain cho gateway HTTP API của Boom.
+"""Domain-split route table for Boom's gateway HTTP API.
 
-Gateway (``gateway/api.py``) dùng stdlib ``http.server`` thuần
-(ThreadingHTTPServer + BaseHTTPRequestHandler), không có framework routing
-như FastAPI/Starlette. Vì vậy mỗi module con export::
+The gateway (``gateway/api.py``) uses pure stdlib ``http.server``
+(ThreadingHTTPServer + BaseHTTPRequestHandler) with no routing framework
+like FastAPI/Starlette. So each submodule exports::
 
-    ROUTES = [(method, path_pattern, handler_name), ...]   # list 3-tuple str
-    register(router)                                       # gắn vào router
+    ROUTES = [(method, path_pattern, handler_name), ...]   # list of str 3-tuples
+    register(router)                                       # attach to router
 
-Package này gộp 6 modules thành một bảng duy nhất và cung cấp:
+This package merges the 6 modules into a single table and provides:
 
-- ``ALL_ROUTES``    : list 4-tuple (module, method, path, handler).
-- ``get_route_table()`` : dict {path: (module, methods)} — methods là tuple
-  các HTTP method đã sắp xếp, phục vụ introspection/kiểm tra trùng lặp.
-- ``RouteRegistry`` : registry tối giản cho http.server: ``add()`` để đăng ký,
-  ``lookup(method, path)`` để tra cứu (method, path) -> (module, handler).
-  Dùng để thay thế dần chuỗi if/elif trong ``_Handler.do_GET/do_POST``.
+- ``ALL_ROUTES``    : list of 4-tuples (module, method, path, handler).
+- ``get_route_table()`` : dict {path: (module, methods)} — methods is a
+  tuple of sorted HTTP methods, used for introspection/duplicate checks.
+- ``RouteRegistry`` : minimal registry for http.server: ``add()`` to
+  register, ``lookup(method, path)`` to resolve (method, path) ->
+  (module, handler). Gradually replaces the if/elif chains in
+  ``_Handler.do_GET/do_POST``.
 
-Backward-compat: toàn bộ path giữ nguyên y hệt ``api.py`` hiện tại
-(9 endpoints dưới ``/api/*``); không thêm, không đổi, không bịa path mới.
+Backward-compat: all paths stay exactly as in current ``api.py``
+(9 endpoints under ``/api/*``); nothing added, nothing changed, no
+invented paths.
 """
 
 from . import admin, channels, chat, health, tools, websocket
 
-# Thứ tự modules cố định để ALL_ROUTES deterministic.
+# Fixed module order so ALL_ROUTES is deterministic.
 MODULES = (health, chat, tools, channels, admin, websocket)
 
-# Gộp ROUTES của 6 modules thành 4-tuple (module, method, path, handler).
+# Merge the 6 modules' ROUTES into 4-tuples (module, method, path, handler).
 ALL_ROUTES = []
 for _mod in MODULES:
     _mod_name = _mod.__name__.rsplit(".", 1)[-1]
@@ -35,11 +37,12 @@ del _mod, _mod_name, _method, _path, _handler
 
 
 def get_route_table():
-    """Trả về dict {path: (module, methods)}.
+    """Return a dict {path: (module, methods)}.
 
-    ``module`` là tên module domain sở hữu path, ``methods`` là tuple các
-    HTTP method (đã sort) mà path đó phục vụ. Ném ``ValueError`` nếu cùng
-    một path bị khai báo ở 2 modules khác nhau (vi phạm tách domain).
+    ``module`` is the name of the domain module owning the path, ``methods``
+    is the tuple of (sorted) HTTP methods serving that path. Raises
+    ``ValueError`` when the same path is declared in 2 different modules
+    (a domain-splitting violation).
     """
     table = {}
     for module, method, path, _handler in ALL_ROUTES:
@@ -47,7 +50,7 @@ def get_route_table():
             owner = table[path][0]
             if owner != module:
                 raise ValueError(
-                    "path %r khai báo trùng ở 2 modules: %s và %s"
+                    "path %r declared in 2 modules: %s and %s"
                     % (path, owner, module)
                 )
             methods = set(table[path][1]) | {method}
@@ -58,11 +61,11 @@ def get_route_table():
 
 
 class RouteRegistry:
-    """Registry tối giản cho http.server: đăng ký và tra cứu route.
+    """Minimal registry for http.server: route registration and lookup.
 
-    Dùng như target của ``module.register(router)``; sau khi mọi module
-    đã register, ``lookup(method, path)`` thay thế chuỗi if/elif trong
-    ``_Handler`` mà không đổi hành vi.
+    Use as the target of ``module.register(router)``; once every module
+    has registered, ``lookup(method, path)`` replaces the if/elif chains
+    in ``_Handler`` without changing behavior.
     """
 
     def __init__(self):
@@ -70,25 +73,25 @@ class RouteRegistry:
         self._routes = {}
 
     def add(self, method, path, handler, module):
-        """Đăng ký một route. Trùng (method, path) -> ValueError."""
+        """Register one route. Duplicate (method, path) -> ValueError."""
         key = (method.upper(), path)
         if key in self._routes:
             raise ValueError(
-                "route trùng lặp: %s %s (đã đăng ký bởi %s)"
+                "duplicate route: %s %s (already registered by %s)"
                 % (method, path, self._routes[key][0])
             )
         self._routes[key] = (module, handler)
 
     def lookup(self, method, path):
-        """Tra cứu (method, path) -> (module, handler_name) hoặc None."""
+        """Look up (method, path) -> (module, handler_name) or None."""
         return self._routes.get((method.upper(), path))
 
     def register_module(self, module):
-        """Gọi ``module.register(self)`` — tiện ích gom một dòng."""
+        """Call ``module.register(self)`` — a one-line convenience."""
         module.register(self)
 
     def register_all(self):
-        """Gọi register() của cả 6 modules theo thứ tự MODULES."""
+        """Call register() of all 6 modules in MODULES order."""
         for module in MODULES:
             module.register(self)
 
@@ -96,7 +99,7 @@ class RouteRegistry:
         return len(self._routes)
 
     def paths(self):
-        """Set các path đã đăng ký (không tính method)."""
+        """The set of registered paths (method not counted)."""
         return {path for (_method, path) in self._routes}
 
 

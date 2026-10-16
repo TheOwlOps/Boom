@@ -2,18 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "../lib/api";
 
 interface TerminalLogProps {
-  /** Dòng log từ props (dùng khi chưa có /api/logs). */
+  /** Log lines from props (used when /api/logs is unavailable). */
   logs?: string[];
-  /** Chu kỳ poll /api/logs (ms). Đặt 0 hoặc âm để tắt poll. Mặc định 2000. */
+  /** /api/logs poll interval (ms). Set 0 or negative to disable polling. Default 2000. */
   pollIntervalMs?: number;
-  /** Giữ tối đa bao nhiêu dòng để DOM không phình. Mặc định 1000. */
+  /** Maximum lines to keep so the DOM doesn't bloat. Default 1000. */
   maxLines?: number;
 }
 
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_MAX_LINES = 1_000;
 
-/** Rút gọn body /api/logs về string[]: chấp nhận {lines: []} hoặc mảng trần. */
+/** Reduce the /api/logs body to string[]: accepts {lines: []} or a bare array. */
 function toLines(body: unknown): string[] {
   const arr = Array.isArray(body) ? body : (body as { lines?: unknown }).lines;
   if (!Array.isArray(arr)) return [];
@@ -21,14 +21,14 @@ function toLines(body: unknown): string[] {
 }
 
 /**
- * Terminal log: khung đen, font mono, tự cuộn xuống cuối.
- * Poll /api/logs theo pollIntervalMs; luôn render thêm logs từ props.
+ * Terminal log: black frame, mono font, auto-scrolls to the bottom.
+ * Polls /api/logs per pollIntervalMs; always renders logs from props too.
  */
 export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_MS, maxLines = DEFAULT_MAX_LINES }: TerminalLogProps) {
   const [polled, setPolled] = useState<string[]>([]);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Poll /api/logs; endpoint chưa có thì im lặng giữ nguyên.
+  // Poll /api/logs; silently keep the current lines when the endpoint is missing.
   useEffect(() => {
     if (pollIntervalMs <= 0) return;
     let cancelled = false;
@@ -41,7 +41,7 @@ export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_M
         if (fresh.length === 0) return;
         fresh.forEach((l) => seen.add(l));
         setPolled((prev) => [...prev, ...fresh].slice(-maxLines));
-      } catch { /* API chưa có — component vẫn render logs từ props */ }
+      } catch { /* API unavailable — component still renders logs from props */ }
     };
     void load();
     const id = setInterval(() => void load(), pollIntervalMs);
@@ -50,7 +50,7 @@ export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_M
 
   const lines = [...logs, ...polled].slice(-maxLines);
 
-  // Auto-scroll xuống dòng mới nhất.
+  // Auto-scroll to the newest line.
   useEffect(() => {
     const el = boxRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -63,7 +63,7 @@ export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_M
       aria-label="Terminal log"
     >
       {lines.length === 0 ? (
-        <span className="text-neutral-600">// chưa có log — chờ /api/logs hoặc truyền props logs</span>
+        <span className="text-neutral-600">// no logs yet — waiting for /api/logs or the logs prop</span>
       ) : (
         lines.map((line, i) => (
           <div key={i} className="whitespace-pre-wrap break-words text-neutral-300">

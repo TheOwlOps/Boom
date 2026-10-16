@@ -1,6 +1,6 @@
 ---
 name: refactor-assistant
-description: "Trợ lý refactor an toàn: rename symbol, extract function, move symbol bằng AST thật, luôn dry-run preview diff trước khi apply."
+description: "Safe refactor assistant: rename symbols, extract functions, move symbols with real AST, always dry-run preview the diff before applying."
 version: 1.0.0
 author: Boom
 license: MIT
@@ -11,53 +11,53 @@ metadata:
     related_skills: [software-development/simplify-code, software-development/systematic-debugging]
 ---
 
-# Refactor-Assistant — Trợ lý Refactor An Toàn
+# Refactor-Assistant — Safe Refactor Assistant
 
-## Tên
+## Name
 `refactor-assistant`
 
-## Mô tả
-Wrap `RefactorEngine` (AST-based, từ `agent/src/autonomous/refactor.py`, đã vendor vào skill) thành API thân thiện cho agent. Hỗ trợ 3 thao tác:
+## Description
+Wraps `RefactorEngine` (AST-based, from `agent/src/autonomous/refactor.py`, vendored into the skill) as a friendly API for the agent. Supports 3 operations:
 
-- **rename_symbol**: đổi tên biến/hàm/class xuyên nhiều file
-- **extract_function**: tách đoạn code thành hàm mới (tự suy params/return)
-- **move_symbol**: chuyển hàm/class top-level sang file khác
+- **rename_symbol**: rename a variable/function/class across multiple files
+- **extract_function**: extract a code block into a new function (params/return inferred automatically)
+- **move_symbol**: move a top-level function/class to another file
 
-Mọi thao tác đều có **dry-run preview diff trước khi apply**, backup tự động (`.bak-<timestamp>`), validate syntax sau khi sửa và rollback nếu lỗi.
+Every operation has a **dry-run preview diff before applying**, automatic backups (`.bak-<timestamp>`), syntax validation after edits, and rollback on error.
 
-## Khi nào dùng
-- Đổi tên symbol mà grep/regex thủ công dễ sót hoặc đổi nhầm
-- Tách hàm dài thành hàm nhỏ hơn
-- Di chuyển code giữa các file khi tái cấu trúc module
-- Khi cần refactor hàng loạt nhưng vẫn muốn xem diff trước
+## When to use
+- Renaming a symbol where manual grep/regex is easy to miss or over-rename
+- Splitting a long function into smaller ones
+- Moving code between files when restructuring modules
+- When refactoring in bulk but still wanting to see the diff first
 
 ## Input
-- `root_dir` (str): thư mục gốc project
-- Thao tác:
-  - `rename(old_name, new_name, files)` — files: list đường dẫn tương đối
+- `root_dir` (str): project root directory
+- Operations:
+  - `rename(old_name, new_name, files)` — files: list of relative paths
   - `extract(path, start_line, end_line, new_name)`
   - `move(src, dst, symbol_name)`
-- Mọi thao tác đều nhận `preview=True` (mặc định) để chỉ xem diff.
+- Every operation takes `preview=True` (default) to only show the diff.
 
 ## Output
-Dict kết quả từ engine: `{ok, dry_run, diffs/diff, occurrences, params, returns, backups, ...}`. Khi `ok=False` sẽ có `error` mô tả lý do.
+Result dict from the engine: `{ok, dry_run, diffs/diff, occurrences, params, returns, backups, ...}`. When `ok=False`, `error` describes the reason.
 
-## Ví dụ
+## Example
 
 ```python
 from refactor_assistant.assistant import RefactorAssistant
 
 ra = RefactorAssistant("/srv/myapp")
 
-# 1) Preview trước — không ghi file
+# 1) Preview first — no files written
 p = ra.rename("old_name", "new_name", ["a.py", "b.py"], preview=True)
-print(p["diffs"]["a.py"])   # xem diff
+print(p["diffs"]["a.py"])   # review the diff
 
-# 2) OK thì apply thật (có backup + validate syntax)
+# 2) Apply for real once OK (with backup + syntax validation)
 r = ra.rename("old_name", "new_name", ["a.py", "b.py"], preview=False)
 assert r["ok"]
 
-# 3) Tách hàm
-e = ra.extract("a.py", 10, 25, "tinh_tong", preview=True)
+# 3) Extract a function
+e = ra.extract("a.py", 10, 25, "calculate_total", preview=True)
 print("params:", e["params"], "returns:", e["returns"])
 ```

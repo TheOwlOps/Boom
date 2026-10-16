@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG, type ToolDef } from "../data/toolCatalog";
 
-/** Nhóm tool theo danh mục chức năng. */
+/** Group tools by function category. */
 const GROUPS = ["filesystem", "terminal", "git", "web", "code", "security", "db"] as const;
 
-/** Modal chạy thử tool: nhập args JSON, gọi POST /api/tools/run. */
+/** Tool trial-run modal: enter JSON args, calls POST /api/tools/run. */
 function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
   const [args, setArgs] = useState("{}");
   const [result, setResult] = useState<string | null>(null);
@@ -15,16 +15,16 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
     setRunning(true);
     setResult(null);
     try {
-      const parsed: unknown = JSON.parse(args); // báo lỗi JSON ngay, không gửi bậy
+      const parsed: unknown = JSON.parse(args); // surface JSON errors immediately instead of sending garbage
       const res = await fetch(`${API_BASE}/api/tools/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: tool.name, args: parsed }),
       });
       const body: unknown = await res.json().catch(() => null);
-      setResult(res.ok ? JSON.stringify(body, null, 2) : `Lỗi ${res.status}: ${JSON.stringify(body)}`);
+      setResult(res.ok ? JSON.stringify(body, null, 2) : `Error ${res.status}: ${JSON.stringify(body)}`);
     } catch (err) {
-      setResult(err instanceof Error ? `Lỗi: ${err.message}` : "Lỗi không xác định");
+      setResult(err instanceof Error ? `Error: ${err.message}` : "Unknown error");
     } finally {
       setRunning(false);
     }
@@ -33,7 +33,7 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="w-full max-w-lg rounded-lg bg-neutral-900 p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-1 font-semibold text-neutral-100">Chạy thử: {tool.name}</h3>
+        <h3 className="mb-1 font-semibold text-neutral-100">Run: {tool.name}</h3>
         <p className="mb-3 text-sm text-neutral-400">{tool.description}</p>
         <label className="mb-1 block text-xs text-neutral-400">Args (JSON)</label>
         <textarea
@@ -50,14 +50,14 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
         )}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300">
-            Đóng
+            Close
           </button>
           <button
             onClick={() => void run()}
             disabled={running}
             className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
-            {running ? "Đang chạy…" : "Thực thi"}
+            {running ? "Running…" : "Execute"}
           </button>
         </div>
       </div>
@@ -65,12 +65,12 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
   );
 }
 
-/** Quản lý tools: liệt kê theo nhóm, tìm kiếm theo tên, chạy thử từng tool. */
+/** Tool manager: list by group, search by name, run each tool. */
 export default function ToolManager() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<ToolDef | null>(null);
 
-  // Lọc theo tên tool (không phân biệt hoa thường).
+  // Filter by tool name (case-insensitive).
   const filtered = useMemo(
     () => TOOL_CATALOG.filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase())),
     [query],
@@ -81,7 +81,7 @@ export default function ToolManager() {
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Tìm tool theo tên…"
+        placeholder="Search tools by name…"
         className="mb-4 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600"
       />
       {GROUPS.map((group) => {
@@ -92,7 +92,7 @@ export default function ToolManager() {
               {group} ({tools.length})
             </h3>
             {tools.length === 0 ? (
-              <p className="text-sm italic text-neutral-600">Chưa có tool nào trong nhóm này.</p>
+              <p className="text-sm italic text-neutral-600">No tools in this group yet.</p>
             ) : (
               <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
                 {tools.map((t) => (
@@ -103,7 +103,7 @@ export default function ToolManager() {
                       onClick={() => setActive(t)}
                       className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
                     >
-                      Chạy thử
+                      Run
                     </button>
                   </li>
                 ))}

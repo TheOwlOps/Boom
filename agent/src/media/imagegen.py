@@ -1,15 +1,15 @@
-"""Image generation tool for Boom (grok-parity: agent tự sinh ảnh).
+"""Image generation tool for Boom (grok-parity: the agent generates its own images).
 
-Module này nằm trong `agent/src/media/` của repo Boom.
+This module lives in `agent/src/media/` of the Boom repo.
 
 Provider priority:
-  1. Pollinations.ai  -- miễn phí, không cần key, không giới hạn hard.
-  2. OpenAI DALL-E    -- khi có OPENAI_API_KEY (fallback chất lượng cao).
+  1. Pollinations.ai  -- free, no key needed, no hard limits.
+  2. OpenAI DALL-E    -- when OPENAI_API_KEY is set (high-quality fallback).
 
-Quy ước fail-soft: mọi lỗi mạng đều trả {"ok": False, "error": ...},
-KHÔNG bao giờ raise -- caller (agent loop) không bị crash vì ảnh gen lỗi.
+Fail-soft convention: every network error returns {"ok": False, "error": ...},
+NEVER raises -- the caller (agent loop) won't crash over a failed image gen.
 
-Chạy:  python3 -m media.imagegen  (với agent/src trong PYTHONPATH)
+Run:  python3 -m media.imagegen  (with agent/src on PYTHONPATH)
 """
 
 from __future__ import annotations
@@ -25,16 +25,16 @@ import httpx
 # Constants
 # --------------------------------------------------------------------------
 
-# Endpoint Pollinations: prompt được đặt thẳng vào path, đã URL-encode.
-# Params: width/height (px), nologo=true (bỏ watermark), seed (optional).
+# Pollinations endpoint: prompt goes straight into the path, URL-encoded.
+# Params: width/height (px), nologo=true (drops the watermark), seed (optional).
 POLLINATIONS_BASE = "https://image.pollinations.ai/prompt"
-POLLINATIONS_TIMEOUT = 90  # ảnh gen có thể mất 30-60s
+POLLINATIONS_TIMEOUT = 90  # image gen can take 30-60s
 
 OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 OPENAI_VARIATIONS_URL = "https://api.openai.com/v1/images/variations"
 OPENAI_TIMEOUT = 120
 
-# Guard chống prompt rỗng / quá dài cho URL (Pollinations nhận qua path).
+# Guard against empty / overlong prompts for URLs (Pollinations takes the prompt via the path).
 MAX_PROMPT_LEN = 1000
 
 _SIZE_RE = re.compile(r"^\s*(\d{2,4})\s*[xX]\s*(\d{2,4})\s*$")
@@ -45,9 +45,9 @@ _SIZE_RE = re.compile(r"^\s*(\d{2,4})\s*[xX]\s*(\d{2,4})\s*$")
 # --------------------------------------------------------------------------
 
 def _parse_size(size: str) -> Optional[tuple]:
-    """'1024x1024' -> (1024, 1024). Trả None nếu sai format.
+    """'1024x1024' -> (1024, 1024). Returns None on bad format.
 
-    Giới hạn 64..4096 px mỗi chiều để tránh URL kỳ cục hoặc request khổng lồ.
+    Capped at 64..4096 px per side to avoid weird URLs or giant requests.
     """
     m = _SIZE_RE.match(size or "")
     if not m:
@@ -59,7 +59,7 @@ def _parse_size(size: str) -> Optional[tuple]:
 
 
 def _validate_prompt(prompt: str) -> Optional[str]:
-    """Trả về error message nếu prompt không hợp lệ, None nếu ok."""
+    """Returns an error message when the prompt is invalid, None when ok."""
     if not (prompt or "").strip():
         return "prompt must be a non-empty string"
     if len(prompt) > MAX_PROMPT_LEN:
@@ -70,8 +70,8 @@ def _validate_prompt(prompt: str) -> Optional[str]:
 
 def _pollinations_url(prompt: str, width: int, height: int,
                       seed: Optional[int] = None) -> str:
-    """Build URL đúng format Pollinations: /prompt/{encoded}?width=&height=&nologo=true."""
-    # safe="" để encode cả dấu '/' -- Pollinations đọc prompt từ path segment.
+    """Builds the correct Pollinations URL: /prompt/{encoded}?width=&height=&nologo=true."""
+    # safe="" also encodes '/' — Pollinations reads the prompt from the path segment.
     encoded = quote(prompt.strip(), safe="")
     url = "%s/%s?width=%d&height=%d&nologo=true" % (
         POLLINATIONS_BASE, encoded, width, height)
@@ -81,14 +81,14 @@ def _pollinations_url(prompt: str, width: int, height: int,
 
 
 def _fetch_bytes(url: str, timeout: float) -> tuple:
-    """GET url, trả (ok_bytes, error_str). Fail-soft: không raise."""
+    """GETs a url, returns (ok_bytes, error_str). Fail-soft: never raises."""
     try:
         resp = httpx.get(url, timeout=timeout, follow_redirects=True)
     except httpx.TimeoutException:
         return None, "request timed out after %ds" % int(timeout)
     except httpx.HTTPError as e:
         return None, "http error: %s" % (e,)
-    except Exception as e:  # defensive: httpx có thể raise lạ
+    except Exception as e:  # defensive: httpx can raise odd things
         return None, "request failed: %s" % (e,)
     if resp.status_code != 200:
         body = (resp.text or "")[:200]
@@ -96,7 +96,7 @@ def _fetch_bytes(url: str, timeout: float) -> tuple:
                                                         body)
     if not resp.content:
         return None, "provider returned empty response"
-    # Pollinations có thể trả JSON lỗi thay vì ảnh khi quá tải.
+    # Pollinations may return a JSON error instead of an image when overloaded.
     ctype = resp.headers.get("content-type", "")
     if ctype.startswith("application/json"):
         return None, "provider error: %s" % (resp.text or "")[:200]
@@ -119,7 +119,7 @@ def _gen_pollinations(prompt: str, width: int, height: int,
 
 
 # --------------------------------------------------------------------------
-# OpenAI provider (priority 2 -- cần OPENAI_API_KEY)
+# OpenAI provider (priority 2 -- needs OPENAI_API_KEY)
 # --------------------------------------------------------------------------
 
 def _openai_headers() -> Optional[Dict[str, str]]:
@@ -167,7 +167,7 @@ def _gen_openai(prompt: str, width: int, height: int,
     if not img_url:
         return {"ok": False, "error": "openai returned no image url",
                 "provider": "openai"}
-    # Tải bytes ảnh về để caller có image_bytes đồng nhất.
+    # Downloads the image bytes so callers get a uniform image_bytes.
     data, err = _fetch_bytes(img_url, OPENAI_TIMEOUT)
     if err:
         return {"ok": False, "error": "download failed: " + err,
@@ -177,9 +177,9 @@ def _gen_openai(prompt: str, width: int, height: int,
 
 
 def _variation_openai(image_bytes: bytes, prompt: str) -> Dict[str, Any]:
-    """DALL-E image variation: chỉ hỗ trợ PNG vuông, multipart upload.
+    """DALL-E image variation: PNG square only, multipart upload.
 
-    endpoint /v1/images/variations không nhận text prompt (prompt bị ignore).
+    The /v1/images/variations endpoint takes no text prompt (prompt is ignored).
     """
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
@@ -226,11 +226,10 @@ def _variation_openai(image_bytes: bytes, prompt: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 
 def available_providers() -> List[str]:
-    """Danh sách provider dùng được lúc này.
+    """Providers usable right now.
 
-    - "pollinations": luôn khả dụng (httpx đã import được là dùng được,
-      không cần key).
-    - "openai": chỉ khi OPENAI_API_KEY có giá trị.
+    - "pollinations": always available (importing httpx is enough, no key).
+    - "openai": only when OPENAI_API_KEY is set.
     """
     providers = ["pollinations"]
     if os.environ.get("OPENAI_API_KEY", "").strip():
@@ -241,12 +240,12 @@ def available_providers() -> List[str]:
 def generate(prompt: str, size: str = "1024x1024",
              model: Optional[str] = None,
              seed: Optional[int] = None) -> Dict[str, Any]:
-    """Sinh ảnh từ text prompt. Không bao giờ raise vì lỗi mạng.
+    """Generates an image from a text prompt. Never raises on network errors.
 
-    model: None (tự chọn theo priority) | "pollinations" | "openai" |
-           tên model DALL-E cụ thể ("dall-e-3", "dall-e-2").
+    model: None (auto priority) | "pollinations" | "openai" |
+           a specific DALL-E model name ("dall-e-3", "dall-e-2").
 
-    Trả về:
+    Returns:
       {"ok": True, "image_bytes": bytes, "url": str, "provider": ...}
       {"ok": False, "error": "...", "provider": ...}
     """
@@ -261,13 +260,13 @@ def generate(prompt: str, size: str = "1024x1024",
     width, height = wh
 
     want = (model or "").strip().lower()
-    # Model ép buộc provider cụ thể?
+    # Model forces a specific provider?
     if want in ("pollinations", "pollinations.ai"):
         return _gen_pollinations(prompt, width, height, seed)
     if want in ("openai",) or want.startswith("dall-e"):
         return _gen_openai(prompt, width, height, model)
 
-    # Priority mặc định: Pollinations (free) trước, OpenAI sau nếu lỗi.
+    # Default priority: Pollinations (free) first, OpenAI fallback on error.
     result = _gen_pollinations(prompt, width, height, seed)
     if result.get("ok"):
         return result
@@ -275,7 +274,7 @@ def generate(prompt: str, size: str = "1024x1024",
         fb = _gen_openai(prompt, width, height, None)
         if fb.get("ok"):
             return fb
-        # Cả hai đều lỗi: báo lỗi gộp để debug dễ.
+        # Both failed: report a merged error for easier debugging.
         result["error"] = ("pollinations failed: %s; openai fallback "
                            "failed: %s" % (result.get("error"),
                                            fb.get("error")))
@@ -284,11 +283,11 @@ def generate(prompt: str, size: str = "1024x1024",
 
 def generate_variation(image_bytes: bytes,
                        prompt: str = "") -> Dict[str, Any]:
-    """Image-to-image variation từ bytes ảnh gốc.
+    """Image-to-image variation from source image bytes.
 
-    - Pollinations (free tier): KHÔNG hỗ trợ upload bytes -> trả
-      {"ok": False, "error": "not supported by provider"} trung thực.
-    - OpenAI (có key): dùng /v1/images/variations.
+    - Pollinations (free tier): does NOT support byte uploads -> returns an
+      honest {"ok": False, "error": "not supported by provider"}.
+    - OpenAI (with key): uses /v1/images/variations.
     """
     if not image_bytes:
         return {"ok": False, "error": "image_bytes is required"}
@@ -301,10 +300,10 @@ def generate_variation(image_bytes: bytes,
 
 
 def save_image(image_bytes: bytes, path: str) -> str:
-    """Lưu bytes ảnh ra file. Trả về path đã lưu.
+    """Saves image bytes to a file. Returns the saved path.
 
-    Raise ValueError/OSError nếu input sai -- đây là lỗi lập trình của
-    caller (không phải lỗi mạng), nên raise cho rõ thay vì fail-soft.
+    Raises ValueError/OSError on bad input -- that's a caller programming
+    error (not a network error), so raise clearly instead of fail-soft.
     """
     if not image_bytes:
         raise ValueError("image_bytes is required")
@@ -319,7 +318,7 @@ def save_image(image_bytes: bytes, path: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Tool registration (convention như tools/ocr_tool.py: build_tools(env))
+# Tool registration (same convention as tools/ocr_tool.py: build_tools(env))
 # --------------------------------------------------------------------------
 
 def _schema(props: Dict[str, Any], required: list) -> Dict[str, Any]:
@@ -329,8 +328,8 @@ def _schema(props: Dict[str, Any], required: list) -> Dict[str, Any]:
 def build_tools(env=None) -> Dict[str, Dict[str, Any]]:
     """2 tools: generate_image, generate_image_variation.
 
-    Env không dùng -- imagegen stateless, nhưng giữ signature cho
-    environment.py wire đồng nhất với các module khác.
+    env is unused -- imagegen is stateless, but the signature is kept so
+    environment.py wires it uniformly with the other modules.
     """
     return {
         "generate_image": {

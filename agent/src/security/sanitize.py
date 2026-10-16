@@ -1,11 +1,11 @@
-"""Sanitize input cho tools: chong injection (shell / prompt / path traversal).
+"""Sanitizes tool inputs: anti-injection (shell / prompt / path traversal).
 
-Module nay bo xung cho `autonomous/guard.py` (chan lenh pha hoai) va
-`security/guardrail.py` (chan pattern nguy hiem): no sanitize gia tri input
-truoc khi tool thuc thi — quote shell arg, phat hien prompt injection,
-loc ky tu dieu khien, cat do dai, validate path.
+This module complements `autonomous/guard.py` (blocks destructive commands)
+and `security/guardrail.py` (blocks dangerous patterns): it sanitizes input
+values before a tool executes — quoting shell args, detecting prompt
+injection, filtering control chars, capping length, validating paths.
 
-Chi stdlib. Comment tieng Viet.
+Stdlib only.
 """
 
 from __future__ import annotations
@@ -16,11 +16,12 @@ import shlex
 from typing import Any, Dict, List
 
 # ---------------------------------------------------------------------------
-# Pattern prompt injection (EN + VI), match case-insensitive.
+# Prompt injection patterns (EN + VI), matched case-insensitively.
 # ---------------------------------------------------------------------------
-# Mo ta: cac cum tu thuong duoc dung de danh lua LLM bo qua system prompt.
+# Description: phrases commonly used to trick the LLM into dropping its system prompt.
+# NOTE: functional keyword list — kept as-is (evals cover the detection).
 INJECTION_PATTERNS: List[str] = [
-    # --- tieng Anh ---
+    # --- English ---
     "ignore previous instructions",
     "disregard previous instructions",
     "ignore all previous instructions",
@@ -37,7 +38,7 @@ INJECTION_PATTERNS: List[str] = [
     "act as if",
     "override your",
     "bypass your",
-    # --- tieng Viet ---
+    # --- Vietnamese (with and without diacritics) ---
     "bỏ qua hướng dẫn",
     "bo qua huong dan",
     "bỏ qua mọi hướng dẫn",
@@ -57,17 +58,17 @@ INJECTION_PATTERNS: List[str] = [
     "hay gia vo",
 ]
 
-# Bien dich truoc de match nhanh, case-insensitive.
+# Precompiled for fast matching, case-insensitive.
 _COMPILED_INJECTION: List[tuple] = [
     (p, re.compile(re.escape(p), re.IGNORECASE)) for p in INJECTION_PATTERNS
 ]
 
-# Ky tu dieu khien nguy hiem can loc: tat ca C0/C1 tru \n (0x0A) va \t (0x09).
-# Luu y: \x0b (VT), \x0c (FF), \x0d (CR) deu bi loai — CR de chong
-# terminal spoofing, VT/FF la control khong can thiet.
+# Dangerous control chars to filter: all C0/C1 except \n (0x0A) and \t (0x09).
+# Note: \x0b (VT), \x0c (FF), \x0d (CR) are all dropped — CR prevents
+# terminal spoofing, VT/FF are unnecessary controls.
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x0d\x0e-\x1f\x7f\x80-\x9f]")
 
-# Key cua tool args thuong chua path/filesystem (giong style guard.py).
+# Tool arg keys that usually hold paths/files (mirrors guard.py's style).
 _PATH_KEYS = {
     "path", "file", "file_path", "filepath", "filename", "target", "dest", "dst",
     "src", "source", "dir", "directory", "folder", "root", "cwd", "workdir",
@@ -76,11 +77,11 @@ _PATH_KEYS = {
 
 
 def sanitize_shell_arg(arg: Any) -> str:
-    """Quote 1 argument an toan cho shell (shlex.quote).
+    """Quotes 1 argument safely for shell (shlex.quote).
 
-    - Nhan str hoac gia tri chuyen duoc sang str (int/float/bool...).
-    - Raise ValueError neu chua null byte (de phong bypass C-level / exec).
-    - Raise TypeError neu khong phai string-like (list/dict/None).
+    - Accepts str or str-coercible values (int/float/bool...).
+    - Raises ValueError on null bytes (guards C-level / exec bypasses).
+    - Raises TypeError on non string-like values (list/dict/None).
     """
     if isinstance(arg, str):
         s = arg
@@ -88,21 +89,21 @@ def sanitize_shell_arg(arg: Any) -> str:
         s = str(arg)
     else:
         raise TypeError(
-            "shell arg phai la str hoac so, nhan duoc %s" % type(arg).__name__
+            "shell arg must be str or a number, got %s" % type(arg).__name__
         )
     if "\x00" in s:
-        raise ValueError("shell arg chua null byte — tu choi")
-    # Validate truoc roi moi quote: shlex.quote khong bao gio loi,
-    # nhung null byte da bi chan o tren.
+        raise ValueError("shell arg contains a null byte — rejected")
+    # Validate first, then quote: shlex.quote never fails,
+    # but null bytes were already blocked above.
     return shlex.quote(s)
 
 
 def detect_prompt_injection(text: Any) -> Dict[str, Any]:
-    """Phat hien pattern prompt injection trong text.
+    """Detects prompt injection patterns in text.
 
-    Tra ve {"is_injection": bool, "matched": [pattern, ...]}.
-    - Khong phai string (None/so/...): tra is_injection=False.
-    - Case-insensitive, bat ca tieng Viet co dau / khong dau.
+    Returns {"is_injection": bool, "matched": [pattern, ...]}.
+    - Non-strings (None/numbers/...): returns is_injection=False.
+    - Case-insensitive, catches Vietnamese with/without diacritics.
     """
     if not isinstance(text, str) or not text:
         return {"is_injection": False, "matched": []}
@@ -114,11 +115,11 @@ def detect_prompt_injection(text: Any) -> Dict[str, Any]:
 
 
 def strip_control_chars(text: Any) -> Any:
-    """Loai bo ky tu dieu khien nguy hiem, GIU lai \\n va \\t.
+    """Removes dangerous control chars, KEEPS \\n and \\t.
 
-    - Chi tac dong len str; gia tri khac tra ve nguyen ven.
-    - \r (carriage return) bi loai de chong terminal spoofing
-      (VD: "OK\rMALICIOUS" hien thi de lenh nhau).
+    - Only touches str; other values pass through unchanged.
+    - \r (carriage return) is dropped to prevent terminal spoofing
+      (e.g. "OK\rMALICIOUS" renders deceptively).
     """
     if not isinstance(text, str):
         return text
@@ -126,15 +127,16 @@ def strip_control_chars(text: Any) -> Any:
 
 
 def truncate(text: Any, max_len: int) -> Any:
-    """Cat text ve toi da max_len ky tu, them marker "[cắt bớt]".
+    """Cuts text to at most max_len chars, adding the "[cắt bớt]" marker.
 
-    - max_len <= 0: raise ValueError.
-    - Khong phai str hoac da ngan hon max_len: tra ve nguyen ven.
-    - Neu max_len qua nho (< len(marker)): cat thuan, khong them marker.
+    - max_len <= 0: raises ValueError.
+    - Non-str or already shorter than max_len: returned unchanged.
+    - When max_len is too small (< len(marker)): plain cut, no marker.
+    NOTE: the marker is pinned by evals/test_overnight_sanitize.py — keep it.
     """
     marker = "[cắt bớt]"
     if not isinstance(max_len, int) or max_len <= 0:
-        raise ValueError("max_len phai la so nguyen duong")
+        raise ValueError("max_len must be a positive integer")
     if not isinstance(text, str) or len(text) <= max_len:
         return text
     if max_len <= len(marker):
@@ -143,21 +145,21 @@ def truncate(text: Any, max_len: int) -> Any:
 
 
 def validate_path(path: Any, allowed_roots: List[str]) -> str:
-    """Chong path traversal: tra ve path tuyet doi da validate, hoac raise.
+    """Anti path traversal: returns the validated absolute path, or raises.
 
-    - Resolve ".." va symlink bang os.path.realpath.
-    - Path cuoi cung phai nam trong (hoac bang) it nhat 1 allowed_root,
-      neu khong raise ValueError.
-    - Raise TypeError neu path khong phai str; ValueError neu rong/null byte.
+    - Resolves ".." and symlinks with os.path.realpath.
+    - The final path must be inside (or equal to) at least 1 allowed_root,
+      otherwise raises ValueError.
+    - Raises TypeError when path isn't a str; ValueError when empty/null byte.
     """
     if not isinstance(path, str):
-        raise TypeError("path phai la str, nhan duoc %s" % type(path).__name__)
+        raise TypeError("path must be str, got %s" % type(path).__name__)
     if not path:
-        raise ValueError("path rong")
+        raise ValueError("empty path")
     if "\x00" in path:
-        raise ValueError("path chua null byte — tu choi")
+        raise ValueError("path contains a null byte — rejected")
     if not allowed_roots:
-        raise ValueError("allowed_roots rong — khong co root nao duoc phep")
+        raise ValueError("allowed_roots is empty — no root is allowed")
 
     resolved = os.path.realpath(path)
     for root in allowed_roots:
@@ -167,7 +169,7 @@ def validate_path(path: Any, allowed_roots: List[str]) -> str:
         if resolved == rroot or resolved.startswith(rroot + os.sep):
             return resolved
     raise ValueError(
-        "path %r nam ngoai allowed_roots (sau khi resolve: %r)"
+        "path %r is outside allowed_roots (after resolve: %r)"
         % (path[:160], resolved[:160])
     )
 
@@ -178,24 +180,24 @@ def check_tool_args(
     allowed_roots: List[str] | None = None,
     max_str_len: int = 100_000,
 ) -> Dict[str, Any]:
-    """Tong hop: sanitize dict args cua 1 tool.
+    """The full pass: sanitizes a tool's args dict.
 
-    Voi moi gia tri string:
-      1. strip_control_chars (giu \\n\\t).
-      2. truncate ve max_str_len (ghi warning neu bi cat).
-      3. detect_prompt_injection (ghi warning neu khop pattern).
-    Voi key nam trong _PATH_KEYS: validate_path bang allowed_roots
-    (neu khong truyen allowed_roots thi bo qua buoc nay).
+    For each string value:
+      1. strip_control_chars (keeps \\n\\t).
+      2. truncate to max_str_len (warns when cut).
+      3. detect_prompt_injection (warns on pattern match).
+    For keys in _PATH_KEYS: validate_path against allowed_roots
+    (skipped when allowed_roots isn't passed).
 
-    Tra ve {"ok": bool, "sanitized_args": dict, "warnings": [str, ...]}.
-    - "ok" False chi khi co injection hoac path traversal (loi nghiem trong).
-    - truncate chi tao warning, khong fail.
+    Returns {"ok": bool, "sanitized_args": dict, "warnings": [str, ...]}.
+    - "ok" is False only on injection or path traversal (severe).
+    - truncation only warns, never fails.
     """
     if not isinstance(args, dict):
         return {
             "ok": False,
             "sanitized_args": {},
-            "warnings": ["tool %s: args phai la dict" % (tool_name,)],
+            "warnings": ["tool %s: args must be a dict" % (tool_name,)],
         }
     roots = allowed_roots or []
     sanitized: Dict[str, Any] = {}
@@ -209,14 +211,14 @@ def check_tool_args(
             if len(v) > max_str_len:
                 v = truncate(v, max_str_len)
                 warnings.append(
-                    "tool %s: arg %r bi cat do dai (%d -> %d)"
+                    "tool %s: arg %r truncated for length (%d -> %d)"
                     % (tool_name, key, len(value), max_str_len)
                 )
             inj = detect_prompt_injection(v)
             if inj["is_injection"]:
                 ok = False
                 warnings.append(
-                    "tool %s: arg %r nghi prompt injection: %s"
+                    "tool %s: arg %r suspected prompt injection: %s"
                     % (tool_name, key, ", ".join(inj["matched"]))
                 )
             if key.lower() in _PATH_KEYS and roots:
@@ -225,7 +227,7 @@ def check_tool_args(
                 except (ValueError, TypeError) as e:
                     ok = False
                     warnings.append(
-                        "tool %s: arg %r path khong hop le: %s"
+                        "tool %s: arg %r invalid path: %s"
                         % (tool_name, key, e)
                     )
             return v

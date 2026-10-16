@@ -1,8 +1,8 @@
-"""tools — root package: re-export toàn bộ tools core để backward-compat.
+"""tools — root package: re-exports all core tools for backward-compat.
 
-Các module cũ (agent/src/tools/shell.py, file_ops.py, ...) vẫn import được
-bình thường vì nằm cùng thư mục; package mới filesystem/terminal/git
-được re-export tại đây:
+Old modules (agent/src/tools/shell.py, file_ops.py, ...) still import fine
+from the same dir; the new filesystem/terminal/git packages are re-exported
+here:
 
     from agent.src.tools import read, write, run, git_status, ...
 """

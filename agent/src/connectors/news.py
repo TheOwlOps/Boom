@@ -1,6 +1,6 @@
 """News connector for Boom: Vietnamese headlines via RSS, free, no API key.
 
-Reads VnExpress RSS feeds (tin mới nhất, kinh doanh, thể thao) — or any custom
+Reads VnExpress RSS feeds (latest news, business, sports) — or any custom
 RSS URL — with stdlib only (urllib + xml.etree.ElementTree). No credential is
 needed, so status() is always connected; a dead feed or bad XML is reported as
 {"error": ...}, never faked.
