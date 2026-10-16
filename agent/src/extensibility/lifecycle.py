@@ -126,12 +126,18 @@ def topo_sort(nodes: Dict[str, List[str]]) -> List[str]:
 class PluginManager:
     """Manages the plugin lifecycle: install / enable / disable / uninstall."""
 
-    def __init__(self, plugins_dir: Path, ctx: Optional[Dict[str, Any]] = None):
+    def __init__(self, plugins_dir: Path, ctx: Optional[Any] = None):
         self.plugins_dir = Path(plugins_dir)
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         # {name: {"manifest": dict, "enabled": bool, "module": module|None}}
         self.plugins: Dict[str, Dict[str, Any]] = {}
-        self.ctx: Dict[str, Any] = ctx if ctx is not None else {"tools": {}}
+        # Use PluginContext (has register_tool) instead of a plain dict,
+        # so plugin register(ctx)/on_enable(ctx) hooks work correctly.
+        if ctx is not None:
+            self.ctx = ctx
+        else:
+            from .plugin_registry import PluginContext
+            self.ctx = PluginContext()
         self.refresh()
 
     # -- internal ---------------------------------------------------------
