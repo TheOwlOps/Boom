@@ -39,7 +39,8 @@ export*
 __pycache__/model_tools.cpython-310.pyc
 __pycache__/web_tools.cpython-310.pyc
 logs/
-data/
+/data/
+!apps/web/src/data/
 # Bundled community plugin index seed (shipped as package data) — the bare
 # `data/` pattern above would otherwise swallow it.
 !hermes_cli/data/

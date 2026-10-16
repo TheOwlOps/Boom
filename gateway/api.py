@@ -56,7 +56,7 @@ def api_log(msg: str):
         del _LOG_BUFFER[:-_LOG_MAX]
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
-ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420")  # Vite, Tauri
+ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
 CHAT_STRATEGIES = ("auto", "react", "dag", "mass")
 
 # GET /api/channels/status: fixed channel list (contract) + the credential
