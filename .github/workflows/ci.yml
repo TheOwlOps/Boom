@@ -60,3 +60,24 @@ jobs:
       - uses: cachix/install-nix-action@v27
       - name: Flake check
         run: nix flake check --no-build
+
+  rust:
+    name: Rust (fmt + clippy + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+      - name: cargo audit (advisory scan, non-blocking)
+        continue-on-error: true
+        run: |
+          cargo install --quiet cargo-audit 2>/dev/null || true
+          cargo audit || echo "cargo audit unavailable or advisories found"

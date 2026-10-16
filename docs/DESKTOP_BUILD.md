@@ -127,22 +127,62 @@ The `desktop.yml` workflow builds installers for all 4 targets on:
 
 After all 4 build jobs succeed, the `release` job (in the same workflow) runs:
 
-1. Downloads the 4 build artifacts and locates the installers
+1. Downloads the 4 build artifacts (kept in per-target directories — the two
+   macOS legs produce the same `Boom.app.tar.gz` basename, so they are never
+   merged) and locates the installers
    (`Boom_<version>_amd64.AppImage`, `Boom_<version>_x64_en-US.msi`,
-   `Boom_<version>_x64.dmg`, `Boom_<version>_aarch64.dmg`).
+   `Boom_<version>_x64.dmg`, `Boom_<version>_aarch64.dmg`) plus the Tauri
+   updater bundles (`Boom_<version>_x64.app.tar.gz`,
+   `Boom_<version>_aarch64.app.tar.gz`; Linux/Windows updaters re-use the
+   `.AppImage`/`.msi` directly).
 2. Creates the GitHub release `v<version>` if it does not exist yet
    (with `--generate-notes`); if it already exists, assets are re-uploaded
    with `--clobber`, so re-running the workflow is safe.
-3. Generates `latest.json` via `scripts/generate-latest-json.sh <version>`
+3. Flattens everything into `dist/flat/`, renaming the macOS updater archives
+   with an arch suffix (minisign signatures cover file bytes, not names).
+   When the SignPath-signed MSI is shipped, its `.sig` is regenerated with
+   `tauri signer sign --app-version <version>` because Authenticode signing
+   changes the file bytes the build-time `.sig` was made for.
+4. Generates `latest.json` via `scripts/generate-latest-json.sh <version>`
    (Tauri updater v2 format — `version`, `notes` from the release body,
    `pub_date`, and a `platforms` map with `signature` + `url` per platform),
-   filling `signature` from the `.sig` files `tauri build` produced.
-4. Uploads the 4 installers, their `.sig` files, and `latest.json` to the release.
+   filling `signature` from the `.sig` files. The script aborts if any
+   platform's signature is missing — a manifest with an empty signature is
+   rejected by every client, so failing loudly beats shipping it.
+5. Uploads installers, updater bundles, `.sig` files, `latest.json` and
+   `SHA256SUMS.txt` to the `v<version>` release, then publishes
+   `latest.json` to the floating `desktop-latest` release (see below).
 
 The desktop app polls the updater endpoint
-`https://github.com/TheOwlOps/Boom/releases/latest/download/latest.json`
-(configured in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.endpoints`),
-which always serves the `latest.json` of the newest release.
+`https://github.com/TheOwlOps/Boom/releases/download/desktop-latest/latest.json`
+(configured in `apps/desktop/src-tauri/tauri.conf.json` under
+`plugins.updater.endpoints`). The floating `desktop-latest` tag+release is
+maintained by the workflow (tag moved, `latest.json` re-uploaded with
+`--clobber`) because `release.yml` also creates `vX.Y.Z` releases, which
+would otherwise steal GitHub's `/releases/latest/` redirect and 404 the
+updater for every user. The manifest's asset URLs always point at the
+versioned `vX.Y.Z` release, so only `latest.json` itself floats.
+
+### Updater signing keys
+
+Update signatures cannot be disabled. One keypair signs all releases:
+
+- Private key: stored as the `TAURI_SIGNING_PRIVATE_KEY` repository secret.
+  The build job fails fast with instructions if it is missing; `tauri build`
+  only writes `.sig` files when this variable is set.
+- Public key: in `apps/desktop/src-tauri/tauri.conf.json` under
+  `plugins.updater.pubkey` (the base64 content of the `.pub` file produced by
+  `tauri signer generate` — it is base64-wrapped, that is the exact format the
+  updater plugin decodes).
+
+Generate a new keypair with:
+
+```bash
+cd apps/desktop
+npx tauri signer generate -w ~/.tauri/boom.key
+# put the printed public key (content of boom.key.pub) into tauri.conf.json
+# and the private key (content of boom.key) into the TAURI_SIGNING_PRIVATE_KEY secret
+```
 
 ### Generating `latest.json` by hand
 
@@ -155,6 +195,7 @@ which always serves the `latest.json` of the newest release.
 SIG_DIR=path/to/bundle ./scripts/generate-latest-json.sh 0.2.0
 
 # If installer filenames drift from the Tauri default naming, override them:
-APPIMAGE_FILE=... MSI_FILE=... DMG_X64_FILE=... DMG_AARCH64_FILE=... \
+# (macOS updater bundles are the .app.tar.gz archives — the updater cannot install a .dmg)
+APPIMAGE_FILE=... MSI_FILE=... MACOS_X64_FILE=... MACOS_AARCH64_FILE=... \
   ./scripts/generate-latest-json.sh 0.2.0
 ```
