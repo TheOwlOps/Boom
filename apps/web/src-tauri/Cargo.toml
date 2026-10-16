@@ -1,6 +1,6 @@
 [package]
 name = "boom_desktop"
-version = "0.2.0"
+version = "0.2.1"
 description = "Boom Agent Harness Desktop App"
 authors = ["TheOwlOps"]
 license = "MIT"
