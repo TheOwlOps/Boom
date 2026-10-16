@@ -19,9 +19,11 @@
 //! ```
 
 pub mod defaults;
+pub mod file_providers;
 pub mod routes;
 pub mod state;
 
+pub use file_providers::FileProviderRegistry;
 pub use state::{
     channel_credential_hint, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
     split_marketplace_id, AppState, Bot, BotTools, BoxFuture, DagNode, Group, Harness,

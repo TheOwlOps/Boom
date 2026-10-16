@@ -396,4 +396,50 @@ mod tests {
         assert_eq!(defs.len(), 30);
         assert!(defs.iter().all(|d| d.get("parameters").is_some()));
     }
+
+    #[test]
+    fn all_tools_have_valid_tool_info_and_schemas() {
+        let reg = ToolRegistry::with_builtins();
+        assert_eq!(reg.tool_names().len(), 30);
+        for name in reg.tool_names() {
+            let tool = reg.get(&name).unwrap_or_else(|| panic!("tool '{name}' missing"));
+            assert!(!tool.name().is_empty(), "empty name");
+            assert!(!tool.description().is_empty(), "empty description for {name}");
+            // Schema must be a valid JSON-Schema object: type "object" with
+            // a "properties" object, and every required key present in
+            // properties.
+            let schema = tool.schema();
+            let obj = schema.as_object().unwrap_or_else(|| panic!("schema of {name} is not an object"));
+            assert_eq!(
+                obj.get("type").and_then(|t| t.as_str()),
+                Some("object"),
+                "schema of {name} must declare type: object"
+            );
+            let props = obj
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .unwrap_or_else(|| panic!("schema of {name} lacks properties object"));
+            let required = obj
+                .get("required")
+                .and_then(|r| r.as_array())
+                .cloned()
+                .unwrap_or_default();
+            // Empty properties is fine for arg-less tools (date_now,
+            // uuid_new); otherwise every tool should document at least one
+            // accepted argument.
+            if props.is_empty() {
+                assert!(
+                    required.is_empty(),
+                    "schema of {name} has no properties but requires args"
+                );
+            }
+            for req in required {
+                let key = req.as_str().unwrap_or_else(|| panic!("required entry of {name} not a string"));
+                assert!(
+                    props.contains_key(key),
+                    "required arg '{key}' of {name} missing from properties"
+                );
+            }
+        }
+    }
 }

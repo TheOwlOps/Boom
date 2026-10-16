@@ -16,6 +16,7 @@ use std::{
 
 use serde_json::{Map, Value};
 
+use super::file_providers::FileProviderRegistry;
 use super::state::*;
 
 // ---------------------------------------------------------------------------
@@ -42,8 +43,11 @@ impl Harness for NoHarness {
 // ToolRegistry: empty
 // ---------------------------------------------------------------------------
 
-/// Empty tool registry. `/api/tools` answers `{"tools": [], "count": 0}`,
-/// mirroring Python's try/except fallback when the environment is missing.
+/// Opt-in no-op tool registry: `list_tools` is empty and every `run_tool`
+/// fails with `"tool not found: {name}"`. It mirrors Python's try/except
+/// fallback when the environment is missing, and is useful for tests that
+/// need the honest-empty state. [`AppState::with_defaults`] instead ships
+/// the real built-in tools (see below).
 pub struct EmptyToolRegistry;
 
 impl ToolRegistry for EmptyToolRegistry {
@@ -62,7 +66,7 @@ impl ToolRegistry for EmptyToolRegistry {
 // ---------------------------------------------------------------------------
 
 /// Static copy of Python's `PROVIDER_DEFS` (metadata only, no secrets).
-fn provider_defs() -> Vec<ProviderMeta> {
+pub(crate) fn provider_defs() -> Vec<ProviderMeta> {
     let def = |id: &str,
                name: &str,
                models: &[&str],
@@ -185,7 +189,7 @@ impl ProviderRegistry for StaticProviderRegistry {
 /// Probe the local Ollama daemon (`GET http://localhost:11434/api/tags`,
 /// 3s timeout). Never fails: any error degrades to
 /// `{running: false, models: []}` — mirroring `_check_ollama_status`.
-async fn probe_ollama() -> OllamaStatus {
+pub(crate) async fn probe_ollama() -> OllamaStatus {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
@@ -663,19 +667,36 @@ impl ZaloPersonal for NoZalo {
 // ---------------------------------------------------------------------------
 
 impl AppState {
-    /// Build state with all default implementations. Sibling workers replace
-    /// individual fields with their real backends.
+    /// Build state with all default implementations. The tool registry ships
+    /// the real built-in tools ([`crate::wiring::ServerToolRegistry`] over
+    /// [`crate::tools::ToolRegistry::with_builtins`]), so `/api/tools` and
+    /// the marketplace catalog are populated out of the box; sibling workers
+    /// replace the remaining fields with their real backends.
     pub fn with_defaults() -> Self {
         Self::with_defaults_at_skills_dir(default_skills_dir())
     }
 
     pub fn with_defaults_at_skills_dir(skills_dir: Option<PathBuf>) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
+        let builtins = Arc::new(crate::tools::ToolRegistry::with_builtins());
+        // SQLite-backed storage so bots/plugins/groups survive restarts.
+        // Falls back to in-memory if the DB can't be opened (never crash).
+        let storage: Arc<dyn Storage> =
+            match crate::storage::server_storage::SqliteStorage::open_default() {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    eprintln!("[boom-core] SQLite open failed ({}), using memory storage", e);
+                    Arc::new(MemoryStorage::new())
+                }
+            };
         Self {
             harness: Arc::new(NoHarness),
-            tools: Arc::new(EmptyToolRegistry),
-            providers: Arc::new(StaticProviderRegistry::new()),
-            storage: Arc::new(MemoryStorage::new()),
+            tools: Arc::new(crate::wiring::ServerToolRegistry::new(builtins)),
+            // File-backed so provider configs survive restarts (Python
+            // parity: $BOOM_HOME/providers.json, 0600). The in-memory
+            // StaticProviderRegistry remains available for tests.
+            providers: Arc::new(FileProviderRegistry::new()),
+            storage,
             updater: Arc::new(GithubUpdater::new(version.clone())),
             zalo: Arc::new(NoZalo),
             version,
@@ -690,7 +711,7 @@ impl AppState {
 
 /// Best-effort skills dir: `<cwd>/skills`, mirroring Python's repo-root
 /// `skills/` scan. Missing dir → 0 skills (honest empty).
-fn default_skills_dir() -> Option<PathBuf> {
+pub(crate) fn default_skills_dir() -> Option<PathBuf> {
     let dir = std::env::current_dir().ok()?.join("skills");
     dir.is_dir().then_some(dir)
 }
@@ -703,4 +724,55 @@ pub fn tool_name_set(tools: &[ToolInfo]) -> HashSet<String> {
 /// Marketplace plugin map helper for [`split_marketplace_id`].
 pub fn plugin_map(plugins: &[PluginMeta]) -> HashMap<String, PluginMeta> {
     plugins.iter().map(|p| (p.name.clone(), p.clone())).collect()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_defaults_serves_all_30_builtin_tools() {
+        let state = AppState::with_defaults();
+        let tools = state.tools.list_tools();
+        assert_eq!(tools.len(), 30, "expected all 30 built-in tools");
+        // Names are unique and sorted; every tool has a non-empty
+        // description and a resolved toolset group.
+        let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 30, "tool names must be unique");
+        for t in &tools {
+            assert!(!t.name.is_empty(), "tool name must not be empty");
+            assert!(!t.description.is_empty(), "description empty for {}", t.name);
+            assert!(!t.group.is_empty(), "group unresolved for {}", t.name);
+        }
+        let by_name: HashMap<_, _> = tools.iter().map(|t| (t.name.as_str(), t)).collect();
+        assert_eq!(by_name["file_read"].group, "file");
+        assert_eq!(by_name["shell_run"].group, "terminal");
+        assert_eq!(by_name["http_get"].group, "web");
+        assert_eq!(by_name["web_search"].group, "web");
+        assert_eq!(by_name["json_parse"].group, "data");
+        assert_eq!(by_name["date_now"].group, "system");
+    }
+
+    #[tokio::test]
+    async fn with_defaults_run_tool_unknown_errors_clearly() {
+        let state = AppState::with_defaults();
+        let err = state.tools.run_tool("nope", &Map::new()).await.unwrap_err();
+        assert!(
+            err.contains("not found") && err.contains("nope"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_defaults_run_tool_executes_real_tool() {
+        let state = AppState::with_defaults();
+        let out = state
+            .tools
+            .run_tool("uuid_new", &Map::new())
+            .await
+            .expect("uuid_new must run");
+        let parsed: Value = serde_json::from_str(&out).expect("result must be JSON");
+        assert_eq!(parsed["uuid"].as_str().map(str::len), Some(36));
+    }
 }

@@ -253,7 +253,7 @@ pub struct NewBot {
 }
 
 /// Group row — the exact `GET /api/groups` item shape.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Group {
     pub channel: String,
     pub group_id: String,
@@ -267,7 +267,7 @@ pub struct Group {
 }
 
 /// Installed plugin metadata for marketplace catalog items.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginMeta {
     pub name: String,
     pub description: String,

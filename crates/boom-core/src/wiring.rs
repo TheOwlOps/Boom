@@ -13,9 +13,11 @@
 //! This module provides the adapters that close those gaps, plus
 //! [`WiredHarness`] — a [`server::state::Harness`] implementation that runs
 //! the real [`harness::react::ReActLoop`] over a real provider client and the
-//! real tool registry, so the server can replace its no-op defaults
-//! ([`server::defaults::NoHarness`], [`server::defaults::EmptyToolRegistry`])
-//! with working backends.
+//! real tool registry, so the server can replace its no-op harness default
+//! ([`server::defaults::NoHarness`]) with a working backend. (The tool
+//! registry already ships the real built-in tools by default via
+//! [`ServerToolRegistry`]; [`server::defaults::EmptyToolRegistry`] remains
+//! as an opt-in no-op for tests that need the honest-empty state.)
 //!
 //! [harness_llm]: crate::harness::types::LlmClient
 //! [prov_llm]: crate::providers::LlmClient
@@ -709,10 +711,19 @@ mod tests {
         assert_eq!(infos.len(), 30);
         let by_name: std::collections::HashMap<_, _> =
             infos.iter().map(|i| (i.name.as_str(), i)).collect();
+        // Every tool registered via with_builtins() must resolve to its
+        // toolset group; spot-check the known mappings.
+        for i in &infos {
+            assert!(!i.name.is_empty());
+            assert!(!i.description.is_empty(), "description empty for {}", i.name);
+            assert!(!i.group.is_empty(), "group unresolved for {}", i.name);
+        }
         assert_eq!(by_name["file_read"].group, "file");
         assert_eq!(by_name["shell_run"].group, "terminal");
         assert_eq!(by_name["http_get"].group, "web");
-        assert!(!by_name["date_now"].description.is_empty());
+        assert_eq!(by_name["web_search"].group, "web");
+        assert_eq!(by_name["json_parse"].group, "data");
+        assert_eq!(by_name["date_now"].group, "system");
     }
 
     #[tokio::test]

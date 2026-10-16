@@ -17,11 +17,13 @@
 mod bots;
 mod kv;
 mod providers;
+pub mod server_storage;
 mod sessions;
 
 pub use bots::{Bot, BotPatch, BotStore, NewBot};
 pub use kv::KvStore;
 pub use providers::{ProviderConfig, ProviderStore};
+pub use server_storage::SqliteStorage;
 pub use sessions::{Message, Session, SessionStore};
 
 use rusqlite::Connection;
