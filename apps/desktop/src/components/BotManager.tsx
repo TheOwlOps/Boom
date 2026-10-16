@@ -237,7 +237,7 @@ function BotFormModal({
   };
 
   const inputCls =
-    "w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-blue-500 focus:outline-none";
+    "w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-zinc-500 focus:outline-none";
 
   return (
     <div
@@ -259,7 +259,7 @@ function BotFormModal({
         </div>
 
         {formError && (
-          <p className="mb-3 rounded border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+          <p className="mb-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-sm text-zinc-300">
             {formError}
           </p>
         )}
@@ -321,7 +321,7 @@ function BotFormModal({
             {allowedTools.length > 0 && (
               <button
                 onClick={() => setAllowedTools([])}
-                className="text-xs text-blue-400 hover:text-blue-300"
+                className="text-xs text-zinc-400 hover:text-zinc-300"
               >
                 Reset to all
               </button>
@@ -348,9 +348,9 @@ function BotFormModal({
                         type="checkbox"
                         checked={allowedTools.includes(t.name)}
                         onChange={() => toggleTool(t.name)}
-                        className="h-4 w-4 accent-blue-500"
+                        className="h-4 w-4 accent-zinc-500"
                       />
-                      <code className="font-mono text-sm text-blue-300">{t.name}</code>
+                      <code className="font-mono text-sm text-zinc-300">{t.name}</code>
                       <span className="flex-1 truncate text-xs text-neutral-500">{t.description}</span>
                     </label>
                   </li>
@@ -385,7 +385,7 @@ function BotFormModal({
           <button
             onClick={() => void save()}
             disabled={saving}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded bg-white px-3 py-1.5 text-sm text-black hover:bg-zinc-200 disabled:opacity-50"
           >
             {saving ? "Saving…" : initial ? "Save changes" : "Create bot"}
           </button>
@@ -436,7 +436,7 @@ function DeleteConfirmModal({
           undone.
         </p>
         {deleteError && (
-          <p className="mb-3 rounded border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+          <p className="mb-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-sm text-zinc-300">
             {deleteError}
           </p>
         )}
@@ -451,7 +451,7 @@ function DeleteConfirmModal({
           <button
             onClick={() => void confirm()}
             disabled={deleting}
-            className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
+            className="rounded bg-zinc-600 px-3 py-1.5 text-sm text-white hover:bg-zinc-500 disabled:opacity-50"
           >
             {deleting ? "Deleting…" : "Delete"}
           </button>
@@ -581,18 +581,18 @@ export default function BotManager() {
         </button>
         <button
           onClick={() => setCreating(true)}
-          className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-500"
+          className="flex items-center gap-1.5 rounded bg-white px-3 py-2 text-sm text-black hover:bg-zinc-200"
         >
           <Plus size={14} /> New Bot
         </button>
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center justify-between rounded border border-red-800 bg-red-950/50 px-3 py-2">
-          <p className="text-sm text-red-300">{error}</p>
+        <div className="mb-4 flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+          <p className="text-sm text-zinc-300">{error}</p>
           <button
             onClick={() => void load()}
-            className="rounded border border-red-700 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50"
+            className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-900/50"
           >
             Retry
           </button>
@@ -620,7 +620,7 @@ export default function BotManager() {
             <article
               key={bot.id}
               className={`flex flex-col rounded-lg border bg-neutral-900 p-4 ${
-                bot.is_active ? "border-blue-700" : "border-neutral-800"
+                bot.is_active ? "border-zinc-700" : "border-neutral-800"
               }`}
             >
               <div className="mb-2 flex items-start justify-between">
@@ -628,7 +628,7 @@ export default function BotManager() {
                   {bot.avatar_emoji || "🤖"}
                 </span>
                 {bot.is_active && (
-                  <span className="rounded-full bg-blue-600/20 px-2 py-0.5 text-xs font-medium text-blue-300">
+                  <span className="rounded-full bg-zinc-600/20 px-2 py-0.5 text-xs font-medium text-zinc-300">
                     Active
                   </span>
                 )}
@@ -652,7 +652,7 @@ export default function BotManager() {
                   <button
                     onClick={() => void handleSetActive(bot)}
                     disabled={activatingId !== null}
-                    className="flex-1 rounded border border-blue-700 px-2.5 py-1.5 text-xs text-blue-300 hover:bg-blue-950/50 disabled:opacity-50"
+                    className="flex-1 rounded border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-950/50 disabled:opacity-50"
                   >
                     {activatingId === bot.id ? "Activating…" : "Set Active"}
                   </button>
@@ -667,7 +667,7 @@ export default function BotManager() {
                 <button
                   onClick={() => setDeleting(bot)}
                   aria-label={`Delete ${bot.name}`}
-                  className="rounded border border-neutral-700 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/50"
+                  className="rounded border border-neutral-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-950/50"
                 >
                   <Trash2 size={12} />
                 </button>

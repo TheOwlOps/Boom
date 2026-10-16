@@ -18,7 +18,7 @@ import ZaloPersonalSetup from "./ZaloPersonalSetup";
 const REFRESH_MS = 30_000;
 
 // Map channel name -> a recognizable lucide icon. Unknown names fall back to
-// an initial letter in a colored dot.
+// an initial letter in a grayscale dot.
 const CHANNEL_ICONS: Record<string, LucideIcon> = {
   telegram: Send,
   discord: Hash,
@@ -31,12 +31,12 @@ const CHANNEL_ICONS: Record<string, LucideIcon> = {
 };
 
 const FALLBACK_COLORS = [
-  "#6366F1",
-  "#22C55E",
-  "#F59E0B",
-  "#EC4899",
-  "#14B8A6",
-  "#F97316",
+  "#fafafa",
+  "#e4e4e7",
+  "#d4d4d8",
+  "#a1a1aa",
+  "#71717a",
+  "#52525b",
 ];
 
 function fallbackColor(name: string): string {
@@ -105,7 +105,7 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
         padding: "12px 14px",
         borderRadius: 10,
         border: "1px solid var(--border)",
-        background: "rgba(239,68,68,0.08)",
+        background: "rgba(250,250,250,0.08)",
         color: "var(--text)",
         fontSize: 13,
         display: "flex",

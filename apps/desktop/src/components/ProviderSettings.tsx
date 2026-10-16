@@ -102,8 +102,8 @@ function StatusPill({ state, message }: { state: ConnState; message: string | nu
       title={message ?? undefined}
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
         ok
-          ? "border-emerald-800 bg-emerald-950 text-emerald-300"
-          : "border-red-800 bg-red-950 text-red-300"
+          ? "border-zinc-800 bg-zinc-950 text-zinc-300"
+          : "border-zinc-800 bg-zinc-950 text-zinc-300"
       }`}
     >
       {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -208,7 +208,7 @@ function ProviderCard({
           <Plug className="h-4 w-4 text-neutral-400" />
           <h3 className="text-sm font-semibold text-neutral-100">{meta.name}</h3>
           {active && (
-            <span className="rounded-full border border-sky-800 bg-sky-950 px-2 py-0.5 text-[11px] font-medium text-sky-300">
+            <span className="rounded-full border border-zinc-800 bg-zinc-950 px-2 py-0.5 text-[11px] font-medium text-zinc-300">
               Active
             </span>
           )}
@@ -323,14 +323,14 @@ function ProviderCard({
       {card.connMessage && card.conn !== "idle" && (
         <p
           className={`mb-3 text-xs ${
-            card.conn === "ok" ? "text-emerald-400" : "text-red-400"
+            card.conn === "ok" ? "text-zinc-400" : "text-zinc-400"
           }`}
         >
           {card.connMessage}
         </p>
       )}
       {card.error && (
-        <p className="mb-3 rounded-lg border border-red-900 bg-red-950 px-3 py-2 text-xs text-red-300">
+        <p className="mb-3 rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-xs text-zinc-300">
           {card.error}
         </p>
       )}
@@ -430,7 +430,7 @@ export function ProviderSettings() {
 
   if (loadError) {
     return (
-      <div className="rounded-xl border border-red-900 bg-red-950 p-4 text-sm text-red-300">
+      <div className="rounded-xl border border-zinc-900 bg-zinc-950 p-4 text-sm text-zinc-300">
         Failed to load providers: {loadError}
       </div>
     );

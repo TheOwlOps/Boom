@@ -115,7 +115,7 @@ export default function SkillList() {
         {skills.map((s) => (
           <li key={s.name} className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
             <div className="mb-1 flex items-center justify-between">
-              <code className="font-mono text-sm font-semibold text-green-300">{s.name}</code>
+              <code className="font-mono text-sm font-semibold text-zinc-300">{s.name}</code>
               <button
                 onClick={() => setViewing(s)}
                 className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"

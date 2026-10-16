@@ -73,7 +73,7 @@ export default function StatusBar() {
       {/* Status dot: green = online, red = offline */}
       <span className="flex items-center gap-2" title={online ? "API online" : "API offline"}>
         <span
-          className={`inline-block h-2.5 w-2.5 rounded-full ${online ? "bg-green-500" : "bg-red-500"}`}
+          className={`inline-block h-2.5 w-2.5 rounded-full ${online ? "bg-zinc-500" : "bg-zinc-500"}`}
         />
         <span className="font-medium text-neutral-100">{online ? "Online" : "Offline"}</span>
       </span>

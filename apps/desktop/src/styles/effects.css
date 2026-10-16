@@ -119,8 +119,8 @@
 /* Tint variants tuned for a dark theme */
 .mesh-blob--a {
   background: radial-gradient(circle at center,
-    rgba(99, 102, 241, 0.55) 0%,
-    rgba(99, 102, 241, 0) 68%);
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0) 68%);
   top: -18%;
   left: -12%;
   animation-delay: -6s;
@@ -128,8 +128,8 @@
 
 .mesh-blob--b {
   background: radial-gradient(circle at center,
-    rgba(16, 185, 129, 0.38) 0%,
-    rgba(16, 185, 129, 0) 68%);
+    rgba(255, 255, 255, 0.38) 0%,
+    rgba(255, 255, 255, 0) 68%);
   bottom: -22%;
   right: -14%;
   animation-delay: -13s;
@@ -137,8 +137,8 @@
 
 .mesh-blob--c {
   background: radial-gradient(circle at center,
-    rgba(236, 72, 153, 0.30) 0%,
-    rgba(236, 72, 153, 0) 68%);
+    rgba(255, 255, 255, 0.30) 0%,
+    rgba(255, 255, 255, 0) 68%);
   top: 28%;
   left: 42%;
   animation-duration: 26s;
@@ -257,7 +257,7 @@
  * ========================================================================== */
 
 .glow-hover {
-  --glow-color: rgba(99, 102, 241, 0.45);
+  --glow-color: rgba(255, 255, 255, 0.45);
   transition:
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -280,9 +280,9 @@
 }
 
 /* Accent variants */
-.glow-hover--green  { --glow-color: rgba(16, 185, 129, 0.45); }
-.glow-hover--pink   { --glow-color: rgba(236, 72, 153, 0.45); }
-.glow-hover--amber  { --glow-color: rgba(245, 158, 11, 0.45); }
+.glow-hover--green  { --glow-color: rgba(255, 255, 255, 0.50); }
+.glow-hover--pink   { --glow-color: rgba(255, 255, 255, 0.35); }
+.glow-hover--amber  { --glow-color: rgba(255, 255, 255, 0.30); }
 
 /* ==========================================================================
  * 6. TAB TRANSITIONS — gentle fade + rise when switching tabs.
@@ -661,7 +661,7 @@
   padding: 6px 12px;
   border-left: 3px solid var(--accent);
   border-radius: 0 8px 8px 0;
-  background: rgba(99, 102, 241, 0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
 }
 
@@ -695,7 +695,7 @@
 
 /* Darker code blocks with mono font (CodeBlock renders its own <pre>). */
 .msg-markdown pre {
-  background: #0d0d14;
+  background: #0d0d0d;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;

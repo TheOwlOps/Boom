@@ -129,10 +129,10 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
   if (compact) {
     const dotColor =
       state === "connected"
-        ? "bg-green-500"
+        ? "bg-zinc-500"
         : state === "starting"
-          ? "bg-yellow-500"
-          : "bg-red-500";
+          ? "bg-zinc-500"
+          : "bg-zinc-500";
     const label =
       state === "connected"
         ? "Backend connected"
@@ -158,10 +158,10 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
   return (
     <div
       role="alert"
-      className="mx-4 mt-4 flex items-start gap-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-5"
+      className="mx-4 mt-4 flex items-start gap-4 rounded-xl border border-zinc-500/30 bg-zinc-500/10 p-5"
     >
       <AlertTriangle
-        className="mt-0.5 h-6 w-6 shrink-0 text-amber-400"
+        className="mt-0.5 h-6 w-6 shrink-0 text-zinc-400"
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
@@ -173,7 +173,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
         </p>
         {backendError && (
           <details className="mt-2 rounded-lg bg-black/30 p-3">
-            <summary className="cursor-pointer text-xs font-medium text-red-400">
+            <summary className="cursor-pointer text-xs font-medium text-zinc-400">
               Chi tiết lỗi (bấm để xem)
             </summary>
             <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-neutral-300">

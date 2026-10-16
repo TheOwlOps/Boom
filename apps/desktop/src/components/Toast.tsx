@@ -49,7 +49,7 @@ export function Toast({ message, type = "success" }: ToastProps) {
       >
         <span
           className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-            type === "error" ? "bg-red-500" : "bg-green-500"
+            type === "error" ? "bg-zinc-500" : "bg-zinc-500"
           }`}
           aria-hidden="true"
         />

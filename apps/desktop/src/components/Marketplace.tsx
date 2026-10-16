@@ -97,7 +97,7 @@ function PluginCard(props: {
         onClick={() => onAdd(item)}
         className={
           added
-            ? "shrink-0 rounded-lg bg-emerald-600/15 px-4 py-2 text-sm font-medium text-emerald-400"
+            ? "shrink-0 rounded-lg bg-zinc-600/15 px-4 py-2 text-sm font-medium text-zinc-400"
             : "shrink-0 rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-white"
         }
       >

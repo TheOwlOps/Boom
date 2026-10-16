@@ -45,13 +45,13 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
             <span className="text-xs font-medium uppercase tracking-widest text-neutral-500">
               Step {step + 1} of 2
             </span>
-            <span className="text-xs font-medium text-indigo-300">
+            <span className="text-xs font-medium text-zinc-300">
               {stepNames[step]}
             </span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-emerald-500 transition-all duration-500 ease-out"
+              className="h-full rounded-full bg-white transition-all duration-500 ease-out"
               style={{ width: `${((step + 1) / 2) * 100}%` }}
             />
           </div>
@@ -61,7 +61,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
                 key={name}
                 className={`text-[11px] font-medium transition-colors duration-300 ${
                   i < step
-                    ? "text-emerald-400"
+                    ? "text-zinc-400"
                     : i === step
                       ? "text-neutral-100"
                       : "text-neutral-600"
@@ -105,10 +105,10 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
 function WelcomeStep({ onStart }: { onStart: () => void }) {
   return (
     <div className="py-8 text-center">
-      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 via-sky-500 to-emerald-500 shadow-lg shadow-indigo-950/60">
+      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-zinc-800 shadow-lg shadow-black/50">
         <Sparkles className="h-10 w-10 text-white" />
       </div>
-      <h1 className="mb-2 bg-gradient-to-r from-indigo-300 via-sky-300 to-emerald-300 bg-clip-text text-4xl font-extrabold text-transparent">
+      <h1 className="mb-2 text-4xl font-extrabold text-white">
         Welcome to Boom
       </h1>
       <p className="mx-auto mb-8 max-w-sm text-sm text-neutral-400">
@@ -118,7 +118,7 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
       <button
         type="button"
         onClick={onStart}
-        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 px-8 py-3 text-base font-semibold text-white"
+        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3 text-base font-semibold text-black"
       >
         Get Started
         <ArrowRight className="h-5 w-5" />
@@ -137,7 +137,7 @@ function DoneStep({
 }) {
   return (
     <div className="py-6 text-center">
-      <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 via-sky-500 to-emerald-500 text-4xl shadow-lg shadow-indigo-950/60">
+      <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-zinc-800 text-4xl shadow-lg shadow-black/50">
         🎉
       </div>
       <h2 className="mb-2 text-3xl font-bold text-neutral-100">You&apos;re all set!</h2>
@@ -148,7 +148,7 @@ function DoneStep({
         type="button"
         onClick={onFinish}
         disabled={saving}
-        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 px-8 py-3 text-base font-semibold text-white disabled:opacity-50"
+        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3 text-base font-semibold text-black disabled:opacity-50"
       >
         Start using Boom
         <ArrowRight className="h-5 w-5" />

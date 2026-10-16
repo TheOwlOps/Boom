@@ -52,10 +52,10 @@ function UnofficialApiWarning() {
   return (
     <div
       role="alert"
-      className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-800 bg-red-950/70 px-3.5 py-3"
+      className="mb-4 flex items-start gap-2.5 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3.5 py-3"
     >
-      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
-      <p className="text-sm font-medium leading-snug text-red-200">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-zinc-400" />
+      <p className="text-sm font-medium leading-snug text-zinc-200">
         ⚠️ Zalo Personal uses an unofficial API. Your account may be banned by
         Zalo. Use a secondary account only.
       </p>
@@ -162,7 +162,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
         {/* Header */}
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5 text-sky-400" />
+            <MessageCircle className="h-5 w-5 text-zinc-400" />
             <h2 className="text-base font-semibold text-neutral-100">
               Zalo Personal
             </h2>
@@ -190,7 +190,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
         {phase !== "loading" && error && (
           <div
             role="alert"
-            className="mb-3 rounded-lg border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-300"
+            className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-300"
           >
             {error}
           </div>
@@ -263,7 +263,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
             <button
               type="submit"
               disabled={busy}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-black hover:bg-zinc-200 disabled:opacity-50"
             >
               {phase === "connecting" && (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -276,11 +276,11 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
         {/* Connected view */}
         {(phase === "connected" || phase === "disconnecting") && (
           <div>
-            <div className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-800 bg-emerald-950/50 px-4 py-3">
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-4 py-3">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-zinc-400" />
               <div>
-                <p className="text-sm font-medium text-emerald-200">Connected</p>
-                <p className="font-mono text-sm text-emerald-300/90">
+                <p className="text-sm font-medium text-zinc-200">Connected</p>
+                <p className="font-mono text-sm text-zinc-300/90">
                   {maskedPhone ?? "•••"}
                 </p>
               </div>

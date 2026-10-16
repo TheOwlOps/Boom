@@ -55,7 +55,7 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
           <button
             onClick={() => void run()}
             disabled={running}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            className="rounded bg-white px-3 py-1.5 text-sm text-black hover:bg-zinc-200 disabled:opacity-50"
           >
             {running ? "Running…" : "Execute"}
           </button>
@@ -97,7 +97,7 @@ export default function ToolManager() {
               <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
                 {tools.map((t) => (
                   <li key={t.name} className="flex items-center gap-3 px-3 py-2">
-                    <code className="font-mono text-sm text-blue-300">{t.name}</code>
+                    <code className="font-mono text-sm text-zinc-300">{t.name}</code>
                     <span className="flex-1 text-sm text-neutral-400">{t.description}</span>
                     <button
                       onClick={() => setActive(t)}

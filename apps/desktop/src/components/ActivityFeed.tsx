@@ -38,14 +38,15 @@ interface ActivityResponse {
 }
 
 // -- styling -----------------------------------------------------------
-// Icon + color per activity type. Colors are fixed hex so the meaning is
-// stable regardless of the active theme; layout uses theme CSS variables.
+// Icon + shade per activity type. Colors are fixed grayscale hexes (monochrome UI)
+// so the distinction is stable regardless of the active theme; layout uses
+// theme CSS variables.
 const TYPE_STYLE: Record<ActivityType, { icon: LucideIcon; color: string; label: string }> = {
-  thinking: { icon: Brain, color: "#a78bfa", label: "Thinking" },
-  tool_call: { icon: Wrench, color: "#fb923c", label: "Tool call" },
-  llm_wait: { icon: Globe, color: "#60a5fa", label: "LLM call" },
-  done: { icon: CheckCircle2, color: "#34d399", label: "Done" },
-  error: { icon: XCircle, color: "#f87171", label: "Error" },
+  thinking: { icon: Brain, color: "#d4d4d8", label: "Thinking" },
+  tool_call: { icon: Wrench, color: "#a1a1aa", label: "Tool call" },
+  llm_wait: { icon: Globe, color: "#e4e4e7", label: "LLM call" },
+  done: { icon: CheckCircle2, color: "#fafafa", label: "Done" },
+  error: { icon: XCircle, color: "#ffffff", label: "Error" },
   idle: { icon: CheckCircle2, color: "var(--muted)", label: "Idle" },
 };
 
@@ -216,7 +217,7 @@ export function ActivityFeed() {
           aria-label="Refresh activity"
           style={{
             background: "transparent",
-            border: "1px solid var(--border, #2a2a35)",
+            border: "1px solid var(--border, #262626)",
             borderRadius: 8,
             color: "var(--muted)",
             cursor: "pointer",
@@ -237,7 +238,7 @@ export function ActivityFeed() {
               style={{
                 height: 44,
                 borderRadius: 10,
-                backgroundColor: "var(--surface, #14141c)",
+                backgroundColor: "var(--surface, #141414)",
                 opacity: 0.6,
               }}
             />
@@ -250,10 +251,10 @@ export function ActivityFeed() {
         <div
           role="alert"
           style={{
-            border: "1px solid #f87171",
+            border: "1px solid #ffffff",
             borderRadius: 10,
             padding: 12,
-            color: "#f87171",
+            color: "#ffffff",
             fontSize: 13,
             display: "flex",
             alignItems: "center",
@@ -270,9 +271,9 @@ export function ActivityFeed() {
             }}
             style={{
               background: "transparent",
-              border: "1px solid #f87171",
+              border: "1px solid #ffffff",
               borderRadius: 8,
-              color: "#f87171",
+              color: "#ffffff",
               cursor: "pointer",
               padding: "4px 10px",
               fontSize: 12,
@@ -289,10 +290,10 @@ export function ActivityFeed() {
           <div
             role="status"
             style={{
-              border: `1px solid ${isIdle ? "var(--border, #2a2a35)" : currentStyle.color}`,
+              border: `1px solid ${isIdle ? "var(--border, #262626)" : currentStyle.color}`,
               borderRadius: 12,
               padding: 14,
-              backgroundColor: "var(--surface, #14141c)",
+              backgroundColor: "var(--surface, #141414)",
               display: "flex",
               alignItems: "center",
               gap: 12,
@@ -331,7 +332,7 @@ export function ActivityFeed() {
                 color: "var(--muted)",
                 fontSize: 13,
                 padding: "24px 12px",
-                border: "1px dashed var(--border, #2a2a35)",
+                border: "1px dashed var(--border, #262626)",
                 borderRadius: 10,
               }}
             >
@@ -347,11 +348,11 @@ export function ActivityFeed() {
                   <li
                     key={ev.id}
                     style={{
-                      border: "1px solid var(--border, #2a2a35)",
+                      border: "1px solid var(--border, #262626)",
                       borderLeft: `3px solid ${st.color}`,
                       borderRadius: 10,
                       padding: "10px 12px",
-                      backgroundColor: "var(--surface, #14141c)",
+                      backgroundColor: "var(--surface, #141414)",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -380,7 +381,7 @@ export function ActivityFeed() {
                           aria-label={open ? "Hide details" : "Show details"}
                           style={{
                             background: "transparent",
-                            border: "1px solid var(--border, #2a2a35)",
+                            border: "1px solid var(--border, #262626)",
                             borderRadius: 6,
                             color: "var(--muted)",
                             cursor: "pointer",

@@ -202,7 +202,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   return (
     <div
       role="alert"
-      className="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-red-950/40 px-4 py-3 text-sm text-neutral-200"
+      className="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-zinc-950/40 px-4 py-3 text-sm text-neutral-200"
     >
       <span className="truncate" title={message}>
         {message || "Couldn't reach backend"}
@@ -224,12 +224,12 @@ function StatusBadge({ muted }: { muted: boolean }) {
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
         muted
-          ? "bg-amber-500/15 text-amber-300"
-          : "bg-green-500/15 text-green-300"
+          ? "bg-zinc-500/15 text-zinc-300"
+          : "bg-zinc-500/15 text-zinc-300"
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${muted ? "bg-amber-400" : "bg-green-400"}`}
+        className={`h-1.5 w-1.5 rounded-full ${muted ? "bg-zinc-400" : "bg-zinc-400"}`}
         aria-hidden
       />
       {muted ? "muted" : "active"}
@@ -386,7 +386,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             setAllowed,
             newAllowed,
             setNewAllowed,
-            "border-green-800 bg-green-950/50 text-green-300 hover:border-green-600",
+            "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
           )}
           {chipRow(
             "Denied commands",
@@ -394,14 +394,14 @@ function PolicyModal({ group, onClose, onSaved }: {
             setDenied,
             newDenied,
             setNewDenied,
-            "border-red-800 bg-red-950/50 text-red-300 hover:border-red-600",
+            "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
           )}
           <p className="text-xs leading-relaxed text-neutral-500">
             Denied commands always win. When an allow-list is non-empty, only
             listed commands are permitted. require_approval is left unchanged.
           </p>
           {error && (
-            <div role="alert" className="rounded-md bg-red-950/50 px-3 py-2 text-xs text-red-300">
+            <div role="alert" className="rounded-md bg-zinc-950/50 px-3 py-2 text-xs text-zinc-300">
               {error}
             </div>
           )}
@@ -554,7 +554,7 @@ export default function GroupManager() {
       {actionError && (
         <div
           role="alert"
-          className="rounded-md bg-red-950/50 px-3 py-2 text-xs text-red-300"
+          className="rounded-md bg-zinc-950/50 px-3 py-2 text-xs text-zinc-300"
         >
           {actionError}
         </div>
@@ -607,7 +607,7 @@ export default function GroupManager() {
                     <span title="Members">{formatCount(g.member_count)} members</span>
                     <span title="Messages">{formatCount(g.message_count)} messages</span>
                     {g.policy.denied_commands.length > 0 && (
-                      <span className="text-red-400/80">
+                      <span className="text-zinc-400/80">
                         {g.policy.denied_commands.length} denied
                       </span>
                     )}
@@ -631,8 +631,8 @@ export default function GroupManager() {
                     title={g.muted ? "Unmute group" : "Mute group"}
                     className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
                       g.muted
-                        ? "border-green-800 bg-green-950/40 text-green-300 hover:bg-green-950/70"
-                        : "border-amber-800 bg-amber-950/40 text-amber-300 hover:bg-amber-950/70"
+                        ? "border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-950/70"
+                        : "border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-950/70"
                     }`}
                   >
                     {g.muted ? <Bell size={13} /> : <BellOff size={13} />}

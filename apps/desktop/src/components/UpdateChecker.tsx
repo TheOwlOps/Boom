@@ -166,7 +166,7 @@ export default function UpdateChecker() {
   const versionLabel =
     phase === "available" ? (
       <>
-        <Sparkles className="h-4 w-4 shrink-0 text-purple-300" aria-hidden="true" />
+        <Sparkles className="h-4 w-4 shrink-0 text-zinc-300" aria-hidden="true" />
         <span className="font-semibold text-neutral-100">
           🎉 New version {update.version} available!
         </span>
@@ -177,7 +177,7 @@ export default function UpdateChecker() {
     ) : phase === "downloading" ? (
       <>
         <Loader2
-          className="h-4 w-4 shrink-0 animate-spin text-indigo-300"
+          className="h-4 w-4 shrink-0 animate-spin text-zinc-300"
           aria-hidden="true"
         />
         <span className="font-medium text-neutral-100">
@@ -189,7 +189,7 @@ export default function UpdateChecker() {
     ) : phase === "installed" ? (
       <>
         <CheckCircle2
-          className="h-4 w-4 shrink-0 text-emerald-300"
+          className="h-4 w-4 shrink-0 text-zinc-300"
           aria-hidden="true"
         />
         <span className="font-semibold text-neutral-100">
@@ -199,7 +199,7 @@ export default function UpdateChecker() {
     ) : (
       <>
         <AlertTriangle
-          className="h-4 w-4 shrink-0 text-amber-300"
+          className="h-4 w-4 shrink-0 text-zinc-300"
           aria-hidden="true"
         />
         <span className="font-medium text-neutral-100">
@@ -214,7 +214,7 @@ export default function UpdateChecker() {
       aria-live="polite"
       className="fade-in slide-down fixed inset-x-0 top-0 z-40"
     >
-      <div className="border-b border-indigo-500/30 bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 shadow-lg shadow-indigo-950/50">
+      <div className="border-b border-zinc-700 bg-zinc-900 shadow-lg shadow-black/50">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
             {versionLabel}
@@ -224,7 +224,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleInstall()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-1.5 text-[13px] font-semibold text-white shadow-md shadow-purple-950/50"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black shadow-md shadow-black/50"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               Update now
@@ -234,7 +234,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleRelaunch()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1.5 text-[13px] font-semibold text-white shadow-md shadow-emerald-950/50"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black shadow-md shadow-black/50"
             >
               <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
               Restart now
@@ -244,7 +244,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleInstall()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-1.5 text-[13px] font-semibold text-white"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black"
             >
               <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
               Retry
@@ -266,9 +266,9 @@ export default function UpdateChecker() {
         {/* Download progress bar. Indeterminate (pulsing) when the update
             server did not report a content length. */}
         {phase === "downloading" && (
-          <div className="h-1 w-full bg-indigo-950/80" aria-hidden="true">
+          <div className="h-1 w-full bg-zinc-950/80" aria-hidden="true">
             <div
-              className={`h-full bg-gradient-to-r from-indigo-400 to-purple-400 transition-[width] duration-200 ${
+              className={`h-full bg-white transition-[width] duration-200 ${
                 progress === null ? "w-full animate-pulse" : ""
               }`}
               style={progress === null ? undefined : { width: `${progress}%` }}

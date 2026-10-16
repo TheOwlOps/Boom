@@ -324,7 +324,7 @@ function UpdateCheckRow() {
 
   const control =
     state.kind === "uptodate" ? (
-      <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
         <CheckCircle2 size={14} aria-hidden="true" />
         Up to date
       </span>
@@ -332,13 +332,13 @@ function UpdateCheckRow() {
       <button
         type="button"
         onClick={() => void handleInstall()}
-        className="btn-hover flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-950/50"
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-md shadow-black/50"
       >
         <Download size={13} aria-hidden="true" />
         Update to v{state.version}
       </button>
     ) : state.kind === "downloading" ? (
-      <span className="flex items-center gap-1.5 text-xs font-medium text-indigo-300">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
         <Loader2 size={14} className="animate-spin" aria-hidden="true" />
         Installing…
       </span>
@@ -346,7 +346,7 @@ function UpdateCheckRow() {
       <button
         type="button"
         onClick={() => void handleRelaunch()}
-        className="btn-hover flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-950/50"
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-md shadow-black/50"
       >
         <RotateCw size={13} aria-hidden="true" />
         Restart now

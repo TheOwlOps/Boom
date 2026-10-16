@@ -135,9 +135,9 @@ function formatTime(ts: string): string {
 /* ------------------------------------------------------------------ theme */
 
 const LEVEL_STYLES: Record<LogLevel, string> = {
-  INFO: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  WARN: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-  ERROR: "bg-red-500/15 text-red-400 border-red-500/30",
+  INFO: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
+  WARN: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
+  ERROR: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
   DEBUG: "bg-neutral-500/15 text-neutral-400 border-neutral-500/30",
 };
 
@@ -329,7 +329,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
               type="checkbox"
               checked={autoScroll}
               onChange={(e) => setAutoScroll(e.target.checked)}
-              className="accent-blue-500"
+              className="accent-zinc-500"
             />
             auto-scroll
           </label>
@@ -338,7 +338,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
             onClick={() => setPaused((p) => !p)}
             className={`rounded border px-2 py-1 font-mono text-xs transition-colors ${
               paused
-                ? "border-yellow-500/50 bg-yellow-500/15 text-yellow-400"
+                ? "border-zinc-500/50 bg-zinc-500/15 text-zinc-400"
                 : "border-neutral-700 bg-neutral-800 text-neutral-200 hover:border-neutral-500"
             }`}
           >
@@ -355,7 +355,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
           </div>
         ) : error && entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3">
-            <span className="text-red-400">// failed to load logs: {error}</span>
+            <span className="text-zinc-400">// failed to load logs: {error}</span>
             <button
               type="button"
               onClick={() => void loadInitial()}
@@ -384,7 +384,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
       <div className="flex items-center gap-3 border-t border-neutral-800 px-3 py-2 font-mono text-xs text-neutral-500">
         <span>
           {filtered.length} / {entries.length} entries
-          {paused && <span className="ml-2 text-yellow-500">(polling paused)</span>}
+          {paused && <span className="ml-2 text-zinc-500">(polling paused)</span>}
         </span>
         <button
           type="button"
@@ -395,7 +395,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
           {loadingMore ? "loading…" : hasMore ? "Load more (older)" : "no more entries"}
         </button>
         {error && entries.length > 0 && (
-          <span className="text-red-500">// last load failed: {error}</span>
+          <span className="text-zinc-500">// last load failed: {error}</span>
         )}
       </div>
     </div>

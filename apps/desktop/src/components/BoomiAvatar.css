@@ -37,7 +37,7 @@
 /* "thinking": gentle breathing pulse while the assistant works. */
 .boomi-status-thinking {
   animation: boomi-pulse 1.6s ease-in-out infinite;
-  box-shadow: 0 0 0 3px rgb(var(--accent-rgb, 99 102 241) / 0.25);
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.25);
 }
 
 /* "error": desaturated so a failed state reads at a glance. */
@@ -46,12 +46,10 @@
   opacity: 0.75;
 }
 
-/* "success": subtle glow + slight scale-up. */
+/* "success": white ring + slight scale-up (monochrome — no colored glow). */
 .boomi-status-success {
   transform: scale(1.06);
-  box-shadow:
-    0 0 0 3px rgb(var(--accent-rgb, 99 102 241) / 0.25),
-    0 0 18px rgb(var(--accent-rgb, 99 102 241) / 0.45);
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.9);
 }
 
 /* Greeting line under the mascot illustration (chat empty state). */
