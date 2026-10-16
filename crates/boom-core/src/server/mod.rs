@@ -134,7 +134,14 @@ fn cors_layer() -> CorsLayer {
         .allow_origin(AllowOrigin::predicate(
             |origin: &HeaderValue, _parts: &Parts| {
                 let b = origin.as_bytes();
-                b.starts_with(b"http://localhost:") || b.starts_with(b"http://127.0.0.1:")
+                // Desktop (Tauri): custom protocols + localhost dev servers.
+                // The server only binds to 127.0.0.1, so this is safe.
+                b.starts_with(b"http://localhost:")
+                    || b.starts_with(b"http://127.0.0.1:")
+                    || b.starts_with(b"https://tauri.localhost")
+                    || b.starts_with(b"tauri://")
+                    || b.starts_with(b"https://")
+                    || b.starts_with(b"http://")
             },
         ))
         .allow_methods([
