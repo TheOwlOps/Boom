@@ -35,3 +35,6 @@ tauri-plugin-log = "2"
 # Kept as-is until Tauri upstream migrates the plugin to a non-yanked zip.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
+# Shell plugin: used to spawn the `boom-backend` PyInstaller binary as a
+# Tauri sidecar (with a python3 dev fallback when the sidecar is absent).
+tauri-plugin-shell = "2"

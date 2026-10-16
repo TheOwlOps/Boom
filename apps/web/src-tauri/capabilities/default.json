@@ -1,13 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
   "description": "enables the default permissions",
-  "windows": [
-    "main"
-  ],
+  "identifier": "default",
   "permissions": [
     "core:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    {
+      "allow": [
+        {
+          "args": true,
+          "name": "../../../gateway/binaries/boom-backend",
+          "sidecar": true
+        }
+      ],
+      "identifier": "shell:allow-spawn"
+    }
+  ],
+  "windows": [
+    "main"
   ]
 }

@@ -28,9 +28,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from pathlib import Path
 
+def _repo_root():
+    """Repo root for ``__file__``-relative resources (skills/, data/, ...).
+
+    In a PyInstaller one-file bundle ``__file__`` points inside the
+    extraction temp dir, so ``parent.parent`` would resolve to the temp
+    dir's parent (e.g. /tmp) instead of the bundled tree. Use
+    ``sys._MEIPASS`` when frozen so bundled resources are found.
+    """
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+    return Path(__file__).resolve().parent.parent
+
+
 # Ensure agent/src is on path for `tools.*` imports (e.g. tools.ws_client).
 # This makes `python -m gateway.api` work without manual PYTHONPATH.
-_root = Path(__file__).resolve().parent.parent
+_root = _repo_root()
 for _p in (str(_root), str(_root / "agent" / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -60,8 +75,7 @@ _ACTIVITY_FRESH_SEC = 30  # newest event within this window counts as "current"
 
 
 def _activity_root():
-    from pathlib import Path
-    return Path(__file__).resolve().parent.parent
+    return _repo_root()
 
 
 def _parse_ts_iso(ts):
@@ -189,7 +203,7 @@ def _build_activity_payload():
     return {"activities": activities, "current": current}
 
 
-_GROUPS_DB = Path(__file__).resolve().parent.parent / "data" / "groups.db"
+_GROUPS_DB = _repo_root() / "data" / "groups.db"
 
 
 def _groups_manager():
@@ -200,7 +214,7 @@ def _groups_manager():
     return GroupManager(db_path=_GROUPS_DB)
 
 
-_BOTS_DB = Path(__file__).resolve().parent.parent / "data" / "bots.db"
+_BOTS_DB = _repo_root() / "data" / "bots.db"
 
 
 def _bots_manager():
@@ -422,8 +436,7 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             try:
-                from pathlib import Path
-                skills_dir = Path(__file__).resolve().parent.parent / "skills"
+                skills_dir = _repo_root() / "skills"
                 if skills_dir.exists():
                     skills_count = sum(1 for p in skills_dir.iterdir() if p.is_dir())
             except Exception:
@@ -516,8 +529,7 @@ class _Handler(BaseHTTPRequestHandler):
             # Scan the repo's real skills/ directory
             skills = []
             try:
-                from pathlib import Path
-                skills_dir = Path(__file__).resolve().parent.parent / "skills"
+                skills_dir = _repo_root() / "skills"
                 if skills_dir.exists():
                     for p in sorted(skills_dir.iterdir()):
                         if not p.is_dir():
