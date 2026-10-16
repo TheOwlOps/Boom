@@ -54,12 +54,9 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Build Tauri
-        uses: tauri-apps/tauri-action@v0
+        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: apps/web
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
