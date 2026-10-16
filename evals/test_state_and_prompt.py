@@ -51,10 +51,10 @@ def test_boom_parity_components():
 
     # 2. Test SystemPromptBuilder
     builder = SystemPromptBuilder(root_dir)
-    skills = [{"name": "ast-refactor", "description": "AST structural search"}]
+    skills = [{"name": "code-review", "description": "Static Python code review"}]
     prompt_tg = builder.build_system_prompt("telegram", available_skills=skills)
     assert "ultra-terse" in prompt_tg
-    assert "ast-refactor" in prompt_tg
+    assert "code-review" in prompt_tg
 
     prompt_zalo = builder.build_system_prompt("zalo", available_skills=skills)
     assert "LỄ PHÉP" in prompt_zalo

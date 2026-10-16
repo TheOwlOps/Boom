@@ -1,9 +1,9 @@
-"""Offline tests for the feature-watch skill (stage at ~/workspace/boom-mods/feature-watch).
+"""Offline tests for the feature-watch skill (archived at skills-archived/feature-watch).
 
 Covers, without cloning the repo:
   1. Skill dir exists with SKILL.md + YAML frontmatter (name=feature-watch,
      description non-empty) — the same convention SkillLoader enforces.
-  2. skills/feature-watch/cron-example.json is valid JSON with a proper cron
+  2. skills-archived/feature-watch/cron-example.json is valid JSON with a proper cron
      expression (5-field or @daily/@weekly), non-empty prompt, and a deliver_to
      dict with non-empty channel+target (matching _checked_deliver_to in
      cronjob_tool.py).
@@ -17,7 +17,7 @@ import re
 import sys
 
 MODULE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILL_DIR = os.path.join(MODULE_ROOT, "skills", "feature-watch")
+SKILL_DIR = os.path.join(MODULE_ROOT, "skills-archived", "feature-watch")
 SKILL_MD = os.path.join(SKILL_DIR, "SKILL.md")
 CRON_EXAMPLE = os.path.join(SKILL_DIR, "cron-example.json")
 

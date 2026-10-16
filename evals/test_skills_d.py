@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent.parent / "skills"
+BASE = Path(__file__).resolve().parent.parent / "skills-archived"
 sys.path.insert(0, str(BASE / "log-analyzer"))
 sys.path.insert(0, str(BASE / "backup-manager"))
 sys.path.insert(0, str(BASE / "notify-hub"))

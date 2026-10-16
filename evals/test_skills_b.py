@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent.parent / "skills"
+BASE = Path(__file__).resolve().parent.parent / "skills-archived"
 sys.path.insert(0, str(BASE / "deployer"))
 sys.path.insert(0, str(BASE / "doc-researcher"))
 sys.path.insert(0, str(BASE / "refactor-assistant"))

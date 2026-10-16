@@ -16,14 +16,16 @@ import unittest
 from pathlib import Path
 
 # Nạp 4 module skill (mỗi skill 1 thư mục, tên file không dấu gạch ngang)
+# db-helper, cron-manager, env-setup are archived; git-workflow is active.
 ROOT = Path(__file__).resolve().parent.parent
-for _skill_dir in ("db-helper", "cron-manager", "git-workflow", "env-setup"):
-    sys.path.insert(0, str(ROOT / "skills" / _skill_dir))
+for _skill_dir in ("db-helper", "cron-manager", "env-setup"):
+    sys.path.insert(0, str(ROOT / "skills-archived" / _skill_dir))
+sys.path.insert(0, str(ROOT / "skills" / "git-workflow"))
 
-import helper  # noqa: E402  (skills/db-helper/helper.py)
+import helper  # noqa: E402  (skills-archived/db-helper/helper.py)
 from helper import DBHelper, InsertResult, MigrationReport, UnsafeSQLError  # noqa: E402
 
-import manager  # noqa: E402  (skills/cron-manager/manager.py)
+import manager  # noqa: E402  (skills-archived/cron-manager/manager.py)
 from manager import CronError, CronExpression, CronJob  # noqa: E402
 from manager import add, describe, list_jobs, parse_cron, remove  # noqa: E402
 
@@ -31,7 +33,7 @@ import workflow  # noqa: E402  (skills/git-workflow/workflow.py)
 from workflow import BranchStatus, CheckItem, CommitPlan  # noqa: E402
 from workflow import branch_status, pr_checklist, smart_commit  # noqa: E402
 
-import setup as env_setup  # noqa: E402  (skills/env-setup/setup.py)
+import setup as env_setup  # noqa: E402  (skills-archived/env-setup/setup.py)
 from setup import CheckResult, EnvConfig  # noqa: E402
 from setup import all_ok, check_deps, check_env_vars, check_ports, check_python, run_all  # noqa: E402
 

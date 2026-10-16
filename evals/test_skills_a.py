@@ -11,9 +11,11 @@ import textwrap
 from pathlib import Path
 
 # -- nap 4 skill vao sys.path --
+# perf-optimizer is archived; others are active.
 ROOT = Path(__file__).resolve().parent.parent
-for skill_dir in ("code-review", "test-writer", "security-audit", "perf-optimizer"):
+for skill_dir in ("code-review", "test-writer", "security-audit"):
     sys.path.insert(0, str(ROOT / "skills" / skill_dir))
+sys.path.insert(0, str(ROOT / "skills-archived" / "perf-optimizer"))
 
 import review      # noqa: E402
 import writer      # noqa: E402
