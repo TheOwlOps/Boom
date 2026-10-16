@@ -19,11 +19,37 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const CHAT_TIMEOUT_MS = 120_000;
 
 /**
+ * True when the UI runs inside the Tauri desktop shell. Tauri v1 injects
+ * `window.__TAURI__`; it is absent in plain web browsers and dev servers.
+ */
+const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+
+/**
  * Base message for every backend-outage failure. It tells the user exactly
  * what to do instead of surfacing a cryptic "Failed to fetch".
+ *
+ * @deprecated Web/dev wording only — desktop users would not understand the
+ * python3 instruction. Prefer {@link getBackendHelpText()} for the
+ * context-appropriate text. Kept exported for backward compatibility.
  */
 export const BACKEND_UNREACHABLE_MESSAGE =
   'Cannot reach Boom backend at http://localhost:18080. Start it with: python3 gateway/api.py';
+
+/**
+ * Desktop (Tauri) wording: the app spawns the backend itself, so the fix
+ * is a restart — not a shell command the user never sees.
+ */
+const BACKEND_UNREACHABLE_MESSAGE_TAURI =
+  'Boom backend is not running. Please restart the app — it starts automatically.';
+
+/**
+ * Context-aware help text for backend-outage failures:
+ * - Desktop (Tauri): ask for an app restart (the backend starts automatically).
+ * - Web / dev server: keep the actionable `python3 gateway/api.py` command.
+ */
+export function getBackendHelpText(): string {
+  return isTauri ? BACKEND_UNREACHABLE_MESSAGE_TAURI : BACKEND_UNREACHABLE_MESSAGE;
+}
 
 /**
  * Thrown for every failure to get a usable response from the backend:
@@ -35,7 +61,8 @@ export class BackendUnreachableError extends Error {
   readonly detail?: string;
 
   constructor(detail?: string) {
-    super(detail ? `${BACKEND_UNREACHABLE_MESSAGE} (${detail})` : BACKEND_UNREACHABLE_MESSAGE);
+    const base = getBackendHelpText();
+    super(detail ? `${base} (${detail})` : base);
     this.name = 'BackendUnreachableError';
     this.detail = detail;
   }
@@ -350,6 +377,30 @@ function parseProviderTest(v: unknown): ProviderTestResult {
  */
 export function testProviderConnection(providerId: string): Promise<ProviderTestResult> {
   return sendJson('POST', '/api/providers/test', parseProviderTest, { provider_id: providerId });
+}
+
+/* ---------------- Provider-not-configured detection --------------------- */
+
+/**
+ * Exact `error` string the gateway returns from POST /api/chat when the
+ * backend runs degraded because no AI provider key is configured
+ * (`self._error(503, "agent brain not configured")` in gateway/api.py —
+ * see `build_real_api`). `readErrorMessage()` keeps it intact on
+ * `BackendUnreachableError.detail`.
+ */
+export const PROVIDER_NOT_CONFIGURED_ERROR = 'agent brain not configured';
+
+/**
+ * True when `err` is the backend honestly reporting that chat cannot run
+ * because no AI provider is configured (HTTP 503). The chat view uses this
+ * to show a gentle "open Settings" prompt instead of the generic
+ * backend-unreachable error.
+ */
+export function isProviderNotConfiguredError(err: unknown): err is BackendUnreachableError {
+  return (
+    isBackendUnreachableError(err) &&
+    err.detail === PROVIDER_NOT_CONFIGURED_ERROR
+  );
 }
 
 /* ---------------- Zalo Personal ----------------------------------------- */

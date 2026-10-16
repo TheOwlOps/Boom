@@ -374,7 +374,11 @@ export default function App() {
           {/* Full backend health panel — only visible while disconnected. */}
           <BackendStatus />
           {mainTab === "chat" && (
-            <ChatView sessionId={activeSession} onTogglePanel={noop} />
+            <ChatView
+              sessionId={activeSession}
+              onTogglePanel={noop}
+              onOpenSettings={() => setMainTab("settings")}
+            />
           )}
           {mainTab === "groups" && <GroupManager />}
           {mainTab === "logs" && <LogViewer />}

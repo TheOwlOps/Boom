@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { PanelRight, SendHorizonal, RotateCcw, MessageCircle, Copy, Check, Bot } from "lucide-react";
-import { listBots, postChat, setActiveBot } from "../lib/api";
+import { PanelRight, SendHorizonal, RotateCcw, MessageCircle, Copy, Check, Bot, KeyRound, X } from "lucide-react";
+import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "../lib/api";
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
 import { ThinkingDots } from "./ThinkingDots";
@@ -21,6 +21,13 @@ const COPY_FEEDBACK_MS = 1500;
 type Props = {
   sessionId: string | null;
   onTogglePanel(): void;
+  /**
+   * Opens the Settings view (defaults to the Providers section, which holds
+   * the full provider configuration). Optional so older callers keep
+   * compiling — when absent, the provider prompt still renders, just
+   * without the shortcut button.
+   */
+  onOpenSettings?: () => void;
 };
 
 function uid(): string {
@@ -79,13 +86,17 @@ const typingAvatarStyle: CSSProperties = {
 };
 const typingBodyStyle: CSSProperties = { maxWidth: "85%", padding: "10px 4px" };
 
-export function ChatView({ sessionId, onTogglePanel }: Props) {
+export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
   const [lastStrategy, setLastStrategy] = useState<Strategy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Gentle, non-blocking prompt shown when the user sends a message before
+  // any AI provider is configured (see the catch in `send`). It never blocks
+  // sending — the message still goes through once a key is added in Settings.
+  const [noProvider, setNoProvider] = useState(false);
 
   // Typewriter reveal state: id of the assistant message being revealed and
   // how many word chunks are currently visible.
@@ -178,6 +189,7 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
   useEffect(() => {
     setMessages([]);
     setError(null);
+    setNoProvider(false);
     setLastStrategy(null);
     setTypingId(null);
     // NOTE: history fetch goes through lib/api (e.g. GET /api/sessions detail
@@ -279,8 +291,16 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
             : null,
         );
         setTypingId(reply.id); // start the typewriter reveal animation
+        setNoProvider(false); // a reply proves a provider is configured
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Request failed");
+        if (isProviderNotConfiguredError(err)) {
+          // The backend is up but no AI provider key is configured (HTTP 503
+          // "agent brain not configured"). Show the gentle inline prompt
+          // instead of the scary backend-unreachable error card.
+          setNoProvider(true);
+        } else {
+          setError(err instanceof Error ? err.message : "Request failed");
+        }
       } finally {
         setSending(false);
         setPhase(null);
@@ -476,6 +496,32 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
           <div className="thinking-row">
             <ThinkingDots />
             <span className="thinking-label">{phase}…</span>
+          </div>
+        )}
+
+        {noProvider && (
+          <div className="provider-prompt" role="status">
+            <KeyRound size={16} aria-hidden="true" className="provider-prompt-icon" />
+            <p className="provider-prompt-text">
+              Chưa cấu hình AI provider — thêm API key trong Settings để Boom trả lời tin nhắn.
+            </p>
+            {onOpenSettings && (
+              <button
+                type="button"
+                className="provider-prompt-button"
+                onClick={onOpenSettings}
+              >
+                Mở Settings
+              </button>
+            )}
+            <button
+              type="button"
+              className="provider-prompt-dismiss"
+              onClick={() => setNoProvider(false)}
+              aria-label="Bỏ qua"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 

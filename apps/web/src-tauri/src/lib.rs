@@ -158,7 +158,7 @@ fn spawn_sidecar(app: &AppHandle) -> Result<BackendChild, String> {
     });
 
     log::info!(
-        "sidecar '{}' started (pid {}) on port {}",
+        "[backend] sidecar '{}' started successfully (pid {}) on port {}",
         SIDECAR_NAME,
         child.pid(),
         BACKEND_PORT
@@ -197,9 +197,10 @@ fn spawn_python_fallback() -> Result<Child, String> {
         })?;
 
     log::info!(
-        "python fallback backend started ({} {}) on port {}",
+        "[backend] python fallback backend started successfully ({} {}, pid {}) on port {}",
         python,
         script.display(),
+        child.id(),
         BACKEND_PORT
     );
     Ok(child)
@@ -227,11 +228,27 @@ fn spawn_backend_process(app: &AppHandle, state: &State<BackendProcess>) -> Resu
             Ok(())
         }
         Err(sidecar_err) => {
-            eprintln!(
-                "[backend] {}; falling back to python3 dev backend",
+            // Sidecar failed: log the exact error loudly (this must never be
+            // silent) and try the python3 dev fallback.
+            let sidecar_msg = format!(
+                "[backend] sidecar spawn failed: {}; trying python3 fallback",
                 sidecar_err
             );
-            let child = spawn_python_fallback()?;
+            log::warn!("{}", sidecar_msg);
+            eprintln!("{}", sidecar_msg);
+            let child = spawn_python_fallback().map_err(|python_err| {
+                // Both the bundled sidecar AND the python3 fallback failed.
+                // TODO(backend-startup): once tauri-plugin-dialog is added to
+                // Cargo.toml, show a native error dialog with this message so
+                // the user knows the backend is down and how to fix it.
+                let both = format!(
+                    "backend failed to start — sidecar error: {}; python3 fallback error: {}",
+                    sidecar_err, python_err
+                );
+                log::error!("[backend] {}", both);
+                eprintln!("[backend] {}", both);
+                both
+            })?;
             *guard = Some(BackendChild::Python(child));
             Ok(())
         }
@@ -431,23 +448,43 @@ pub fn run() {
         // "Restart" button after an update is installed.
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Logging is initialised in every build (not just debug builds).
+            // Backend lifecycle events must be visible in production: a
+            // silently failing backend is the exact failure mode the startup
+            // check below hardens against.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
             // Track the backend child process in Tauri state.
             app.manage(BackendProcess(Mutex::new(None)));
-            // Auto-start the backend on launch: sidecar first, python3 dev
-            // fallback second. Best effort: a failure is logged but must not
-            // prevent the app from opening.
+            // Auto-start the backend on launch: the sidecar binary is spawned
+            // immediately here inside the setup hook (no user action
+            // required), falling back to the python3 dev backend when the
+            // sidecar is absent. Best effort: a failure is logged loudly but
+            // must not prevent the app window from opening.
+            log::info!(
+                "[backend] auto-start: spawning backend on port {}",
+                BACKEND_PORT
+            );
             let app_handle = app.handle().clone();
             let state: State<BackendProcess> = app.state();
             match spawn_backend_process(&app_handle, &state) {
-                Ok(()) => log::info!("backend started on port {}", BACKEND_PORT),
-                Err(e) => eprintln!("[backend] auto-start failed: {}", e),
+                Ok(()) => {
+                    log::info!("[backend] auto-start succeeded on port {}", BACKEND_PORT)
+                }
+                Err(e) => {
+                    // Both the sidecar and the python3 fallback failed (the
+                    // detailed error was already logged by
+                    // spawn_backend_process). The app still opens so the user
+                    // can retry via the `start_backend` command.
+                    // TODO(backend-startup): surface this to the user with a
+                    // native error dialog via tauri-plugin-dialog (not yet a
+                    // dependency — see Cargo.toml) instead of logging only.
+                    log::error!("[backend] auto-start failed: {}", e);
+                    eprintln!("[backend] auto-start failed: {}", e);
+                }
             }
             Ok(())
         })

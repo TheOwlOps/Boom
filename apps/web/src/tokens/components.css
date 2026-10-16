@@ -268,6 +268,70 @@
   cursor: default;
 }
 
+/* Gentle inline prompt shown when the user sends a chat message before any
+ * AI provider is configured. Accent-tinted (not danger) so it reads as a
+ * nudge, not an error; pairs with the provider-prompt-button shortcut that
+ * opens the Settings > Providers section. */
+.provider-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  border-radius: var(--radius-card);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.provider-prompt-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.provider-prompt-text {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-prompt-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 150ms ease;
+}
+
+.provider-prompt-button:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.provider-prompt-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: var(--radius-control);
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.provider-prompt-dismiss:hover {
+  color: var(--text);
+}
+
 .chat-composer {
   display: flex;
   gap: 10px;
