@@ -13,6 +13,7 @@ import {
 import { EmptyState } from "./EmptyState";
 import { getChannels } from "../lib/api";
 import type { ChannelStatus } from "../lib/types";
+import ZaloPersonalSetup from "./ZaloPersonalSetup";
 
 const REFRESH_MS = 30_000;
 
@@ -177,6 +178,7 @@ export interface ChannelMonitorProps {
 export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
   const [channels, setChannels] = useState<ChannelStatus[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [zaloOpen, setZaloOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -273,6 +275,27 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
           <StatusDot connected={c.connected} />
         </div>
       ))}
+      <button
+        type="button"
+        onClick={() => setZaloOpen(true)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "8px 10px",
+          borderRadius: 10,
+          border: "1px dashed var(--border)",
+          background: "transparent",
+          color: "var(--muted)",
+          fontSize: 13,
+          cursor: "pointer",
+          marginTop: 4,
+        }}
+      >
+        <Smartphone size={18} />
+        <span>Connect Zalo Personal</span>
+      </button>
+      <ZaloPersonalSetup open={zaloOpen} onClose={() => setZaloOpen(false)} />
     </div>
   );
 }

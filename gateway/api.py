@@ -239,6 +239,17 @@ def _marketplace_backend():
     agent code at load time)."""
     from agent.src.marketplace import MarketplaceBackend
     return MarketplaceBackend()
+
+
+def _zalo_personal_adapter():
+    """Builds a ZaloPersonalAdapter. Import is lazy on purpose (same reason
+    as _groups_manager): importing this module must never break when the
+    optional ``zlapi`` dependency is missing — that failure surfaces only
+    when login is attempted, as a clean RuntimeError the handler reports."""
+    from gateway.channels.zalo_personal import ZaloPersonalAdapter
+    return ZaloPersonalAdapter()
+
+
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
@@ -508,6 +519,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"sessions": []})
         elif path == "/api/channels/status":
             self._send_json(200, self.api.channel_status())
+        elif path == "/api/channels/zalo-personal/status":
+            self._handle_zalo_personal_status()
         elif path == "/api/dag/status":
             self._send_json(200, self.api.dag_status())
         elif path == "/api/tools":
@@ -585,6 +598,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_marketplace_install()
         elif path == "/api/marketplace/uninstall":
             self._handle_marketplace_uninstall()
+        elif path == "/api/channels/zalo-personal/login":
+            self._handle_zalo_personal_login()
+        elif path == "/api/channels/zalo-personal/logout":
+            self._handle_zalo_personal_logout()
         else:
             self._error(404, "not found")
 
@@ -949,6 +966,81 @@ class _Handler(BaseHTTPRequestHandler):
             api_log(f"/api/marketplace/uninstall error: {e}")
             return self._error(500, "uninstall failed")
         self._send_json(200, result)
+
+    # ------------------------------------------------------- zalo-personal
+
+    def _handle_zalo_personal_status(self):
+        """GET /api/channels/zalo-personal/status.
+
+        Contract: {"connected": bool, "phone_masked": str | null}. The raw
+        phone number is never exposed.
+        """
+        try:
+            adapter = _zalo_personal_adapter()
+            connected = bool(adapter.is_logged_in())
+            phone_masked = adapter.get_masked_phone() or None
+        except Exception as e:
+            api_log("zalo-personal status error: %s" % type(e).__name__)
+            return self._error(500, "failed to read zalo-personal status")
+        self._send_json(200, {"connected": connected,
+                              "phone_masked": phone_masked})
+
+    def _handle_zalo_personal_logout(self):
+        """POST /api/channels/zalo-personal/logout — always safe to call,
+        even when no session exists."""
+        try:
+            _zalo_personal_adapter().logout()
+        except Exception as e:
+            api_log("zalo-personal logout error: %s" % type(e).__name__)
+            return self._error(500, "failed to log out of zalo-personal")
+        self._send_json(200, {"ok": True})
+
+    def _handle_zalo_personal_login(self):
+        """POST /api/channels/zalo-personal/login — body {phone, password}.
+
+        Contract: {ok: true, phone_masked: "..."} on success. Empty/missing
+        phone or password -> 400. Missing optional ``zlapi`` dependency or a
+        failed login attempt -> 500 with an actionable message. The password
+        is never echoed into the response or the logs.
+        """
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        phone = data.get("phone")
+        password = data.get("password")
+        if not isinstance(phone, str) or not phone.strip():
+            return self._error(400, "phone is required")
+        if not isinstance(password, str) or not password:
+            return self._error(400, "password is required")
+        phone = phone.strip()
+
+        def _scrub(text):
+            # Credentials must never reach the response or the logs.
+            return str(text).replace(password, "***").replace(phone, "***")
+
+        try:
+            adapter = _zalo_personal_adapter()
+        except Exception as e:
+            api_log("zalo-personal login error: adapter unavailable "
+                    "(%s)" % type(e).__name__)
+            return self._error(500, "zalo-personal adapter is unavailable")
+        try:
+            result = adapter.login(phone, password)
+        except ValueError as e:
+            return self._error(400, _scrub(str(e)) or "invalid credentials")
+        except RuntimeError as e:
+            msg = _scrub(str(e)) or "zalo-personal login failed"
+            api_log("zalo-personal login failed: %s" % msg)
+            return self._error(500, msg)
+        except Exception as e:
+            api_log("zalo-personal login error: %s" % type(e).__name__)
+            return self._error(500, "zalo-personal login failed")
+        finally:
+            # Drop the cleartext reference as soon as the call returns.
+            password = ""
+        phone_masked = result.get("phone") if isinstance(result, dict) else None
+        self._send_json(200, {"ok": True, "phone_masked": phone_masked})
 
     def _resolve_bot_context(self, bot_id):
         """Resolve (system_prompt, tool_names) for a bot id.

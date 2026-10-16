@@ -298,6 +298,53 @@ export function uninstallMarketplaceItem(id: string): Promise<void> {
   return sendJson('POST', '/api/marketplace/uninstall', () => undefined, { id });
 }
 
+/* ---------------- Zalo Personal ----------------------------------------- */
+
+/**
+ * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ *   GET  /api/channels/zalo-personal/status -> { connected: boolean, phone_masked: string | null }
+ *   POST /api/channels/zalo-personal/login  -> { phone, password } -> { connected: boolean, phone_masked: string | null }
+ *   POST /api/channels/zalo-personal/logout -> { ok: true }
+ *
+ * Zalo Personal uses an unofficial API — credentials are only ever sent over
+ * this call; the client never stores them (localStorage included).
+ */
+export interface ZaloPersonalStatus {
+  /** Whether the personal Zalo account is currently connected. */
+  connected: boolean;
+  /** Masked phone number (e.g. "09***1234"), or null when not connected. */
+  phoneMasked: string | null;
+}
+
+/**
+ * Parse GET /api/channels/zalo-personal/status and
+ * POST /api/channels/zalo-personal/login responses.
+ * `phone_masked` is optional — absent/null means "not masked by the backend".
+ */
+function parseZaloPersonalStatus(v: unknown, path: string): ZaloPersonalStatus {
+  if (!isRecord(v)) throw new Error(`malformed response: ${path}`);
+  if (typeof v.connected !== 'boolean') throw new Error(`malformed response: ${path} — connected must be a boolean`);
+  return {
+    connected: v.connected,
+    phoneMasked: v.phone_masked === undefined ? null : nullableString(v.phone_masked, 'zalo-personal.phone_masked'),
+  };
+}
+
+export function zaloPersonalStatus(): Promise<ZaloPersonalStatus> {
+  return getJson('/api/channels/zalo-personal/status', (v) =>
+    parseZaloPersonalStatus(v, 'GET /api/channels/zalo-personal/status'));
+}
+
+export function zaloPersonalLogin(phone: string, password: string): Promise<ZaloPersonalStatus> {
+  return sendJson('POST', '/api/channels/zalo-personal/login',
+    (v) => parseZaloPersonalStatus(v, 'POST /api/channels/zalo-personal/login'),
+    { phone, password });
+}
+
+export function zaloPersonalLogout(): Promise<void> {
+  return sendJson('POST', '/api/channels/zalo-personal/logout', () => undefined);
+}
+
 interface SseState { text: string | null; sessionId: string; strategy: string; errors: Record<string, string> }
 
 /** Handle one parsed SSE event. Returns true on terminal `done`; throws on `error`. */
