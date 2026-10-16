@@ -3,7 +3,9 @@
  * Thin HTTP client for the Boom gateway API (`gateway/api.py`, see API_CONTRACT.md).
  * No retries, no caching — failures surface honestly.
  * Every response is validated at runtime (unknown + narrowing); wrong shapes throw.
- * HTTP errors throw `Error` with the server's `{"error"}` message when present.
+ * Transport failures (network errors, timeouts) and non-2xx responses throw
+ * `BackendUnreachableError` — components should detect it with
+ * `isBackendUnreachableError()` and render a fallback instead of crashing.
  */
 import type {
   Bot, BotDraft, ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
@@ -11,7 +13,59 @@ import type {
 import type { MarketplaceItem } from '../data/marketplace';
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:18080';
+/** Default per-request timeout: fail fast when the backend is not reachable. */
+const DEFAULT_TIMEOUT_MS = 10_000;
+/** Chat (SSE) needs a longer budget — the model streams for a while. */
 const CHAT_TIMEOUT_MS = 120_000;
+
+/**
+ * Base message for every backend-outage failure. It tells the user exactly
+ * what to do instead of surfacing a cryptic "Failed to fetch".
+ */
+export const BACKEND_UNREACHABLE_MESSAGE =
+  'Cannot reach Boom backend at http://localhost:18080. Start it with: python3 gateway/api.py';
+
+/**
+ * Thrown for every failure to get a usable response from the backend:
+ * network errors (connection refused, DNS), request timeouts, and
+ * non-2xx HTTP responses. Catch it with `isBackendUnreachableError()`.
+ */
+export class BackendUnreachableError extends Error {
+  /** Extra context (HTTP status line, timeout length) — informational only. */
+  readonly detail?: string;
+
+  constructor(detail?: string) {
+    super(detail ? `${BACKEND_UNREACHABLE_MESSAGE} (${detail})` : BACKEND_UNREACHABLE_MESSAGE);
+    this.name = 'BackendUnreachableError';
+    this.detail = detail;
+  }
+}
+
+/** Type guard so components can react to backend-outage failures specifically. */
+export function isBackendUnreachableError(err: unknown): err is BackendUnreachableError {
+  return err instanceof BackendUnreachableError;
+}
+
+/**
+ * Fetch with an AbortController timeout.
+ * Transport failures are translated into BackendUnreachableError:
+ * - network errors (backend down, connection refused, DNS failure)
+ * - AbortError raised by our own timeout
+ */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new BackendUnreachableError(`request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw new BackendUnreachableError(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -36,10 +90,10 @@ async function readErrorMessage(res: Response): Promise<string> {
   return `HTTP ${res.status} ${res.statusText}`.trim();
 }
 
-/** GET `path`, validate the JSON body with `parse`, throw on HTTP/shape errors. */
+/** GET `path`, validate the JSON body with `parse`. Failures throw BackendUnreachableError. */
 async function getJson<T>(path: string, parse: (v: unknown) => T): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) throw new Error(await readErrorMessage(res));
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {}, DEFAULT_TIMEOUT_MS);
+  if (!res.ok) throw new BackendUnreachableError(await readErrorMessage(res));
   let body: unknown;
   try {
     body = (await res.json()) as unknown;
@@ -153,15 +207,15 @@ function parseBotBody(v: unknown, path: string): Bot {
 
 /**
  * JSON request with a body (POST/PUT/DELETE). Validates the response with
- * `parse`, throws on HTTP/shape errors. Mirrors getJson conventions.
+ * `parse`. Failures throw BackendUnreachableError. Mirrors getJson conventions.
  */
 async function sendJson<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, parse: (v: unknown) => T, payload?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(await readErrorMessage(res));
+  }, DEFAULT_TIMEOUT_MS);
+  if (!res.ok) throw new BackendUnreachableError(await readErrorMessage(res));
   let body: unknown;
   try {
     body = (await res.json()) as unknown;
@@ -321,31 +375,26 @@ async function readSseReply(res: Response, req: ChatRequest, onStatus?: (s: Chat
   };
 }
 
+/**
+ * POST /api/chat (SSE stream). Chat keeps its own 120s budget — a 10s default
+ * would kill legitimate long model responses. Network/timeout/HTTP failures
+ * throw BackendUnreachableError (the timeout detail says "after 120s").
+ */
 export async function postChat(req: ChatRequest, onStatus?: (s: ChatStatus) => void): Promise<ChatReply> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${API_BASE}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify(req),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(await readErrorMessage(res));
-    if ((res.headers.get('content-type') ?? '').includes('text/event-stream')) {
-      return await readSseReply(res, req, onStatus);
-    }
-    let body: unknown;
-    try {
-      body = (await res.json()) as unknown;
-    } catch {
-      throw new Error('malformed response: /api/chat did not return JSON');
-    }
-    return parseChatReply(body);
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') throw new Error('chat request timed out after 120s');
-    throw err;
-  } finally {
-    clearTimeout(timer);
+  const res = await fetchWithTimeout(`${API_BASE}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(req),
+  }, CHAT_TIMEOUT_MS);
+  if (!res.ok) throw new BackendUnreachableError(await readErrorMessage(res));
+  if ((res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+    return await readSseReply(res, req, onStatus);
   }
+  let body: unknown;
+  try {
+    body = (await res.json()) as unknown;
+  } catch {
+    throw new Error('malformed response: /api/chat did not return JSON');
+  }
+  return parseChatReply(body);
 }

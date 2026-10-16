@@ -34,6 +34,7 @@ import Marketplace, {
   type MarketplaceItem,
 } from "./components/Marketplace";
 import { Toast } from "./components/Toast";
+import BackendStatus from "./components/BackendStatus";
 import {
   getMarketplace,
   getMarketplaceInstalled,
@@ -349,7 +350,13 @@ export default function App() {
 
       {/* Center column — status bar, main nav, active view */}
       <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-        <StatusBar />
+        {/* Status bar row: existing StatusBar + backend health dot. */}
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <StatusBar />
+          </div>
+          <BackendStatus compact />
+        </div>
         <MainNav
           tab={mainTab}
           onTab={setMainTab}
@@ -362,6 +369,8 @@ export default function App() {
           role="tabpanel"
           aria-label={`${activeLabel} view`}
         >
+          {/* Full backend health panel — only visible while disconnected. */}
+          <BackendStatus />
           {mainTab === "chat" && (
             <ChatView sessionId={activeSession} onTogglePanel={noop} />
           )}
