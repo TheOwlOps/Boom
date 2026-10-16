@@ -3,6 +3,9 @@
 // Integration: pnpm add react-markdown remark-gfm
 // Animation classes (keyframes live in shared animations.css, NOT defined here):
 //   msg-appear (message mount), toolcall-pulse (tool running state)
+// iMessage skin: bubble/row/timestamp classes live in ../styles/imessage.css
+//   (prefix `im-`). MessageBubble renders avatar-at-bottom rows with curved
+//   tails; all layout constants are CSS, no logic changed here.
 // Security: no dangerouslySetInnerHTML. react-markdown runs without rehype-raw,
 // so raw HTML in model output is escaped, never injected.
 
@@ -22,6 +25,11 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 12, fontFamily: BODY, color: 'var(--muted)', cursor: 'pointer',
 };
 
+/**
+ * Code-block background resolves through --im-code-bg so the iMessage skin
+ * can darken code inside the gray bot bubble; falls back to the original
+ * --surface-2 everywhere else (callers that never import imessage.css).
+ */
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | null>(null);
@@ -44,7 +52,7 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   }, [code]);
 
   return (
-    <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', margin: '8px 0' }}>
+    <div style={{ background: 'var(--im-code-bg, var(--surface-2))', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', margin: '8px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', borderBottom: '1px solid var(--border)' }}>
         <span style={{ fontSize: 12, fontFamily: MONO, color: 'var(--muted)' }}>{lang ?? 'code'}</span>
         <button
@@ -71,7 +79,7 @@ const mdComponents: Components = {
     const raw = String(children ?? '').replace(/\n$/, '');
     if (!match && !raw.includes('\n')) {
       return (
-        <code className={className} style={{ fontFamily: MONO, fontSize: '0.85em', background: 'var(--surface-2)', padding: '2px 6px', borderRadius: 6 }}>
+        <code className={className} style={{ fontFamily: MONO, fontSize: '0.85em', background: 'var(--im-code-bg, var(--surface-2))', padding: '2px 6px', borderRadius: 6 }}>
           {children}
         </code>
       );
@@ -83,24 +91,38 @@ const mdComponents: Components = {
   },
 };
 
+/** HH:MM in the user's locale; empty string when ts is missing/invalid. */
+function formatTime(ts: number): string {
+  if (!Number.isFinite(ts) || ts <= 0) return '';
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * iMessage-style message row.
+ *  - user: right-aligned black bubble (#000 dark / near-black light),
+ *    white text, no avatar, tail on the bottom-right.
+ *  - assistant: left-aligned gray bubble (var(--surface-2)) next to an
+ *    animated BoomiAvatar (bottom-aligned), markdown rendered inside,
+ *    tail on the bottom-left.
+ * A small muted timestamp sits under every bubble.
+ */
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
+  const ts = formatTime(message.ts);
   return (
-    <div className="msg-appear" style={{ display: 'flex', gap: 10, justifyContent: isUser ? 'flex-end' : 'flex-start', padding: '6px 0' }}>
-      {!isUser && (
-        <div aria-hidden style={{ flexShrink: 0, marginTop: 2 }}>
-          <BoomiAvatar size={28} alt="Boomi" />
+    <div className={`msg-appear im-row${isUser ? ' im-row-user' : ' im-row-bot'}`}>
+      {!isUser && <BoomiAvatar size={32} alt="Boomi" />}
+      <div className="im-col">
+        <div className={`im-bubble${isUser ? ' im-bubble-user' : ' im-bubble-bot'}`}>
+          {isUser
+            ? <div className="im-user-text">{message.text}</div>
+            : <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{message.text}</ReactMarkdown>}
         </div>
-      )}
-      <div style={{
-        maxWidth: '85%', background: isUser ? 'var(--accent)' : 'transparent',
-        color: isUser ? '#fff' : 'var(--text)', borderRadius: 10,
-        padding: isUser ? '10px 14px' : '10px 4px',
-        fontFamily: BODY, fontSize: 15, lineHeight: 1.65, overflowWrap: 'anywhere',
-      }}>
-        {isUser
-          ? <div style={{ whiteSpace: 'pre-wrap' }}>{message.text}</div>
-          : <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{message.text}</ReactMarkdown>}
+        {ts && <div className="im-ts" aria-label={`Sent at ${ts}`}>{ts}</div>}
       </div>
     </div>
   );

@@ -1,83 +1,92 @@
-import { useEffect, useMemo, useState } from "react";
-import { MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
-import { listSessions } from "../lib/api";
-import type { Session } from "../lib/types";
+import { useMemo, useState } from "react";
+import { Bot as BotIcon, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
+import type { Bot } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
+import "./Sidebar.css";
 
 export interface SidebarProps {
   collapsed: boolean;
   onToggle(): void;
-  activeSession: string | null;
-  onSelectSession(id: string | null): void;
+  /** Teammates, loaded by the parent via listBots(). Online = bot.is_active. */
+  bots: Bot[];
+  /** True while the parent is fetching bots — shows skeleton rows. */
+  loadingBots?: boolean;
+  activeBotId: string | null;
+  onSelectBot(id: string): void;
   onNewChat(): void;
-  onOpenSettings(): void;
-}
-
-/** Human-relative timestamp; no date library. */
-function timeAgo(iso: string | null): string {
-  if (!iso) return "";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "";
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  const w = Math.floor(d / 7);
-  if (w < 5) return `${w}w ago`;
-  const mo = Math.floor(d / 30);
-  return `${mo}mo ago`;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="sidebar-logo" title="Boom">
-      {/* Boomi mascot as the app icon; replaces the plain logo dot. */}
+      {/* Boomi mascot as the app icon. */}
       <BoomiAvatar size={28} alt="Boomi" />
       {!collapsed && <span className="font-display logo-word">Boom</span>}
     </div>
   );
 }
 
+function TeammateRow({
+  bot,
+  active,
+  onSelect,
+}: {
+  bot: Bot;
+  active: boolean;
+  onSelect(id: string): void;
+}) {
+  const online = bot.is_active;
+  const preview = (bot.description ?? "").trim() || "No description yet";
+  return (
+    <button
+      type="button"
+      className={`teammate-item stagger-item${active ? " active" : ""}`}
+      onClick={() => onSelect(bot.id)}
+      title={`${bot.name} — ${online ? "Online" : "Offline"}`}
+      aria-current={active ? "true" : undefined}
+    >
+      <span className="teammate-avatar-wrap">
+        <BoomiAvatar size={40} status={online ? "idle" : "sleeping"} alt={bot.name} />
+        <span
+          className={`teammate-presence${online ? " online" : ""}`}
+          aria-hidden="true"
+        />
+      </span>
+      <span className="teammate-meta">
+        <span className="teammate-name-row">
+          <span className="teammate-name">{bot.name}</span>
+          <span className={`teammate-status${online ? " online" : ""}`}>
+            <span className="status-dot" aria-hidden="true" />
+            {online ? "Online" : "Offline"}
+          </span>
+        </span>
+        <span className="teammate-preview">{preview}</span>
+      </span>
+    </button>
+  );
+}
+
 export default function Sidebar({
   collapsed,
   onToggle,
-  activeSession,
-  onSelectSession,
+  bots,
+  loadingBots = false,
+  activeBotId,
+  onSelectBot,
   onNewChat,
-  onOpenSettings,
 }: SidebarProps) {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setSessions(await listSessions());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load sessions");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => (s.title ?? "Untitled").toLowerCase().includes(q));
-  }, [sessions, query]);
+    if (!q) return bots;
+    return bots.filter(
+      (b) =>
+        b.name.toLowerCase().includes(q) ||
+        (b.description ?? "").toLowerCase().includes(q)
+    );
+  }, [bots, query]);
 
   if (collapsed) {
     return (
@@ -88,6 +97,23 @@ export default function Sidebar({
         <button className="icon-btn accent" onClick={onNewChat} title="New chat" aria-label="New chat">
           <Plus size={18} />
         </button>
+        <div className="teammate-rail" aria-label="Teammates">
+          {filtered.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              className={`teammate-rail-item${b.id === activeBotId ? " active" : ""}`}
+              onClick={() => onSelectBot(b.id)}
+              title={`${b.name} — ${b.is_active ? "Online" : "Offline"}`}
+            >
+              <BoomiAvatar
+                size={36}
+                status={b.is_active ? "idle" : "sleeping"}
+                alt={b.name}
+              />
+            </button>
+          ))}
+        </div>
         <div className="sidebar-collapsed-spacer" />
         <ChannelMonitor compact />
       </aside>
@@ -95,7 +121,7 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="sidebar" aria-label="Sessions">
+    <aside className="sidebar" aria-label="Teammates">
       <div className="sidebar-header">
         <Logo collapsed={collapsed} />
         <div className="sidebar-header-actions">
@@ -114,13 +140,13 @@ export default function Sidebar({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search conversations"
-          aria-label="Search conversations"
+          placeholder="Search teammates"
+          aria-label="Search teammates"
         />
       </div>
 
-      <nav className="session-list" aria-label="Conversation history" aria-busy={loading}>
-        {loading && (
+      <nav className="teammate-list" aria-label="Teammates" aria-busy={loadingBots}>
+        {loadingBots && (
           <div className="skeleton-stack" aria-hidden="true">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="skeleton skeleton-row" />
@@ -128,40 +154,26 @@ export default function Sidebar({
           </div>
         )}
 
-        {!loading && error && (
-          <div className="error-card" role="alert">
-            <p>{error}</p>
-            <button className="btn-ghost" onClick={() => void load()}>
-              Retry
-            </button>
-          </div>
-        )}
-
-        {!loading && !error && filtered.length === 0 && (
+        {!loadingBots && filtered.length === 0 && (
           <div className="empty-state">
-            <MessageSquare size={24} aria-hidden="true" />
-            <p>{query.trim() ? "No matching conversations" : "No conversations yet"}</p>
+            <BotIcon size={24} aria-hidden="true" />
+            <p>{query.trim() ? "No matching teammates" : "No teammates yet"}</p>
             {query.trim() ? null : (
               <button className="btn-ghost" onClick={onNewChat}>
-                Start one
+                Start chatting
               </button>
             )}
           </div>
         )}
 
-        {!loading &&
-          !error &&
-          filtered.map((s, i) => (
-            <button
-              key={s.id}
-              className={`session-item stagger-item${s.id === activeSession ? " active" : ""}`}
-              style={{ animationDelay: `${Math.min(i, 20) * 0.03}s` }}
-              onClick={() => onSelectSession(s.id)}
-              title={s.title ?? "Untitled"}
-            >
-              <span className="session-title">{s.title ?? "Untitled"}</span>
-              {s.updated_at && <span className="session-time">{timeAgo(s.updated_at)}</span>}
-            </button>
+        {!loadingBots &&
+          filtered.map((b) => (
+            <TeammateRow
+              key={b.id}
+              bot={b}
+              active={b.id === activeBotId}
+              onSelect={onSelectBot}
+            />
           ))}
       </nav>
 

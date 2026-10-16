@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
-import { PanelRight, SendHorizonal, RotateCcw, Copy, Check, KeyRound, X } from "lucide-react";
+import { SendHorizonal, RotateCcw, Copy, Check, KeyRound, X } from "lucide-react";
 import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "../lib/api";
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
 import { BoomiAvatar } from "./BoomiAvatar";
 import { ThinkingDots } from "./ThinkingDots";
 import "../styles/effects.css";
+import "../styles/imessage.css";
 
 // CLIENT-SIDE ANIMATION (NOT live token streaming): the backend returns the
 // full reply at once (see API_CONTRACT.md `POST /api/chat`), and this reveals
@@ -19,8 +19,20 @@ const NEAR_BOTTOM_PX = 80;
 const MAX_INPUT_PX = 200; // composer auto-resize cap
 const COPY_FEEDBACK_MS = 1500;
 
+/** Bot-switching surface exposed to parents (e.g. the sidebar) via onBotApi. */
+export interface BotApi {
+  bots: BotInfo[];
+  activeBotId: string | null;
+  switchBot: (id: string) => Promise<void>;
+}
+
 type Props = {
   sessionId: string | null;
+  /**
+   * Kept for API compatibility with older callers (App.tsx passes it).
+   * The iMessage header no longer renders a panel toggle button; the prop
+   * is accepted and ignored.
+   */
   onTogglePanel(): void;
   /**
    * Opens the Settings view (defaults to the Providers section, which holds
@@ -29,6 +41,13 @@ type Props = {
    * without the shortcut button.
    */
   onOpenSettings?: () => void;
+  /**
+   * Optional hook for parents that own bot selection (e.g. a sidebar):
+   * receives { bots, activeBotId, switchBot } whenever it changes, so the
+   * parent can render its own picker and switch bots without the in-header
+   * dropdown this component used to have.
+   */
+  onBotApi?: (api: BotApi) => void;
 };
 
 function uid(): string {
@@ -66,18 +85,7 @@ function TypingText({ text, wordsShown }: { text: string; wordsShown: number }) 
   );
 }
 
-// Inline layout matching MessageBubble's assistant row (kept local so the
-// typing placeholder looks identical to the final markdown bubble).
-const typingRowStyle: CSSProperties = {
-  display: "flex",
-  gap: 10,
-  justifyContent: "flex-start",
-  padding: "6px 0",
-};
-const typingBodyStyle: CSSProperties = { maxWidth: "85%", padding: "10px 4px" };
-// (BoomiAvatar replaces the old typing-avatar placeholder div.)
-
-export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
+export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -104,7 +112,9 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
     [],
   );
 
-  // Custom bots (Grok-style): roster + active bot picker.
+  // Custom bots (Grok-style): roster + active bot. The in-header dropdown
+  // picker is gone (the sidebar owns selection now) but the roster logic
+  // is unchanged, and switchBot is exposed to parents via onBotApi.
   const [bots, setBots] = useState<BotInfo[]>([]);
   const [activeBotId, setActiveBotId] = useState<string | null>(() => {
     try {
@@ -170,6 +180,12 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
     },
     [activeBotId]
   );
+
+  // Expose bot control to the parent (sidebar picker). onBotApi is optional;
+  // when absent, everything above still works exactly as before.
+  useEffect(() => {
+    onBotApi?.({ bots, activeBotId, switchBot });
+  }, [onBotApi, bots, activeBotId, switchBot]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -350,7 +366,14 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
     autoresize(e.target);
   };
 
-  const title = sessionId ? `Session ${sessionId.slice(0, 8)}…` : "New conversation";
+  // `lastStrategy` is still tracked (set in `send`) but the iMessage header
+  // is minimal — no strategy badge rendered. Read here to keep the state
+  // intentionally alive for future use / debugging.
+  void lastStrategy;
+  // `onTogglePanel` kept for prop compatibility only (no toggle button in
+  // the iMessage header); `botMenuOpen` state is driven by switchBot only.
+  void onTogglePanel;
+
   const canSend = !sending && input.trim().length > 0;
 
   // Id of the newest assistant message — the only one that gets Regenerate.
@@ -363,72 +386,30 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
 
   return (
     <section className="chat-view" aria-label="Chat">
-      <header className="chat-header">
-        {/* Active-bot picker: avatar + name, click to switch. */}
-        <div className="bot-picker">
-          <button
-            type="button"
-            className="bot-picker-button"
-            onClick={() => setBotMenuOpen((v) => !v)}
-            aria-haspopup="listbox"
-            aria-expanded={botMenuOpen}
-            aria-label={activeBot ? `Active bot: ${activeBot.name}. Switch bot` : "Switch bot"}
-            disabled={bots.length === 0}
-          >
-            <span className="bot-avatar" aria-hidden="true">
-              {activeBot ? activeBot.avatar_emoji : "🤖"}
-            </span>
-            <span className="bot-name">{activeBot ? activeBot.name : "Default bot"}</span>
-            <span className="bot-caret" aria-hidden="true">▾</span>
-          </button>
-
-          {botMenuOpen && bots.length > 0 && (
-            <ul className="bot-menu" role="listbox" aria-label="Select bot">
-              {bots.map((bot) => (
-                <li key={bot.id} role="option" aria-selected={bot.id === activeBotId}>
-                  <button
-                    type="button"
-                    className={`bot-menu-item${bot.id === activeBotId ? " is-active" : ""}`}
-                    onClick={() => void switchBot(bot.id)}
-                  >
-                    <span className="bot-avatar" aria-hidden="true">{bot.avatar_emoji}</span>
-                    <span className="bot-name">{bot.name}</span>
-                    {bot.id === activeBotId && (
-                      <span className="bot-check" aria-hidden="true">✓</span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      {/* iMessage header: avatar + active bot name + Online status.
+          No bot-picker dropdown (sidebar owns selection via onBotApi),
+          no panel toggle button. */}
+      <header className="im-header">
+        <BoomiAvatar size={36} alt={activeBot ? activeBot.name : "Boomi"} />
+        <div className="im-header-meta">
+          <div className="im-header-name">{activeBot ? activeBot.name : "Boomi"}</div>
+          <div className="im-header-status">
+            <span className="im-online-dot" aria-hidden="true" />
+            <span>Online</span>
+            {botError && (
+              <span className="im-header-note" role="alert" title={botError}>
+                · bots unavailable
+              </span>
+            )}
+          </div>
         </div>
-
-        <h2 className="chat-title">{title}</h2>
-        {lastStrategy && (
-          <span className="strategy-badge" title="Strategy used for the last reply">
-            {lastStrategy}
-          </span>
-        )}
-        {botError && (
-          <span className="bot-error" role="alert" title={botError}>
-            Bot unavailable
-          </span>
-        )}
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onTogglePanel}
-          aria-label="Toggle side panel"
-        >
-          <PanelRight size={18} />
-        </button>
       </header>
 
       <div className="chat-messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite">
         {messages.length === 0 && !sending && (
           <div className="empty-state">
-            {/* Boomi mascot as the big illustration for a fresh conversation. */}
-            <BoomiAvatar size={112} alt="Boomi mascot" />
+            {/* Boomi mascot waves hello on a fresh conversation. */}
+            <BoomiAvatar size={112} status="waving" alt="Boomi mascot" />
             <p className="boomi-greeting">Hi, I'm Boomi 🦉</p>
             <p>No messages yet — say hello</p>
           </div>
@@ -466,15 +447,15 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
               </div>
 
               {isTyping ? (
-                // Typing placeholder: plain text word reveal; full markdown
-                // renders via MessageBubble once the reveal finishes.
-                <div className="msg-appear" style={typingRowStyle}>
-                  {/* Boomi mascot pulses while the reply is being revealed. */}
-                  <div style={{ flexShrink: 0, marginTop: 2 }}>
-                    <BoomiAvatar size={28} status="thinking" alt="Boomi is typing" />
-                  </div>
-                  <div style={typingBodyStyle}>
-                    <TypingText text={msg.text} wordsShown={revealedWords} />
+                // Typing placeholder: same iMessage bubble styling as the
+                // final MessageBubble; plain text word reveal, markdown
+                // renders once the reveal finishes.
+                <div className="msg-appear im-row im-row-bot">
+                  <BoomiAvatar size={32} status="thinking" alt="Boomi is typing" />
+                  <div className="im-col">
+                    <div className="im-bubble im-bubble-bot">
+                      <TypingText text={msg.text} wordsShown={revealedWords} />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -487,9 +468,12 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
         })}
 
         {phase && (
-          <div className="thinking-row">
-            <ThinkingDots />
-            <span className="thinking-label">{phase}…</span>
+          <div className="im-thinking">
+            {/* Animated thinking variant (cycles through 5 videos). */}
+            <BoomiAvatar size={32} status="thinking" alt="Boomi is thinking" />
+            <div className="im-thinking-bubble">
+              <ThinkingDots label={phase ? `${phase}…` : "Thinking"} />
+            </div>
           </div>
         )}
 
@@ -534,7 +518,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
 
       {/* Typing indicator: visible near the composer while waiting for a reply. */}
       {sending && (
-        <div className="typing-indicator" role="status" aria-live="polite">
+        <div className="im-sending" role="status" aria-live="polite">
           <span className="typing-dots" aria-hidden="true">
             <span />
             <span />
@@ -545,7 +529,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
       )}
 
       <form
-        className="chat-composer"
+        className="im-composer"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -553,7 +537,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
       >
         <textarea
           ref={inputRef}
-          className="composer-input"
+          className="im-input"
           rows={1}
           value={input}
           onChange={handleInput}
@@ -562,7 +546,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
           disabled={sending}
           aria-label="Message input"
         />
-        <button type="submit" className="send-button" disabled={!canSend} aria-label="Send message">
+        <button type="submit" className="im-send" disabled={!canSend} aria-label="Send message">
           <SendHorizonal size={18} />
         </button>
       </form>

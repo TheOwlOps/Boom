@@ -1,7 +1,7 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { Menu, MessageSquare, Settings, Store } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Menu, Settings, Store } from "lucide-react";
 import Sidebar from "./components/Sidebar";
-import { ChatView } from "./components/ChatView";
+import { ChatView, type BotApi } from "./components/ChatView";
 import StatusBar from "./components/StatusBar";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import UpdateChecker from "./components/UpdateChecker";
@@ -13,6 +13,7 @@ import Marketplace, {
 import { Toast } from "./components/Toast";
 import BackendStatus from "./components/BackendStatus";
 import WelcomeGate from "./components/WelcomeGate";
+import type { Bot } from "./lib/types";
 import {
   getMarketplace,
   getMarketplaceInstalled,
@@ -28,7 +29,9 @@ import {
 /**
  * Top-level app: Chat is the main view. All management views (Groups, Logs,
  * Activity, Bots, DAG, Tools, Skills) live inside the SettingsModal.
- * The old tab bar is gone — top bar keeps only Chat, Settings, Marketplace.
+ * The old tab bar is gone — the header is a slim iMessage-style title row:
+ * bot identity on the left, backend status dot + Settings/Marketplace
+ * icon actions on the right.
  */
 
 const LS_SIDEBAR_COLLAPSED = "boom.sidebarCollapsed";
@@ -63,14 +66,15 @@ function usePersistedState<T>(
   return [value, setValue];
 }
 
-
 /**
- * Simplified top bar: Chat is always the main view. Settings opens the
- * consolidated SettingsModal; Marketplace opens its own modal.
- * All management tabs (Groups, Logs, Activity, Bots, DAG,
- * Tools, Skills) moved into SettingsModal. Channels live inside Tools.
+ * Slim header row (52px), iMessage-style chat title bar.
+ * Left: bot identity — avatar monogram + name + subtitle.
+ * Right: backend status dot, then Settings / Marketplace icon buttons.
+ * Monochrome: CSS vars only (var(--bg), var(--surface), var(--border),
+ * var(--text), var(--muted)). Icon buttons are ghost circles with a gray
+ * hover background.
  */
-function MainNav({
+function Header({
   onOpenSettings,
   onOpenMarketplace,
 }: {
@@ -78,48 +82,58 @@ function MainNav({
   onOpenMarketplace(): void;
 }) {
   return (
-    <nav
-      aria-label="Main navigation"
-      className="flex items-center gap-1 border-b border-[var(--border)] bg-[var(--bg)] px-2 py-2"
-    >
-      <span className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[var(--text)]">
-        <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-        Chat
-      </span>
-      <span
-        className="mx-1 h-5 w-px shrink-0 bg-[var(--border)]"
-        aria-hidden="true"
-      />
-      <button
-        type="button"
-        onClick={onOpenSettings}
-        title="Settings"
-        aria-label="Open settings"
-        className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--text)]"
-      >
-        <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-        Settings
-      </button>
-      {/* Marketplace opens a modal — pinned to the right end. */}
-      <button
-        type="button"
-        onClick={onOpenMarketplace}
-        title="Marketplace"
-        aria-label="Open marketplace"
-        className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--text)]"
-      >
-        <Store className="h-3.5 w-3.5" aria-hidden="true" />
-        Marketplace
-      </button>
-    </nav>
+    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3">
+      {/* Left — bot identity (iMessage-style title). */}
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--surface)] text-[13px] font-semibold text-[var(--text)]"
+          aria-hidden="true"
+        >
+          B
+        </div>
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-[13px] font-semibold text-[var(--text)]">
+            Boomi
+          </span>
+          <span className="truncate text-[11px] text-[var(--muted)]">
+            AI assistant
+          </span>
+        </div>
+      </div>
+
+      {/* Right — backend status dot + icon actions. */}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <BackendStatus compact />
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Open settings"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        >
+          <Settings className="h-[18px] w-[18px]" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenMarketplace}
+          title="Marketplace"
+          aria-label="Open marketplace"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        >
+          <Store className="h-[18px] w-[18px]" aria-hidden="true" />
+        </button>
+      </div>
+    </header>
   );
 }
 
 /**
  * The old 320px inspector panel was merged into the main navigation — all
  * eight views now render in the center column. ChatView still declares a
- * required onTogglePanel prop (owned by another worker), so a no-op is
+ * required onTogglePanel prop (owned by the ui-chat worker), so a no-op is
  * passed until that toggle button is removed or repurposed there.
+ * NOTE for coordinator: see REPORT.md — do NOT make the prop optional here;
+ * that edit belongs to the ui-chat worker in components/ChatView.tsx.
  */
 function noop(): void {
   /* intentionally empty — see comment above */
@@ -132,8 +146,20 @@ export default function App() {
     false,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [settingsSection] = useState<SettingsSection>("general");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Bot roster for the teammates sidebar. ChatView owns the fetch +
+  // switch logic and reports it via onBotApi; App mirrors it here so the
+  // Sidebar (dumb component) can render and trigger switches.
+  const [bots, setBots] = useState<Bot[]>([]);
+  const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  const botApiRef = useRef<BotApi | null>(null);
+  const handleBotApi = useCallback((api: BotApi) => {
+    botApiRef.current = api;
+    setBots(api.bots);
+    setActiveBotId(api.activeBotId);
+  }, []);
 
   // Marketplace modal state.
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
@@ -230,16 +256,17 @@ export default function App() {
   const sidebarProps = {
     collapsed: sidebarCollapsed,
     onToggle: () => setSidebarCollapsed((v) => !v),
-    activeSession,
-    onSelectSession: (id: string | null) => {
-      setActiveSession(id);
+    bots,
+    activeBotId,
+    onSelectBot: (id: string) => {
+      // ChatView owns bot switching (API + localStorage); call through.
+      void botApiRef.current?.switchBot(id);
       setMobileNavOpen(false);
     },
     onNewChat: () => {
       setActiveSession(null);
       setMobileNavOpen(false);
     },
-    onOpenSettings: () => setSettingsOpen(true),
   };
 
   return (
@@ -256,19 +283,20 @@ export default function App() {
         <Sidebar {...sidebarProps} />
       </div>
 
-      {/* Center column — status bar, main nav, chat view */}
+      {/* Center column — slim header, thin status bar, chat view */}
       <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-        {/* Status bar row: existing StatusBar + backend health dot. */}
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <StatusBar />
-          </div>
-          <BackendStatus compact />
-        </div>
-        <MainNav
+        <Header
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenMarketplace={openMarketplace}
         />
+        {/* Thin status strip under the header. The backend health dot now
+            lives in the header (right side); StatusBar keeps its own
+            one-line info (API state, tools/skills counts, uptime).
+            The full BackendStatus panel below only renders while
+            disconnected. */}
+        <div className="min-w-0">
+          <StatusBar />
+        </div>
         {/* Chat is the main view; all management lives in SettingsModal. */}
         <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label="Chat view">
           {/* Full backend health panel — only visible while disconnected. */}
@@ -277,6 +305,7 @@ export default function App() {
             sessionId={activeSession}
             onTogglePanel={noop}
             onOpenSettings={() => setSettingsOpen(true)}
+            onBotApi={handleBotApi}
           />
         </div>
       </main>
@@ -299,7 +328,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile nav trigger (<768px) */}
+      {/* Mobile nav trigger (<768px) — unchanged. */}
       {!mobileNavOpen && (
         <button
           type="button"
