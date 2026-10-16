@@ -224,7 +224,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleInstall()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black shadow-md shadow-black/50"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[13px] font-semibold text-[var(--bg)] shadow-md shadow-black/50"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               Update now
@@ -234,7 +234,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleRelaunch()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black shadow-md shadow-black/50"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[13px] font-semibold text-[var(--bg)] shadow-md shadow-black/50"
             >
               <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
               Restart now
@@ -244,7 +244,7 @@ export default function UpdateChecker() {
             <button
               type="button"
               onClick={() => void handleInstall()}
-              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-black"
+              className="btn-hover flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[13px] font-semibold text-[var(--bg)]"
             >
               <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
               Retry
@@ -268,7 +268,7 @@ export default function UpdateChecker() {
         {phase === "downloading" && (
           <div className="h-1 w-full bg-zinc-950/80" aria-hidden="true">
             <div
-              className={`h-full bg-white transition-[width] duration-200 ${
+              className={`h-full bg-[var(--accent)] transition-[width] duration-200 ${
                 progress === null ? "w-full animate-pulse" : ""
               }`}
               style={progress === null ? undefined : { width: `${progress}%` }}

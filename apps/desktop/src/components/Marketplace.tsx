@@ -83,13 +83,13 @@ function PluginCard(props: {
 }) {
   const { item, added, onAdd } = props;
   return (
-    <div className="flex items-start gap-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 transition-colors hover:border-neutral-700">
+    <div className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
       <div className="text-4xl leading-none" aria-hidden="true">
         {item.icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="font-semibold text-neutral-100">{item.name}</div>
-        <p className="mt-1 line-clamp-2 text-sm text-neutral-400">{item.description}</p>
+        <div className="font-semibold text-[var(--text)]">{item.name}</div>
+        <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{item.description}</p>
       </div>
       <button
         type="button"
@@ -98,7 +98,7 @@ function PluginCard(props: {
         className={
           added
             ? "shrink-0 rounded-lg bg-zinc-600/15 px-4 py-2 text-sm font-medium text-zinc-400"
-            : "shrink-0 rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-white"
+            : "shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
         }
       >
         {added ? "Added ✓" : "Add"}
@@ -114,18 +114,18 @@ function BotCard(props: {
 }) {
   const { bot, onUse } = props;
   return (
-    <div className="flex items-start gap-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 transition-colors hover:border-neutral-700">
+    <div className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
       <div className="text-4xl leading-none" aria-hidden="true">
         {bot.icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="font-semibold text-neutral-100">{bot.name}</div>
-        <p className="mt-1 line-clamp-2 text-sm text-neutral-400">{bot.description}</p>
+        <div className="font-semibold text-[var(--text)]">{bot.name}</div>
+        <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{bot.description}</p>
       </div>
       <button
         type="button"
         onClick={() => onUse?.(bot.id)}
-        className="shrink-0 rounded-lg bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-white"
+        className="shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
       >
         Use
       </button>
@@ -151,7 +151,7 @@ function Section(props: {
           <button
             type="button"
             onClick={props.onViewAll}
-            className="text-sm text-neutral-400 transition-colors hover:text-neutral-100"
+            className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--text)]"
           >
             View all
           </button>
@@ -283,17 +283,17 @@ export function Marketplace(props: MarketplaceProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Marketplace"
-        className="marketplace-dialog flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/95 text-neutral-100 shadow-2xl"
+        className="marketplace-dialog flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-neutral-900/95 text-[var(--text)] shadow-2xl"
       >
         {/* --- header --------------------------------------------------- */}
-        <div className="flex items-center justify-between gap-4 border-b border-neutral-800 px-6 py-4">
-          <h2 className="text-lg font-bold text-neutral-100">Marketplace</h2>
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
+          <h2 className="text-lg font-bold text-[var(--text)]">Marketplace</h2>
           <div className="flex items-center gap-3">
             {/* segmented tabs */}
             <div
               role="tablist"
               aria-label="Marketplace tabs"
-              className="flex rounded-lg border border-neutral-800 bg-neutral-900 p-1"
+              className="flex rounded-lg border border-[var(--border)] bg-neutral-900 p-1"
             >
               {(["plugins", "bots"] as Tab[]).map((t) => (
                 <button
@@ -304,8 +304,8 @@ export function Marketplace(props: MarketplaceProps) {
                   onClick={() => setTab(t)}
                   className={
                     tab === t
-                      ? "rounded-md bg-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-100"
-                      : "rounded-md px-4 py-1.5 text-sm font-medium text-neutral-400 transition-colors hover:text-neutral-200"
+                      ? "rounded-md bg-neutral-700 px-4 py-1.5 text-sm font-medium text-[var(--text)]"
+                      : "rounded-md px-4 py-1.5 text-sm font-medium text-[var(--muted)] transition-colors hover:text-neutral-200"
                   }
                 >
                   {t === "plugins" ? "Plugins" : "Bots"}
@@ -317,7 +317,7 @@ export function Marketplace(props: MarketplaceProps) {
               type="button"
               onClick={onClose}
               aria-label="Close marketplace"
-              className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100"
+              className="rounded-lg p-2 text-[var(--muted)] transition-colors hover:bg-neutral-800 hover:text-[var(--text)]"
             >
               <X size={20} />
             </button>
@@ -325,7 +325,7 @@ export function Marketplace(props: MarketplaceProps) {
         </div>
 
         {/* --- search + chips ------------------------------------------- */}
-        <div className="border-b border-neutral-800 px-6 py-4">
+        <div className="border-b border-[var(--border)] px-6 py-4">
           <div className="relative">
             <Search
               size={18}
@@ -337,7 +337,7 @@ export function Marketplace(props: MarketplaceProps) {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-4 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-neutral-600 focus:outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-neutral-900 py-2.5 pl-10 pr-4 text-sm text-[var(--text)] placeholder:text-neutral-500 focus:border-neutral-600 focus:outline-none"
             />
           </div>
           {tab === "plugins" && (
@@ -350,8 +350,8 @@ export function Marketplace(props: MarketplaceProps) {
                   aria-pressed={chip === c}
                   className={
                     chip === c
-                      ? "rounded-full bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900"
-                      : "rounded-full border border-neutral-800 bg-neutral-900 px-4 py-1.5 text-sm text-neutral-400 transition-colors hover:border-neutral-700 hover:text-neutral-200"
+                      ? "rounded-full bg-[var(--surface-2)] px-4 py-1.5 text-sm font-medium text-[var(--text)]"
+                      : "rounded-full border border-[var(--border)] bg-neutral-900 px-4 py-1.5 text-sm text-[var(--muted)] transition-colors hover:border-[var(--muted)] hover:text-neutral-200"
                   }
                 >
                   {c}

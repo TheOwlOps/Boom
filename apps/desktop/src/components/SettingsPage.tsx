@@ -332,7 +332,7 @@ function UpdateCheckRow() {
       <button
         type="button"
         onClick={() => void handleInstall()}
-        className="btn-hover flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-md shadow-black/50"
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--bg)] shadow-md shadow-black/50"
       >
         <Download size={13} aria-hidden="true" />
         Update to v{state.version}
@@ -346,7 +346,7 @@ function UpdateCheckRow() {
       <button
         type="button"
         onClick={() => void handleRelaunch()}
-        className="btn-hover flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black shadow-md shadow-black/50"
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--bg)] shadow-md shadow-black/50"
       >
         <RotateCw size={13} aria-hidden="true" />
         Restart now
@@ -449,7 +449,7 @@ function ToggleSwitch({
     >
       <span
         aria-hidden="true"
-        className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white transition-all ${
+        className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-[var(--accent)] transition-all ${
           checked ? "left-[22px]" : "left-[3px]"
         }`}
       />

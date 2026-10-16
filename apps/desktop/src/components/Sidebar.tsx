@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings } from "lucide-react";
+import { MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { listSessions } from "../lib/api";
 import type { Session } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
@@ -88,9 +88,6 @@ export default function Sidebar({
         <button className="icon-btn accent" onClick={onNewChat} title="New chat" aria-label="New chat">
           <Plus size={18} />
         </button>
-        <button className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Settings">
-          <Settings size={18} />
-        </button>
         <div className="sidebar-collapsed-spacer" />
         <ChannelMonitor compact />
       </aside>
@@ -170,10 +167,6 @@ export default function Sidebar({
 
       <footer className="sidebar-footer">
         <ChannelMonitor compact />
-        <button className="settings-btn" onClick={onOpenSettings} title="Settings">
-          <Settings size={16} aria-hidden="true" />
-          <span>Settings</span>
-        </button>
       </footer>
     </aside>
   );

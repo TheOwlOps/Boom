@@ -30,7 +30,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-y-auto bg-neutral-950 px-4 py-10">
+    <div className="relative flex min-h-screen items-center justify-center overflow-y-auto bg-[var(--bg)] px-4 py-10">
       {/* Gradient mesh background (effects.css, compositor-only). */}
       <div className="mesh-bg" aria-hidden="true">
         <span className="mesh-blob mesh-blob--a"></span>
@@ -51,7 +51,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
             <div
-              className="h-full rounded-full bg-white transition-all duration-500 ease-out"
+              className="h-full rounded-full bg-[var(--accent)] transition-all duration-500 ease-out"
               style={{ width: `${((step + 1) / 2) * 100}%` }}
             />
           </div>
@@ -106,9 +106,9 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
   return (
     <div className="py-8 text-center">
       <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-zinc-800 shadow-lg shadow-black/50">
-        <Sparkles className="h-10 w-10 text-white" />
+        <Sparkles className="h-10 w-10 text-[var(--text)]" />
       </div>
-      <h1 className="mb-2 text-4xl font-extrabold text-white">
+      <h1 className="mb-2 text-4xl font-extrabold text-[var(--text)]">
         Welcome to Boom
       </h1>
       <p className="mx-auto mb-8 max-w-sm text-sm text-neutral-400">
@@ -118,7 +118,7 @@ function WelcomeStep({ onStart }: { onStart: () => void }) {
       <button
         type="button"
         onClick={onStart}
-        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3 text-base font-semibold text-black"
+        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-8 py-3 text-base font-semibold text-[var(--bg)]"
       >
         Get Started
         <ArrowRight className="h-5 w-5" />
@@ -148,7 +148,7 @@ function DoneStep({
         type="button"
         onClick={onFinish}
         disabled={saving}
-        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-white px-8 py-3 text-base font-semibold text-black disabled:opacity-50"
+        className="glow-hover inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-8 py-3 text-base font-semibold text-[var(--bg)] disabled:opacity-50"
       >
         Start using Boom
         <ArrowRight className="h-5 w-5" />

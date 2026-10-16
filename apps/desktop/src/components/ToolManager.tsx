@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG, type ToolDef } from "../data/toolCatalog";
+import { ChannelMonitor } from "./ChannelMonitor";
 
 /** Group tools by function category. */
 const GROUPS = ["filesystem", "terminal", "git", "web", "code", "security", "db"] as const;
@@ -55,7 +56,7 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
           <button
             onClick={() => void run()}
             disabled={running}
-            className="rounded bg-white px-3 py-1.5 text-sm text-black hover:bg-zinc-200 disabled:opacity-50"
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
           >
             {running ? "Running…" : "Execute"}
           </button>
@@ -65,7 +66,7 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
   );
 }
 
-/** Tool manager: list by group, search by name, run each tool. */
+/** Tool manager: channels subsection first, then tools grouped by function. */
 export default function ToolManager() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<ToolDef | null>(null);
@@ -76,6 +77,9 @@ export default function ToolManager() {
     [query],
   );
 
+  const q = query.trim().toLowerCase();
+  const showChannels = q === "" || "channels".includes(q) || "telegram".includes(q) || "discord".includes(q) || "zalo".includes(q);
+
   return (
     <div>
       <input
@@ -84,6 +88,16 @@ export default function ToolManager() {
         placeholder="Search tools by name…"
         className="mb-4 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600"
       />
+      {showChannels && (
+        <section className="mb-5">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            Channels
+          </h3>
+          <div className="rounded-lg border border-neutral-800 px-2 py-1">
+            <ChannelMonitor />
+          </div>
+        </section>
+      )}
       {GROUPS.map((group) => {
         const tools = filtered.filter((t) => t.group === group);
         return (

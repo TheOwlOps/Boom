@@ -385,7 +385,7 @@ function BotFormModal({
           <button
             onClick={() => void save()}
             disabled={saving}
-            className="rounded bg-white px-3 py-1.5 text-sm text-black hover:bg-zinc-200 disabled:opacity-50"
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
           >
             {saving ? "Saving…" : initial ? "Save changes" : "Create bot"}
           </button>
@@ -581,7 +581,7 @@ export default function BotManager() {
         </button>
         <button
           onClick={() => setCreating(true)}
-          className="flex items-center gap-1.5 rounded bg-white px-3 py-2 text-sm text-black hover:bg-zinc-200"
+          className="flex items-center gap-1.5 rounded bg-[var(--accent)] px-3 py-2 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)]"
         >
           <Plus size={14} /> New Bot
         </button>
