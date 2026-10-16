@@ -6,7 +6,7 @@
  * HTTP errors throw `Error` with the server's `{"error"}` message when present.
  */
 import type {
-  ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
+  Bot, BotDraft, ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
 } from './types';
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:18080';
@@ -120,6 +120,75 @@ export function getHealth(): Promise<Health> { return getJson('/api/health', par
 export function listSessions(): Promise<Session[]> { return getJson('/api/sessions', parseSessions); }
 export function getChannels(): Promise<ChannelStatus[]> { return getJson('/api/channels/status', parseChannels); }
 export function getDag(): Promise<DagNode[]> { return getJson('/api/dag/status', parseDag); }
+
+/* ---------------- Custom bots (Grok-style) -------------------------------- */
+
+function parseBot(v: unknown): Bot {
+  if (!isRecord(v)) throw new Error('malformed response: bot entry');
+  return {
+    id: reqString(v.id, 'bot.id'),
+    name: reqString(v.name, 'bot.name'),
+    description: typeof v.description === 'string' ? v.description : '',
+    system_prompt: typeof v.system_prompt === 'string' ? v.system_prompt : '',
+    avatar_emoji: typeof v.avatar_emoji === 'string' ? v.avatar_emoji : '',
+    allowed_tools: isStringArray(v.allowed_tools) ? v.allowed_tools : [],
+    denied_tools: isStringArray(v.denied_tools) ? v.denied_tools : [],
+    channel_bindings: isStringArray(v.channel_bindings) ? v.channel_bindings : [],
+    is_active: v.is_active === true,
+  };
+}
+
+/** Parse `GET /api/bots` -> `{bots: Bot[]}`. */
+function parseBots(v: unknown): Bot[] {
+  if (!isRecord(v) || !Array.isArray(v.bots)) throw new Error('malformed response: /api/bots');
+  return v.bots.map(parseBot);
+}
+
+/** Parse `{bot: Bot}` bodies returned by POST/PUT /api/bots[/:id]. */
+function parseBotBody(v: unknown, path: string): Bot {
+  if (!isRecord(v) || !isRecord(v.bot)) throw new Error(`malformed response: ${path}`);
+  return parseBot(v.bot);
+}
+
+/**
+ * JSON request with a body (POST/PUT/DELETE). Validates the response with
+ * `parse`, throws on HTTP/shape errors. Mirrors getJson conventions.
+ */
+async function sendJson<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, parse: (v: unknown) => T, payload?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await readErrorMessage(res));
+  let body: unknown;
+  try {
+    body = (await res.json()) as unknown;
+  } catch {
+    throw new Error(`malformed response: ${path} did not return JSON`);
+  }
+  return parse(body);
+}
+
+export function listBots(): Promise<Bot[]> {
+  return getJson('/api/bots', parseBots);
+}
+
+export function createBot(draft: BotDraft): Promise<Bot> {
+  return sendJson('POST', '/api/bots', (v) => parseBotBody(v, 'POST /api/bots'), draft);
+}
+
+export function updateBot(id: string, draft: BotDraft): Promise<Bot> {
+  return sendJson('PUT', `/api/bots/${encodeURIComponent(id)}`, (v) => parseBotBody(v, 'PUT /api/bots/:id'), draft);
+}
+
+export function deleteBot(id: string): Promise<void> {
+  return sendJson('DELETE', `/api/bots/${encodeURIComponent(id)}`, () => undefined);
+}
+
+export function setActiveBot(id: string): Promise<void> {
+  return sendJson('POST', '/api/bots/active', () => undefined, { bot_id: id });
+}
 
 interface SseState { text: string | null; sessionId: string; strategy: string; errors: Record<string, string> }
 

@@ -39,6 +39,107 @@
   white-space: nowrap;
 }
 
+
+/* ---- Custom bot picker (Grok-style) ---- */
+.bot-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.bot-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.bot-picker-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.bot-picker-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bot-avatar {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.bot-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-caret {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.bot-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated, var(--surface));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.bot-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.bot-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.bot-menu-item.is-active {
+  background: var(--accent-soft, rgba(59, 130, 246, 0.12));
+}
+
+.bot-check {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.bot-error {
+  font-size: 11px;
+  color: var(--warning, #f59e0b);
+  white-space: nowrap;
+}
+
 .strategy-badge {
   display: inline-flex;
   align-items: center;

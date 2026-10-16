@@ -2,9 +2,9 @@
 name = "boom_desktop"
 version = "0.1.0"
 description = "Boom Agent Harness Desktop App"
-authors = ["Ryan"]
-license = ""
-repository = ""
+authors = ["TheOwlOps"]
+license = "MIT"
+repository = "https://github.com/TheOwlOps/Boom"
 edition = "2021"
 
 [[bin]]

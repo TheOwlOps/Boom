@@ -198,6 +198,17 @@ def _groups_manager():
     """
     from agent.src.business.groups import GroupManager
     return GroupManager(db_path=_GROUPS_DB)
+
+
+_BOTS_DB = Path(__file__).resolve().parent.parent / "data" / "bots.db"
+
+
+def _bots_manager():
+    """Builds the custom-bot BotManager. Import is lazy on purpose (same
+    reason as _groups_manager: importing this module must never import bot
+    code at load time)."""
+    from agent.src.business.bots import BotManager
+    return BotManager(db_path=_BOTS_DB)
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
@@ -235,10 +246,12 @@ class BoomAPI:
 
     # ---------------------------------------------------------------- logic
 
-    async def run_turn(self, prompt, strategy="auto", session_id=None):
+    async def run_turn(self, prompt, strategy="auto", session_id=None,
+                       bot_system_prompt=None, bot_tools=None):
         """Run one chat turn. Returns (reply, used_strategy, errors)."""
         result = await self.brain.run(
-            prompt, strategy=strategy, session_id=session_id
+            prompt, strategy=strategy, session_id=session_id,
+            system_prompt=bot_system_prompt, tools=bot_tools,
         )
         return (
             str(getattr(result, "text", "") or ""),
@@ -494,6 +507,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"skills": skills, "count": len(skills)})
         elif path == "/api/groups":
             self._handle_groups_list()
+        elif path == "/api/bots":
+            self._handle_bots_list()
         else:
             self._error(404, "not found")
 
@@ -507,6 +522,33 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_groups_mute()
         elif path == "/api/groups/policy":
             self._handle_groups_policy()
+        elif path == "/api/bots":
+            self._handle_bots_create()
+        elif path == "/api/bots/active":
+            self._handle_bots_set_active()
+        else:
+            self._error(404, "not found")
+
+    def do_PUT(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/bots/"):
+            from urllib.parse import unquote
+            bot_id = unquote(path[len("/api/bots/"):])
+            # "/api/bots/active" is a POST-only action, not a bot id.
+            if not bot_id or bot_id == "active":
+                return self._error(404, "not found")
+            self._handle_bots_update(bot_id)
+        else:
+            self._error(404, "not found")
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/bots/"):
+            from urllib.parse import unquote
+            bot_id = unquote(path[len("/api/bots/"):])
+            if not bot_id or bot_id == "active":
+                return self._error(404, "not found")
+            self._handle_bots_delete(bot_id)
         else:
             self._error(404, "not found")
 
@@ -626,6 +668,126 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(status, msg)
         self._send_json(200, {"ok": True, "policy": result.get("policy", policy)})
 
+    # ------------------------------------------------------------------
+    # Custom bots (Grok-style): user-created bots with their own
+    # personality (system prompt) and tool permissions.
+    # ------------------------------------------------------------------
+    def _handle_bots_list(self):
+        """GET /api/bots — list all custom bots (active bot first)."""
+        try:
+            mgr = _bots_manager()
+            bots = mgr.list_bots()
+        except Exception as e:
+            api_log(f"/api/bots error: {e}")
+            return self._send_json(200, {"bots": [], "count": 0})
+        self._send_json(200, {"bots": bots, "count": len(bots)})
+
+    def _handle_bots_create(self):
+        """POST /api/bots — create a bot."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return self._error(400, "name is required")
+        try:
+            mgr = _bots_manager()
+            result = mgr.create_bot(
+                name=name.strip(),
+                description=data.get("description", "") or "",
+                system_prompt=data.get("system_prompt", "") or "",
+                avatar_emoji=data.get("avatar_emoji", "🤖") or "🤖",
+                allowed_tools=data.get("allowed_tools"),
+                denied_tools=data.get("denied_tools"),
+                channel_bindings=data.get("channel_bindings"),
+            )
+        except Exception as e:
+            api_log(f"/api/bots create error: {e}")
+            return self._error(500, "failed to create bot")
+        if isinstance(result, dict) and result.get("error"):
+            return self._error(400, str(result["error"]))
+        self._send_json(201, {"ok": True, "bot": result["bot"]})
+
+    def _handle_bots_update(self, bot_id):
+        """PUT /api/bots/<id> — partial update."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        try:
+            mgr = _bots_manager()
+            result = mgr.update_bot(bot_id, **data)
+        except Exception as e:
+            api_log(f"/api/bots update error: {e}")
+            return self._error(500, "failed to update bot")
+        if isinstance(result, dict) and result.get("error"):
+            msg = str(result["error"])
+            status = 404 if "not found" in msg else 400
+            return self._error(status, msg)
+        self._send_json(200, {"ok": True, "bot": result["bot"]})
+
+    def _handle_bots_delete(self, bot_id):
+        """DELETE /api/bots/<id> — delete a bot."""
+        try:
+            mgr = _bots_manager()
+            deleted = mgr.delete_bot(bot_id)
+        except Exception as e:
+            api_log(f"/api/bots delete error: {e}")
+            return self._error(500, "failed to delete bot")
+        if not deleted:
+            return self._error(404, f"bot not found: {bot_id}")
+        self._send_json(200, {"ok": True})
+
+    def _handle_bots_set_active(self):
+        """POST /api/bots/active — body {"bot_id": "..."} marks that bot active."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        bot_id = data.get("bot_id")
+        if not isinstance(bot_id, str) or not bot_id.strip():
+            return self._error(400, "bot_id is required")
+        try:
+            mgr = _bots_manager()
+            ok = mgr.set_active_bot(bot_id.strip())
+            bot = mgr.get_active_bot() if ok else None
+        except Exception as e:
+            api_log(f"/api/bots/active error: {e}")
+            return self._error(500, "failed to set active bot")
+        if not ok:
+            return self._error(404, f"bot not found: {bot_id}")
+        self._send_json(200, {"ok": True, "bot": bot})
+
+    def _resolve_bot_context(self, bot_id):
+        """Resolve (system_prompt, tool_names) for a bot id.
+
+        tool_names is an allowlist (allowed minus denied), the
+        ("__all_minus__", denied) sentinel for deny-only bots, or None for
+        the full toolset. Raises LookupError on unknown bot_id. Returns
+        (None, None) when bot_id is falsy or the bots module is unavailable
+        (backward compatible).
+        """
+        if not bot_id:
+            return None, None
+        try:
+            mgr = _bots_manager()
+            bot = mgr.get_bot(bot_id)
+        except Exception:
+            return None, None
+        if not bot:
+            raise LookupError("unknown bot_id: %r" % (bot_id,))
+        system_prompt = bot.get("system_prompt") or None
+        allowed = bot.get("allowed_tools")
+        denied = set(bot.get("denied_tools") or [])
+        if allowed:
+            tool_names = [t for t in allowed if t not in denied]
+        elif denied:
+            tool_names = ("__all_minus__", sorted(denied))
+        else:
+            tool_names = None
+        return system_prompt, tool_names
+
     def _handle_chat(self):
         data, err = self._read_json_body()
         if err:
@@ -643,6 +805,13 @@ class _Handler(BaseHTTPRequestHandler):
         session_id = data.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             session_id = "session_%d" % int(time.time())
+        bot_id = data.get("bot_id")
+        if bot_id is not None and not isinstance(bot_id, str):
+            return self._error(400, "bot_id must be a string")
+        try:
+            bot_system_prompt, bot_tools = self._resolve_bot_context(bot_id)
+        except LookupError as err:
+            return self._error(404, str(err))
 
         if self.api.loop is not None:
             try:
@@ -658,11 +827,14 @@ class _Handler(BaseHTTPRequestHandler):
             return self._error(429, "agent busy")
         try:
             if "text/event-stream" in (self.headers.get("Accept") or ""):
-                self._chat_sse(prompt, strategy, session_id)
+                self._chat_sse(prompt, strategy, session_id,
+                               bot_system_prompt, bot_tools)
             else:
                 try:
                     reply, used_strategy, errors = asyncio.run(
-                        self.api.run_turn(prompt, strategy, session_id)
+                        self.api.run_turn(prompt, strategy, session_id,
+                                          bot_system_prompt=bot_system_prompt,
+                                          bot_tools=bot_tools)
                     )
                 except Exception:
                     return self._error(500, "chat turn failed")
@@ -678,7 +850,8 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self.api.turn_lock.release()
 
-    def _chat_sse(self, prompt, strategy, session_id):
+    def _chat_sse(self, prompt, strategy, session_id,
+                  bot_system_prompt=None, bot_tools=None):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -697,7 +870,9 @@ class _Handler(BaseHTTPRequestHandler):
         emit("status", {"phase": "thinking"})  # sent immediately
         try:
             reply, used_strategy, _errors = asyncio.run(
-                self.api.run_turn(prompt, strategy, session_id)
+                self.api.run_turn(prompt, strategy, session_id,
+                                  bot_system_prompt=bot_system_prompt,
+                                  bot_tools=bot_tools)
             )
         except Exception:
             emit("error", {"error": "chat turn failed"})

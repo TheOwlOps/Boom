@@ -1,6 +1,7 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Activity,
+  Bot,
   Menu,
   MessageSquare,
   Radio,
@@ -23,6 +24,7 @@ import SkillList from "./components/SkillList";
 import GroupManager from "./components/GroupManager";
 import LogViewer from "./components/LogViewer";
 import { ActivityFeed } from "./components/ActivityFeed";
+import BotManager from "./components/BotManager";
 
 /**
  * Top-level dashboard views rendered in the center column.
@@ -36,6 +38,7 @@ type MainTab =
   | "groups"
   | "logs"
   | "activity"
+  | "bots"
   | "dag"
   | "channels"
   | "tools"
@@ -104,6 +107,7 @@ const TABS: Array<{
   { id: "groups", label: "Groups", icon: Users, group: "primary" },
   { id: "logs", label: "Logs", icon: ScrollText, group: "primary" },
   { id: "activity", label: "Activity", icon: Activity, group: "primary" },
+  { id: "bots", label: "Bots", icon: Bot, group: "primary" },
   { id: "dag", label: "DAG", icon: Workflow, group: "ops" },
   { id: "channels", label: "Channels", icon: Radio, group: "ops" },
   { id: "tools", label: "Tools", icon: Wrench, group: "ops" },
@@ -244,6 +248,7 @@ export default function App() {
           {mainTab === "groups" && <GroupManager />}
           {mainTab === "logs" && <LogViewer />}
           {mainTab === "activity" && <ActivityFeed />}
+          {mainTab === "bots" && <BotManager />}
           {mainTab === "dag" && <DagViewer />}
           {mainTab === "channels" && <ChannelMonitor />}
           {mainTab === "tools" && <ToolManager />}

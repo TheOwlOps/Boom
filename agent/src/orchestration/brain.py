@@ -174,6 +174,8 @@ class Brain:
         session_id: Optional[str] = None,
         roles: Optional[List[Any]] = None,
         verify: bool = False,
+        system_prompt: Optional[str] = None,
+        tools: Optional[Any] = None,
         **kw: Any,
     ) -> Any:
         """Run one prompt through the chosen strategy. Never raises: every
@@ -197,7 +199,10 @@ class Brain:
             elif chosen is BrainStrategy.MASS:
                 result = await self.run_mass(prompt, session_id=session_id, roles=roles)
             else:
-                result = await self.run_react(prompt, session_id=session_id)
+                result = await self.run_react(
+                    prompt, session_id=session_id,
+                    system_prompt=system_prompt, tools=tools,
+                )
         except Exception as e:  # last-resort net: sub-runners already guard internally
             result = BrainResult(
                 strategy=chosen.value, text="",
@@ -230,6 +235,29 @@ class Brain:
         loses that tool (mass.py's documented caveat) — never a crash."""
         all_tools = self._all_tools()
         return {name: all_tools[name] for name in allowed_tools if name in all_tools}
+
+    def _resolve_chat_tools(self, tools: Optional[Any]) -> Optional[Dict[str, Any]]:
+        """Map a bot tool override to a make_loop() `tools` argument.
+
+        - None -> None (full toolset; old behavior).
+        - list of names -> filtered dict via _filter_tools (unknown names
+          dropped silently; see _filter_tools caveat).
+        - ("__all_minus__", denied) sentinel from the gateway bot resolver ->
+          full set minus denied.
+        """
+        if tools is None:
+            return None
+        if (
+            isinstance(tools, tuple) and len(tools) == 2
+            and tools[0] == "__all_minus__"
+        ):
+            denied = set(tools[1])
+            return {
+                name: tool
+                for name, tool in self._all_tools().items()
+                if name not in denied
+            }
+        return self._filter_tools(list(tools))
 
     def _verify_result(self, result: BrainResult) -> Dict[str, Any]:
         """Run optional post-hoc verification over ``result.text``.
@@ -588,12 +616,21 @@ class Brain:
     # ------------------------------------------------------------------ REACT
 
     async def run_react(
-        self, prompt: str, session_id: Optional[str] = None
+        self, prompt: str, session_id: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        tools: Optional[Any] = None,
     ) -> BrainResult:
         """One ReActLoop turn. The default path — identical behaviour to calling
-        the loop directly, because that is literally what it does."""
+        the loop directly, because that is literally what it does.
+
+        system_prompt/tools come from custom bots (gateway bot_id); both None
+        means the pre-bot behavior exactly."""
         try:
-            loop = self.make_loop(session_id=session_id)
+            loop = self.make_loop(
+                session_id=session_id,
+                system_prompt=system_prompt,
+                tools=self._resolve_chat_tools(tools),
+            )
             res = await loop.step(prompt)
         except Exception as e:
             return BrainResult(

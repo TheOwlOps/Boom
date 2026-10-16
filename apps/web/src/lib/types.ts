@@ -16,6 +16,31 @@ export interface ChatRequest {
   prompt: string;
   session_id?: string;
   strategy?: Strategy;
+  bot_id?: string;
+}
+
+/** One custom bot (Grok-style). `allowed_tools: []` means "all tools". */
+export interface Bot {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  avatar_emoji: string;
+  allowed_tools: string[];
+  denied_tools: string[];
+  channel_bindings: string[];
+  is_active: boolean;
+}
+
+/** Writable fields for create/update (id is server-assigned). */
+export interface BotDraft {
+  name: string;
+  description: string;
+  system_prompt: string;
+  avatar_emoji: string;
+  allowed_tools: string[];
+  denied_tools: string[];
+  channel_bindings: string[];
 }
 
 export interface ChatReply {
