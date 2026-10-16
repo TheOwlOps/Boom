@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 from pydantic import BaseModel
 
@@ -146,3 +146,159 @@ class LLMProvider:
             usage=self.parse_usage(data.get("usage")),
             finish_reason=choices[0].get("finish_reason")
         )
+
+    async def chat_complete_stream(
+        self,
+        messages: List[Dict[str, str]],
+        tools_schema: Optional[List[Dict[str, Any]]] = None,
+        timeout: Optional[float] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Stream a chat completion as Server-Sent Events.
+
+        Same payload as :meth:`chat_complete` but with ``"stream": True`` and
+        ``stream_options.include_usage`` so token counts still arrive. Yields the
+        event protocol documented in this file's header. Raises
+        ``MissingAPIKeyError`` when no key is configured, and ``RuntimeError`` on
+        HTTP errors or provider-sent ``error`` payloads.
+
+        ``client`` is an optional pre-built ``httpx.AsyncClient`` (used by tests
+        with a mock transport); when omitted the method creates and closes its own.
+        """
+        # Same guard as the non-streaming method so both entry points fail alike.
+        if not self.api_key:
+            raise MissingAPIKeyError(
+                f"No API key configured for provider at {self.base_url}. "
+                "Set OPENAI_API_KEY (or OPENROUTER_API_KEY / ANTHROPIC_API_KEY) before running a live turn."
+            )
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            # Ask for the final usage block; without it streamed turns report 0 tokens.
+            "stream_options": {"include_usage": True},
+        }
+        if tools_schema:
+            payload["tools"] = [{"type": "function", "function": t} for t in tools_schema]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+
+        owned = client is None
+        if owned:
+            client = httpx.AsyncClient(timeout=timeout or self.timeout)
+
+        try:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            ) as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    raise RuntimeError(
+                        f"LLM stream failed: HTTP {resp.status_code} from {self.base_url} "
+                        f"for model '{self.model}': {body[:400]!r}"
+                    )
+                async for event in self._iter_sse_events(resp):
+                    yield event
+        finally:
+            if owned:
+                await client.aclose()
+
+
+    async def _iter_sse_events(
+        self, resp: "httpx.Response"
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Parse one SSE response body into the event protocol.
+
+        Tool calls arrive as deltas keyed by ``index`` (name/id on the first
+        chunk, JSON ``arguments`` text split across chunks); they are accumulated
+        here and emitted once as a single ``tool_calls`` event so consumers never
+        see partial JSON.
+        """
+        # index -> {"id": ..., "name": ..., "arguments": "..."}
+        pending_calls: Dict[int, Dict[str, Any]] = {}
+        thought_parts: List[str] = []
+        usage: Dict[str, Any] = {}
+
+        async for line in resp.aiter_lines():
+            line = line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue  # keep-alive comments / malformed frames are not fatal
+
+            if isinstance(chunk, dict) and chunk.get("error"):
+                raise RuntimeError(
+                    f"LLM stream error from {self.base_url}: {chunk['error']}"
+                )
+
+            choices = chunk.get("choices") or []
+            delta = (choices[0].get("delta") if choices else {}) or {}
+
+            content = delta.get("content")
+            if content:
+                yield {"type": "token", "text": content}
+
+            reasoning = delta.get("reasoning_content")
+            if reasoning:
+                thought_parts.append(reasoning)
+
+            for tc in delta.get("tool_calls") or []:
+                index = tc.get("index", 0)
+                slot = pending_calls.setdefault(
+                    index, {"id": None, "name": "", "arguments": ""}
+                )
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["arguments"] += fn["arguments"]
+
+            if chunk.get("usage"):
+                usage = self.parse_usage(chunk["usage"]).model_dump()
+
+        calls: List[Dict[str, Any]] = []
+        for index in sorted(pending_calls):
+            slot = pending_calls[index]
+            arguments, args_error = self._parse_tool_call_arguments(slot["arguments"])
+            calls.append(
+                {
+                    "id": slot["id"] or f"call_{index}",
+                    "name": slot["name"] or "",
+                    "arguments": arguments,
+                    "args_error": args_error,
+                }
+            )
+        if calls:
+            yield {"type": "tool_calls", "calls": calls}
+
+        yield {"type": "done", "usage": usage, "thought": "".join(thought_parts) or None}
+
+
+    @staticmethod
+    def _parse_tool_call_arguments(raw_args: Any) -> tuple:
+        """Parse accumulated tool-call arguments; mirrors the non-streaming logic.
+
+        Returns ``(arguments_dict, args_error_or_None)``.
+        """
+        if not raw_args:
+            return {}, None
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            return {}, f"{e}: {str(raw_args)[:200]}"
+        return args, None

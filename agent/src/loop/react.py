@@ -1,7 +1,12 @@
 import asyncio
 import json
+import re
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
+
+from .streaming import StreamHandler
+from .smart_turns import TurnController
 
 # How many transcript messages a loop rebuilds when it takes over a session another process was
 # serving: enough for the model to keep the thread, small enough to stay a fresh context.
@@ -27,7 +32,9 @@ class ReActLoop:
         self,
         tools: Any,
         llm: Any = None,
-        max_turns: int = 10,
+        max_turns: int = 6,
+        task_type: str = "chat",
+        smart_exit: bool = True,
         accountant: Any = None,
         session_id: str = "default",
         prompt_builder: Any = None,
@@ -35,6 +42,9 @@ class ReActLoop:
         state_db: Any = None,
         system_prompt: Optional[str] = None,
         token_budget: Optional[int] = None,
+        parallel_tools: bool = True,
+        on_token: Optional[Callable[[str], None]] = None,
+        tool_selector: Any = None,
     ):
         if hasattr(tools, "get_tools"):
             self.tools = tools.get_tools()
@@ -52,6 +62,19 @@ class ReActLoop:
 
         self.llm = llm
         self.max_turns = max_turns
+        self.task_type = task_type
+        if task_type == "coding":
+            # Coding tasks need more room for multi-step edits/tests.
+            self.max_turns = 10
+        self.smart_exit = smart_exit
+        # One controller per loop instance; reset per prompt in _run_live_turn.
+        self.turn_controller = (
+            TurnController(max_turns=self.max_turns) if smart_exit else None
+        )
+        # Token callback fired as streamed text arrives (None = no streaming UI).
+        self.on_token = on_token
+        # Optional ToolSelector to prune schemas before each LLM call.
+        self.tool_selector = tool_selector
         self.accountant = accountant
         self.session_id = session_id
         self.prompt_builder = prompt_builder or (getattr(self.env, "prompt_builder", None) if self.env else None)
@@ -64,6 +87,10 @@ class ReActLoop:
         # Optional spend ceiling for one turn, in tokens in+out. None means unbounded.
         self.token_budget = token_budget
         self.budget_exceeded = False
+        # When True, one assistant turn's tool calls run through asyncio.gather
+        # instead of one at a time. Recording into trace/history/messages stays
+        # strictly sequential in the original tool_calls order either way.
+        self.parallel_tools = parallel_tools
 
         # Subagents run through this loop's provider, and inherit its environment, so
         # delegation only works once a loop exists to delegate from.
@@ -186,6 +213,59 @@ class ReActLoop:
         except Exception as e:
             return f"Error executing '{tool_call.name}': {e}"
 
+    async def _run_tool_calls_parallel(self, resp: Any, trace: List[ReActStep]) -> None:
+        """Execute one assistant turn's tool calls concurrently, recording in order.
+
+        `args_error` cases never reach a tool: their observations are built
+        synchronously. All other calls run through `asyncio.gather` so one slow
+        or failing tool cannot block the rest. `return_exceptions=True` keeps the
+        gather alive if a tool somehow escapes `execute_step`'s own exception
+        handling; such an escape becomes an error observation, not a broken
+        turn. Recording into `trace`, `self.history` and `self.messages` stays
+        strictly sequential, in the original `resp.tool_calls` order.
+        """
+        tool_calls = resp.tool_calls
+        thought = resp.thought or ""
+        observations: List[Optional[str]] = [None] * len(tool_calls)
+        pending: List[int] = []
+        for i, tc in enumerate(tool_calls):
+            if tc.args_error:
+                observations[i] = (
+                    f"Error: tool '{tc.name}' was called with malformed JSON arguments "
+                    f"({tc.args_error}). Retry with valid JSON."
+                )
+            else:
+                pending.append(i)
+
+        if pending:
+            coros = (
+                self.execute_step(
+                    ToolCall(name=tool_calls[i].name, arguments=tool_calls[i].arguments)
+                )
+                for i in pending
+            )
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for i, result in zip(pending, results):
+                if isinstance(result, BaseException):
+                    observations[i] = f"Error executing '{tool_calls[i].name}': {result}"
+                else:
+                    observations[i] = result
+
+        for i, tc in enumerate(tool_calls):
+            call = ToolCall(name=tc.name, arguments=tc.arguments)
+            observation = observations[i]
+            trace.append(ReActStep(thought=thought, action=call, observation=observation))
+            self.history.append({
+                "thought": thought,
+                "action": tc.name,
+                "observation": observation,
+            })
+            self._append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": observation,
+            })
+
     def _build_system_message(self) -> Optional[Dict[str, Any]]:
         if self._system_message is not None:
             return self._system_message
@@ -234,7 +314,9 @@ class ReActLoop:
                 # A transcript write must never break the turn it is recording.
                 pass
 
-    async def _run_live_turn(self, prompt: str) -> Dict[str, Any]:
+    async def _run_live_turn(
+        self, prompt: str, on_token: Optional[Callable[[str], None]] = None
+    ) -> Dict[str, Any]:
         """Drive the model/tool loop until the model answers without requesting a tool."""
         if self.llm is None:
             raise RuntimeError(
@@ -248,8 +330,12 @@ class ReActLoop:
         trace: List[ReActStep] = []
         final_text = ""
         error: Optional[str] = None
+        stop_reason: str = "ok"
         turn_in = 0
         turn_out = 0
+        if self.turn_controller is not None:
+            self.turn_controller.reset()
+            self.turn_controller.max_turns = self.max_turns
 
         for _ in range(self.max_turns):
             if self.token_budget is not None and (turn_in + turn_out) >= self.token_budget:
@@ -266,7 +352,7 @@ class ReActLoop:
                 # message, so session_search can still reach what compaction dropped here.
                 self.messages = self.compressor.compact_messages(self.messages)
             outgoing = ([system_message] if system_message else []) + self.messages
-            resp = await self.llm.chat_complete(outgoing, tools_schema=self.tool_schemas or None)
+            resp = await self._complete(outgoing, on_token)
 
             if resp.usage is not None:
                 if self.accountant is not None:
@@ -292,27 +378,47 @@ class ReActLoop:
                 ],
             })
 
-            for tc in resp.tool_calls:
-                call = ToolCall(name=tc.name, arguments=tc.arguments)
-                if tc.args_error:
-                    observation = (
-                        f"Error: tool '{tc.name}' was called with malformed JSON arguments "
-                        f"({tc.args_error}). Retry with valid JSON."
-                    )
-                else:
-                    observation = await self.execute_step(call)
+            if self.parallel_tools:
+                await self._run_tool_calls_parallel(resp, trace)
+            else:
+                for tc in resp.tool_calls:
+                    call = ToolCall(name=tc.name, arguments=tc.arguments)
+                    if tc.args_error:
+                        observation = (
+                            f"Error: tool '{tc.name}' was called with malformed JSON arguments "
+                            f"({tc.args_error}). Retry with valid JSON."
+                        )
+                    else:
+                        observation = await self.execute_step(call)
 
-                trace.append(ReActStep(thought=resp.thought or "", action=call, observation=observation))
-                self.history.append({
-                    "thought": resp.thought or "",
-                    "action": tc.name,
-                    "observation": observation,
-                })
-                self._append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": observation,
-                })
+                    trace.append(ReActStep(thought=resp.thought or "", action=call, observation=observation))
+                    self.history.append({
+                        "thought": resp.thought or "",
+                        "action": tc.name,
+                        "observation": observation,
+                    })
+                    self._append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": observation,
+                    })
+            # --- smart early exit ------------------------------------
+            if self.turn_controller is not None:
+                turn_calls = [
+                    {"name": tc.name, "arguments": tc.arguments}
+                    for tc in resp.tool_calls
+                ]
+                turn_obs = [s.observation or "" for s in trace[-len(resp.tool_calls):]]
+                self.turn_controller.record_turn(turn_calls, turn_obs)
+                keep_going, stop_reason = self.turn_controller.should_continue(
+                    turn_calls, turn_obs
+                )
+                if not keep_going:
+                    # Deliberate early stop, not a failure: keep last
+                    # observation as the answer without flagging an error.
+                    final_text = trace[-1].observation if trace else ""
+                    break
+            # ----------------------------------------------------------
         else:
             error = f"Reached max_turns={self.max_turns} without a final answer."
             final_text = trace[-1].observation if trace else ""
@@ -333,17 +439,76 @@ class ReActLoop:
             "trace": [s.model_dump() for s in trace],
             "error": error,
         }
+        result["stop_reason"] = stop_reason
         if trace:
             result["observation"] = "\n".join(s.observation or "" for s in trace)
 
         self.history.append({"prompt": prompt, "result": {"success": result["success"], "steps": len(trace)}})
         return result
 
+    async def _complete(
+        self, outgoing: List[Dict[str, Any]], on_token: Optional[Callable[[str], None]]
+    ) -> Any:
+        """One model call: streamed when the provider supports it.
+
+        Returns an object shaped like ``LLMResponse`` (``content``,
+        ``thought``, ``tool_calls``, ``usage``, ``finish_reason``), so the
+        rest of the loop is untouched. Tool schemas are pruned via
+        ``self.tool_selector`` when one is configured.
+        """
+        if self.tool_selector is not None:
+            try:
+                from .tool_selector import select_or_all
+                prompt_text = outgoing[-1].get("content", "") if outgoing else ""
+                tools_schema = select_or_all(
+                    self.tool_selector, prompt_text, self.tool_schemas or []
+                ) or None
+            except Exception:
+                tools_schema = self.tool_schemas or None
+        else:
+            tools_schema = self.tool_schemas or None
+        if hasattr(self.llm, "chat_complete_stream"):
+            handler = StreamHandler(on_token=on_token)
+            stream = self.llm.chat_complete_stream(outgoing, tools_schema=tools_schema)
+            full_text, tool_calls = await handler.consume(stream)
+            thought, content = self._scrub_streamed_text(full_text)
+            return SimpleNamespace(
+                content=content,
+                thought=thought,
+                tool_calls=[
+                    SimpleNamespace(
+                        id=tc.get("id") or f"call_{i}",
+                        name=tc.get("name") or "",
+                        arguments=tc.get("arguments") or {},
+                        args_error=tc.get("args_error"),
+                    )
+                    for i, tc in enumerate(tool_calls)
+                ],
+                usage=SimpleNamespace(
+                    input_tokens=(handler.last_usage or {}).get("input_tokens", 0),
+                    output_tokens=(handler.last_usage or {}).get("output_tokens", 0),
+                ),
+                finish_reason="stop" if not tool_calls else "tool_calls",
+            )
+        return await self.llm.chat_complete(outgoing, tools_schema=tools_schema)
+
+    @staticmethod
+    def _scrub_streamed_text(text: str):
+        """Strip <thought>...</thought> blocks from streamed text (same rule as
+        LLMProvider.scrub_thought, without importing the provider module)."""
+        thought_match = re.search(r"<thought>(.*?)</thought>", text, re.DOTALL)
+        if thought_match:
+            thought = thought_match.group(1).strip()
+            clean = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL).strip()
+            return thought, clean
+        return None, text
+
     async def step(
         self,
         prompt: Optional[str] = None,
         thought: str = "",
-        action: Optional[ToolCall] = None
+        action: Optional[ToolCall] = None,
+        on_token: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """Run one turn.
 
@@ -356,4 +521,7 @@ class ReActLoop:
             self.history.append({"thought": thought, "action": str(action), "observation": observation})
             return step_obj
 
-        return await self._run_live_turn(prompt or thought or "")
+        return await self._run_live_turn(
+            prompt or thought or "",
+            on_token=on_token if on_token is not None else self.on_token,
+        )
