@@ -202,10 +202,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(status, {"error": message})
 
     def _cors_headers(self):
-        # Reflected only for the two dev origins, never "*".
+        # Allow any local origin (localhost, 127.0.0.1) across any dev port
         origin = self.headers.get("Origin")
-        if origin in ALLOWED_ORIGINS:
+        if origin and (
+            origin.startswith("http://localhost:")
+            or origin.startswith("http://127.0.0.1:")
+            or origin in ALLOWED_ORIGINS
+        ):
             self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
             self.send_header("Vary", "Origin")
 
     def _read_json_body(self):
