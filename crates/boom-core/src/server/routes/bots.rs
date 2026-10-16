@@ -1,5 +1,5 @@
 //! Custom-bot routes (Grok-style): `GET/POST /api/bots`,
-//! `POST /api/bots/active`, `PUT/DELETE /api/bots/{id}`.
+//! `POST /api/bots/active`, `GET/PUT/DELETE /api/bots/{id}`.
 
 use axum::{
     extract::{Path, State},
@@ -81,6 +81,22 @@ pub async fn create_bot(
     }
 }
 
+/// `GET /api/bots/{id}` → 200 `{ok: true, bot}`; missing → 404.
+/// (Previously this route was PUT/DELETE-only; GET returned 405.)
+pub async fn get_bot(
+    State(state): State<AppState>,
+    Path(bot_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    if bot_id.is_empty() || bot_id == "active" {
+        // "/api/bots/active" is POST-only — never a bot id.
+        return Err(ApiError::not_found("not found"));
+    }
+    match state.storage.get_bot(&bot_id) {
+        Some(bot) => Ok(Json(json!({ "ok": true, "bot": bot }))),
+        None => Err(ApiError::not_found(format!("bot not found: '{bot_id}'"))),
+    }
+}
+
 /// `PUT /api/bots/{id}` — partial update → 200 `{ok: true, bot}`.
 /// Unknown fields are ignored; missing bot → 404.
 pub async fn update_bot(
@@ -107,7 +123,7 @@ pub async fn delete_bot(
         return Err(ApiError::not_found("not found"));
     }
     if !state.storage.delete_bot(&bot_id) {
-        return Err(ApiError::not_found(format!("bot not found: {bot_id}")));
+        return Err(ApiError::not_found(format!("bot not found: '{bot_id}'")));
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -128,7 +144,7 @@ pub async fn set_active(
         _ => return Err(ApiError::bad_request("bot_id is required")),
     };
     if !state.storage.set_active_bot(&bot_id) {
-        return Err(ApiError::not_found(format!("bot not found: {bot_id}")));
+        return Err(ApiError::not_found(format!("bot not found: '{bot_id}'")));
     }
     Ok(Json(json!({ "ok": true, "bot": state.storage.active_bot() })))
 }

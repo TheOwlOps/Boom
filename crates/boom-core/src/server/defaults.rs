@@ -662,6 +662,70 @@ impl ZaloPersonal for NoZalo {
     }
 }
 
+/// Build a provider client from the currently-active provider config in
+/// `$BOOM_HOME/providers.json`, re-read on every call so a config saved
+/// after startup (via `POST /api/providers/config`) takes effect without
+/// a restart.
+///
+/// [`FileProviderRegistry`] exposes no accessor for the stored api_key /
+/// model / base_url, so this reads the registry's own file
+/// ([`FileProviderRegistry::path`]) following the same document shape
+/// (`{"active", "providers": {id: {"api_key","model","base_url"}}}`).
+/// Missing file / no active provider / unknown provider id → the factory
+/// fails, which [`crate::wiring::WiredHarness`] maps to unconfigured
+/// (route answers 503) — never a fabricated client.
+fn client_from_active_config(
+    providers: &FileProviderRegistry,
+) -> Result<Box<dyn crate::providers::LlmClient>, crate::providers::ProviderError> {
+    use crate::providers::{ProviderConfig, ProviderError};
+    let missing = || ProviderError::MissingKey("no LLM provider configured".to_string());
+    let raw = std::fs::read_to_string(providers.path()).map_err(|_| missing())?;
+    let doc: Value = serde_json::from_str(&raw).map_err(|_| missing())?;
+    let active = doc.get("active").and_then(Value::as_str).ok_or_else(missing)?;
+    let entry = doc
+        .get("providers")
+        .and_then(|p| p.get(active))
+        .ok_or_else(missing)?;
+    let field = |key: &str| {
+        entry
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let api_key = field("api_key");
+    let mut cfg = ProviderConfig::new(active, field("model"));
+    if !api_key.is_empty() {
+        cfg = cfg.with_api_key(api_key);
+    }
+    let base_url = field("base_url");
+    if !base_url.is_empty() {
+        cfg = cfg.with_base_url(base_url);
+    }
+    crate::providers::from_config(&cfg)
+}
+
+/// The active provider's saved model, for [`crate::wiring::WiredHarness::new`].
+/// `None` when no provider is configured yet — the harness then falls back
+/// to the freshly-built client's `default_model()` on every turn.
+fn active_model(providers: &FileProviderRegistry) -> Option<String> {
+    let raw = std::fs::read_to_string(providers.path()).ok()?;
+    let doc: Value = serde_json::from_str(&raw).ok()?;
+    let active = doc.get("active")?.as_str()?;
+    let model = doc
+        .get("providers")?
+        .get(active)?
+        .get("model")?
+        .as_str()?
+        .trim();
+    if model.is_empty() {
+        None
+    } else {
+        Some(model.to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AppState constructor
 // ---------------------------------------------------------------------------
@@ -679,6 +743,28 @@ impl AppState {
     pub fn with_defaults_at_skills_dir(skills_dir: Option<PathBuf>) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
         let builtins = Arc::new(crate::tools::ToolRegistry::with_builtins());
+        // File-backed so provider configs survive restarts (Python
+        // parity: $BOOM_HOME/providers.json, 0600). The in-memory
+        // StaticProviderRegistry remains available for tests.
+        let providers = Arc::new(FileProviderRegistry::new());
+        // Wire the real brain: the ReAct loop over the active provider
+        // config (re-read from providers.json on every turn) and the
+        // real built-in tools. With no provider configured the factory
+        // fails, `is_configured()` is false, and /api/chat answers 503
+        // "no LLM provider configured" until one is saved.
+        let make_client: Arc<
+            dyn Fn() -> Result<Box<dyn crate::providers::LlmClient>, crate::providers::ProviderError>
+                + Send
+                + Sync,
+        > = {
+            let providers = providers.clone();
+            Arc::new(move || client_from_active_config(&providers))
+        };
+        let harness: Arc<dyn Harness> = Arc::new(crate::wiring::WiredHarness::new(
+            make_client,
+            active_model(&providers).unwrap_or_default(),
+            builtins.clone(),
+        ));
         // SQLite-backed storage so bots/plugins/groups survive restarts.
         // Falls back to in-memory if the DB can't be opened (never crash).
         let storage: Arc<dyn Storage> =
@@ -690,12 +776,9 @@ impl AppState {
                 }
             };
         Self {
-            harness: Arc::new(NoHarness),
+            harness,
             tools: Arc::new(crate::wiring::ServerToolRegistry::new(builtins)),
-            // File-backed so provider configs survive restarts (Python
-            // parity: $BOOM_HOME/providers.json, 0600). The in-memory
-            // StaticProviderRegistry remains available for tests.
-            providers: Arc::new(FileProviderRegistry::new()),
+            providers: providers as Arc<dyn ProviderRegistry>,
             storage,
             updater: Arc::new(GithubUpdater::new(version.clone())),
             zalo: Arc::new(NoZalo),
@@ -774,5 +857,80 @@ mod tests {
             .expect("uuid_new must run");
         let parsed: Value = serde_json::from_str(&out).expect("result must be JSON");
         assert_eq!(parsed["uuid"].as_str().map(str::len), Some(36));
+    }
+
+    // -- harness wiring (P0): client factory + is_configured follow the
+    // provider file, so a provider saved after startup un-blocks /api/chat
+    // without a restart -----------------------------------------------
+
+    use crate::server::file_providers::FileProviderRegistry;
+
+    type ClientFactory = Arc<
+        dyn Fn() -> Result<
+                Box<dyn crate::providers::LlmClient>,
+                crate::providers::ProviderError,
+            > + Send
+            + Sync,
+    >;
+
+    fn factory_for(reg: &Arc<FileProviderRegistry>) -> ClientFactory {
+        let reg = reg.clone();
+        Arc::new(move || client_from_active_config(&reg))
+    }
+
+    fn save_stub_provider(reg: &FileProviderRegistry) {
+        reg.save_config(ProviderConfig {
+            provider_id: "custom".to_string(),
+            api_key: "k".to_string(),
+            model: "stub-model".to_string(),
+            base_url: Some("http://127.0.0.1:1/v1".to_string()),
+        })
+        .expect("save_config must succeed");
+    }
+
+    #[test]
+    fn client_factory_missing_config_is_unconfigured() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Arc::new(FileProviderRegistry::with_base_dir(
+            dir.path().to_path_buf(),
+        ));
+        let err = match client_from_active_config(&reg) {
+            Ok(_) => panic!("factory must fail when no provider is configured"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no LLM provider configured"),
+            "unexpected error: {err}"
+        );
+        assert!(active_model(&reg).is_none());
+    }
+
+    #[test]
+    fn client_factory_builds_client_from_active_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Arc::new(FileProviderRegistry::with_base_dir(
+            dir.path().to_path_buf(),
+        ));
+        save_stub_provider(&reg);
+        let client = client_from_active_config(&reg).expect("factory must build");
+        assert_eq!(client.provider_id(), "custom");
+        assert_eq!(client.default_model(), "stub-model");
+        assert_eq!(active_model(&reg).as_deref(), Some("stub-model"));
+    }
+
+    #[test]
+    fn wired_harness_is_configured_follows_provider_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Arc::new(FileProviderRegistry::with_base_dir(
+            dir.path().to_path_buf(),
+        ));
+        let harness = crate::wiring::WiredHarness::new(
+            factory_for(&reg),
+            String::new(),
+            Arc::new(crate::tools::ToolRegistry::with_builtins()),
+        );
+        assert!(!harness.is_configured(), "no config → not configured");
+        save_stub_provider(&reg);
+        assert!(harness.is_configured(), "saved config → configured");
     }
 }

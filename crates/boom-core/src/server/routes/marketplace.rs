@@ -22,8 +22,17 @@ use crate::server::{split_marketplace_id, StorageError};
 // ---------------------------------------------------------------------------
 
 const CATEGORY_RULES: &[(&str, &[&str])] = &[
-    ("Communication", &["telegram", "whatsapp", "discord", "slack", "messenger", "zalo", "line", "feishu", "sms", "broadcast", "sticker", "kick", "react"]),
-    ("Productivity", &["gmail", "calendar", "drive", "email", "docs", "sheets", "notion", "todo", "task", "reminder", "note", "digest", "inbox"]),
+    // NOTE: "line" is deliberately NOT a Communication keyword — the bare token
+    // collides with plain English "line" ("line count", "line offset/limit") and
+    // misclassified file_info/file_read as Communication. A future LINE
+    // messenger integration should match a dedicated name keyword
+    // (e.g. "line_notify"/"line_send") instead of the bare token.
+    ("Communication", &["telegram", "whatsapp", "discord", "slack", "messenger", "zalo", "feishu", "sms", "broadcast", "sticker", "kick", "react"]),
+    // NOTE: "digest" is deliberately NOT a Productivity keyword — the bare token
+    // collides with "hex digest" and misclassified hash_md5/hash_sha256 as
+    // Productivity. Newsletter-digest features match via "newsletter",
+    // "summary", "rss", etc. instead.
+    ("Productivity", &["gmail", "calendar", "drive", "email", "docs", "sheets", "notion", "todo", "task", "reminder", "note", "newsletter", "inbox"]),
     ("Developer Tools", &["github", "git", "gitops", "code", "review", "lint", "debug", "coverage", "deploy", "docker", "npm", "refactor", "ast", "depgraph", "unittest", "pytest"]),
     ("Web & Search", &["web", "search", "fetch", "scrape", "scraper", "crawl", "browser", "rss", "news", "feed", "extract", "http", "url"]),
     ("Media", &["image", "video", "audio", "tts", "stt", "voice", "ocr", "photo", "podcast", "banner", "icon", "imagegen"]),
@@ -35,7 +44,20 @@ const CATEGORY_RULES: &[(&str, &[&str])] = &[
 ];
 
 const DEFAULT_CATEGORY: &str = "Utilities";
-const FEATURED_CATEGORIES: &[&str] = &["Communication", "Productivity"];
+
+/// Curated featured shelf. Both lists are intentionally small — "featured" must
+/// never be the default, otherwise the Featured rail is just the full catalog.
+/// (Previously plugins were hardcoded `featured: true` and tools were featured
+/// purely by category, so four accidentally-misclassified tools ended up
+/// promoted.)
+const FEATURED_PLUGINS: &[&str] = &["gmail", "calendar"];
+const FEATURED_TOOLS: &[&str] = &[
+    "web_search",
+    "web_fetch",
+    "shell_run",
+    "file_read",
+    "grep",
+];
 
 fn category_icon(category: &str) -> &'static str {
     match category {
@@ -75,6 +97,7 @@ fn categorize_item(name: &str, description: &str) -> &'static str {
 
 /// One catalog item. Plugins always carry `version`/`author` (possibly "");
 /// tools omit them — exactly like Python's `_plugin_item` / `_tool_item`.
+/// `featured` is a curated whitelist (`FEATURED_PLUGINS`) — never the default.
 fn plugin_item(
     name: &str,
     description: &str,
@@ -90,7 +113,7 @@ fn plugin_item(
         "icon": icon.unwrap_or_else(|| category_icon(category)),
         "description": description,
         "category": category,
-        "featured": true,
+        "featured": FEATURED_PLUGINS.contains(&name),
         "kind": "plugin",
         "version": version,
         "author": author,
@@ -106,7 +129,9 @@ fn tool_item(tool: &ToolInfo, disabled: &HashSet<String>) -> Value {
         "icon": category_icon(category),
         "description": tool.description,
         "category": category,
-        "featured": FEATURED_CATEGORIES.contains(&category),
+        // Curated whitelist only — never derive "featured" from the category,
+        // which promoted accidentally-misclassified tools.
+        "featured": FEATURED_TOOLS.contains(&tool.name.as_str()),
         "kind": "tool",
         "enabled": !disabled.contains(&tool.name),
     })

@@ -46,6 +46,9 @@ pub async fn list_providers(
 /// - non-string `api_key`/`model` → 400 `"{field} must be a string"`
 /// - non-string `base_url` → 400 `"base_url must be a string"`
 /// - unknown provider → 400 `"unknown provider: {id}"`
+/// - empty `api_key` keeps the previously stored key (sentinel "keep
+///   existing"); 400 `"{name} requires an API key"` only when no key was
+///   ever stored and the provider needs one
 /// - otherwise → 200 `{ok: true, provider_id}` (key never echoed back).
 pub async fn save_config(
     State(state): State<AppState>,
@@ -92,6 +95,8 @@ pub async fn save_config(
 }
 
 /// `POST /api/providers/test` — body `{provider_id}` → `{ok, message}`.
+/// Unknown provider → 400 `"unknown provider: {id}"`; any other failure →
+/// 500 `"failed to test provider connection"`.
 pub async fn test_connection(
     State(state): State<AppState>,
     JsonBody(body): JsonBody,
@@ -103,11 +108,17 @@ pub async fn test_connection(
     match state.providers.test_connection(&provider_id).await {
         Ok((ok, message)) => Ok(Json(json!({ "ok": ok, "message": message }))),
         Err(e) => {
-            state.api_log(format!("/api/providers/test error: {e}"));
-            Err(ApiError::new(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to test provider connection",
-            ))
+            // The registry reports an unknown id as `Err("unknown provider:
+            // {id}")` — that's a client error, not a server failure.
+            if e.starts_with("unknown provider:") {
+                Err(ApiError::bad_request(e))
+            } else {
+                state.api_log(format!("/api/providers/test error: {e}"));
+                Err(ApiError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to test provider connection",
+                ))
+            }
         }
     }
 }

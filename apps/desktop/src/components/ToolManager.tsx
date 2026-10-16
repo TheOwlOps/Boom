@@ -1,10 +1,31 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Unplug } from "lucide-react";
 import { API_BASE } from "../lib/api";
-import { TOOL_CATALOG, type ToolDef } from "../data/toolCatalog";
 import { ChannelMonitor } from "./ChannelMonitor";
+import { EmptyState } from "./EmptyState";
+import { Skeleton } from "./Skeleton";
 
-/** Group tools by function category. */
-const GROUPS = ["filesystem", "terminal", "git", "web", "code", "security", "db"] as const;
+/** One tool as returned by GET /api/tools. */
+interface ToolDef {
+  name: string;
+  description: string;
+  group: string;
+}
+
+interface ToolsResponse {
+  tools?: unknown;
+  count?: number;
+}
+
+function isToolDef(v: unknown): v is ToolDef {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.name === "string" &&
+    typeof o.description === "string" &&
+    typeof o.group === "string"
+  );
+}
 
 /** Tool trial-run modal: enter JSON args, calls POST /api/tools/run. */
 function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
@@ -20,7 +41,8 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
       const res = await fetch(`${API_BASE}/api/tools/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: tool.name, args: parsed }),
+        // Send both field names: the backend accepts `tool` (canonical) and `name` (alias).
+        body: JSON.stringify({ tool: tool.name, name: tool.name, args: parsed }),
       });
       const body: unknown = await res.json().catch(() => null);
       setResult(res.ok ? JSON.stringify(body, null, 2) : `Error ${res.status}: ${JSON.stringify(body)}`);
@@ -66,16 +88,54 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
   );
 }
 
-/** Tool manager: channels subsection first, then tools grouped by function. */
+/** Tool manager: channels subsection first, then tools fetched live from the backend. */
 export default function ToolManager() {
   const [query, setQuery] = useState("");
+  const [tools, setTools] = useState<ToolDef[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [active, setActive] = useState<ToolDef | null>(null);
+
+  // The tool list comes from the live backend (GET /api/tools). There is no
+  // static fallback catalog on purpose: a stale catalog would show tools the
+  // backend does not have, and every Run click on one would 404.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadError(null);
+    fetch(`${API_BASE}/api/tools`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`GET /api/tools → ${res.status}`);
+        const body = (await res.json()) as ToolsResponse;
+        const list = Array.isArray(body.tools) ? body.tools.filter(isToolDef) : [];
+        if (!cancelled) setTools(list);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : "Could not reach the backend.");
+        setTools([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [retryTick]);
 
   // Filter by tool name (case-insensitive).
   const filtered = useMemo(
-    () => TOOL_CATALOG.filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase())),
-    [query],
+    () => (tools ?? []).filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase())),
+    [tools, query],
   );
+
+  // Groups are derived from the live data — never hardcoded.
+  const groups = useMemo(() => {
+    const seen = new Map<string, ToolDef[]>();
+    for (const t of filtered) {
+      const g = t.group || "other";
+      const list = seen.get(g);
+      if (list) list.push(t);
+      else seen.set(g, [t]);
+    }
+    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filtered]);
 
   const q = query.trim().toLowerCase();
   const showChannels = q === "" || "channels".includes(q) || "telegram".includes(q) || "discord".includes(q) || "zalo".includes(q);
@@ -98,34 +158,54 @@ export default function ToolManager() {
           </div>
         </section>
       )}
-      {GROUPS.map((group) => {
-        const tools = filtered.filter((t) => t.group === group);
-        return (
+      {tools === null ? (
+        <Skeleton lines={6} label="Loading tools" />
+      ) : loadError !== null ? (
+        <EmptyState
+          icon={Unplug}
+          title="Could not load tools"
+          hint={`The backend did not return a tool list (${loadError}). No tools are shown rather than a stale catalog.`}
+          action={{
+            label: "Retry",
+            onClick: () => {
+              setTools(null);
+              setRetryTick((t) => t + 1);
+            },
+          }}
+        />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          icon={Unplug}
+          title={q === "" ? "No tools registered" : "No tools match your search"}
+          hint={
+            q === ""
+              ? "The backend returned an empty tool list. Check that the gateway is running the expected build."
+              : undefined
+          }
+        />
+      ) : (
+        groups.map(([group, list]) => (
           <section key={group} className="mb-5">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              {group} ({tools.length})
+              {group} ({list.length})
             </h3>
-            {tools.length === 0 ? (
-              <p className="text-sm italic text-neutral-600">No tools in this group yet.</p>
-            ) : (
-              <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
-                {tools.map((t) => (
-                  <li key={t.name} className="flex items-center gap-3 px-3 py-2">
-                    <code className="font-mono text-sm text-zinc-300">{t.name}</code>
-                    <span className="flex-1 text-sm text-neutral-400">{t.description}</span>
-                    <button
-                      onClick={() => setActive(t)}
-                      className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
-                    >
-                      Run
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+              {list.map((t) => (
+                <li key={t.name} className="flex items-center gap-3 px-3 py-2">
+                  <code className="font-mono text-sm text-zinc-300">{t.name}</code>
+                  <span className="flex-1 text-sm text-neutral-400">{t.description}</span>
+                  <button
+                    onClick={() => setActive(t)}
+                    className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+                  >
+                    Run
+                  </button>
+                </li>
+              ))}
+            </ul>
           </section>
-        );
-      })}
+        ))
+      )}
       {active && <RunModal tool={active} onClose={() => setActive(null)} />}
     </div>
   );

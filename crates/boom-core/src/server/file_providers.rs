@@ -283,7 +283,18 @@ impl ProviderRegistry for FileProviderRegistry {
         let api_key = cfg.api_key.trim().to_string();
         let mut model = cfg.model.trim().to_string();
         let base_url = cfg.base_url.as_deref().unwrap_or("").trim().to_string();
-        if defn.needs_key && api_key.is_empty() {
+        // Sentinel "keep existing": the UI sends an empty key when the key
+        // input is untouched (it renders as bullets for a server-side key).
+        // Keep the previously stored key in that case; only reject when no
+        // key was ever stored for this provider.
+        let api_key = if api_key.is_empty() {
+            self.get_stored(&cfg.provider_id)
+                .map(|c| c.api_key)
+                .unwrap_or_default()
+        } else {
+            api_key
+        };
+        if defn.needs_key && api_key.trim().is_empty() {
             return Err(ProviderConfigError::Invalid(format!(
                 "{} requires an API key",
                 defn.name
@@ -517,6 +528,57 @@ mod tests {
         .expect("ollama save");
         assert!(!reg.has_key("ollama")); // empty key → has_key false
         assert_eq!(reg.active_provider().as_deref(), Some("ollama"));
+    }
+
+    #[test]
+    fn save_empty_key_keeps_stored_key() {
+        let (_dir, reg) = test_registry();
+        // "custom" needs a key; save one first.
+        reg.save_config(ProviderConfig {
+            provider_id: "custom".to_string(),
+            api_key: "sk-original".to_string(),
+            model: "my-model".to_string(),
+            base_url: Some("http://localhost:9999/v1".to_string()),
+        })
+        .expect("initial save");
+        // Re-save with an empty key — the UI's "keep existing" sentinel —
+        // plus a changed model and base_url.
+        reg.save_config(ProviderConfig {
+            provider_id: "custom".to_string(),
+            api_key: String::new(),
+            model: "other-model".to_string(),
+            base_url: Some("http://localhost:9998/v1".to_string()),
+        })
+        .expect("sentinel save keeps the old key");
+        let raw = fs::read_to_string(reg.path()).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let custom = &v["providers"]["custom"];
+        assert_eq!(custom["api_key"], Value::String("sk-original".to_string()));
+        assert_eq!(
+            custom["model"],
+            Value::String("other-model".to_string())
+        );
+        assert_eq!(
+            custom["base_url"],
+            Value::String("http://localhost:9998/v1".to_string())
+        );
+        assert!(reg.has_key("custom"));
+    }
+
+    #[test]
+    fn save_empty_key_with_no_stored_key_still_rejects() {
+        let (_dir, reg) = test_registry();
+        // Nothing stored for "custom" → an empty key is genuinely missing.
+        let err = reg
+            .save_config(ProviderConfig {
+                provider_id: "custom".to_string(),
+                api_key: String::new(),
+                model: "my-model".to_string(),
+                base_url: None,
+            })
+            .unwrap_err();
+        assert!(matches!(err, ProviderConfigError::Invalid(_)));
+        assert!(!reg.has_key("custom"));
     }
 
     #[cfg(unix)]

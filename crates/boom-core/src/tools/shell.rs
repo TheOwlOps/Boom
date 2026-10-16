@@ -26,9 +26,15 @@ use super::{opt_u64, req_str, schema_of, Tool, ToolError};
 /// Output cap per stream, matching the Python module.
 const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 
+/// The command argument, accepting both `cmd` (canonical) and `command`
+/// (what LLM function-calling specs emit — e.g. the Brain heuristic path).
+fn cmd_arg(args: &Value) -> Option<&Value> {
+    args.get("cmd").or_else(|| args.get("command"))
+}
+
 /// Split a command into argv. Strings go through shell-words (never a shell).
 fn split_cmd(args: &Value) -> Result<Vec<String>, ToolError> {
-    match args.get("cmd") {
+    match cmd_arg(args) {
         Some(Value::Array(arr)) => arr
             .iter()
             .map(|v| {
@@ -40,7 +46,7 @@ fn split_cmd(args: &Value) -> Result<Vec<String>, ToolError> {
         Some(Value::String(s)) => shell_words::split(s)
             .map_err(|e| ToolError::InvalidArgs(format!("cannot parse command: {e}"))),
         _ => Err(ToolError::InvalidArgs(
-            "missing required argument 'cmd' (string or array of strings)".into(),
+            "missing required argument 'cmd' (or 'command') (string or array of strings)".into(),
         )),
     }
 }
@@ -165,6 +171,7 @@ impl Tool for ShellRun {
         schema_of(
             &[
                 ("cmd", "string", "Command: a string (shlex-split, never a shell) or an argv array"),
+                ("command", "string", "Alias of `cmd` — accepted in its place."),
                 ("timeout", "integer", "Seconds before the process is killed (default 30)"),
                 ("cwd", "string", "Working directory, confined to the tool root"),
             ],
@@ -172,7 +179,7 @@ impl Tool for ShellRun {
         )
     }
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let raw = args.get("cmd").and_then(Value::as_str).map(str::to_string);
+        let raw = cmd_arg(&args).and_then(Value::as_str).map(str::to_string);
         // Fork-bomb check on the raw string first: a bomb rarely survives
         // shlex-style splitting intact.
         if let Some(ref s) = raw {
@@ -277,13 +284,14 @@ impl Tool for ShellBg {
         schema_of(
             &[
                 ("cmd", "string", "Command: a string (shlex-split, never a shell) or an argv array"),
+                ("command", "string", "Alias of `cmd` — accepted in its place."),
                 ("cwd", "string", "Working directory, confined to the tool root"),
             ],
             &["cmd"],
         )
     }
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let raw = args.get("cmd").and_then(Value::as_str).map(str::to_string);
+        let raw = cmd_arg(&args).and_then(Value::as_str).map(str::to_string);
         if let Some(ref s) = raw {
             if looks_like_fork_bomb(s) {
                 return Err(ToolError::Blocked(
@@ -441,6 +449,32 @@ mod tests {
         assert_eq!(out["exit_code"], 0);
         assert_eq!(out["stdout"].as_str().unwrap().trim(), "hello boom");
         assert_eq!(out["timed_out"], false);
+    }
+
+    #[tokio::test]
+    async fn command_alias_of_cmd() {
+        // LLM function-calling specs emit `command`; it must behave like `cmd`.
+        let _root = TestRoot::new();
+        let out = run(ShellRun, serde_json::json!({"command": "echo via-command"}))
+            .await
+            .unwrap();
+        assert_eq!(out["exit_code"], 0);
+        assert_eq!(out["stdout"].as_str().unwrap().trim(), "via-command");
+        let out = run(ShellBg, serde_json::json!({"command": ["sleep", "60"]}))
+            .await
+            .unwrap();
+        let job_id = out["job_id"].as_str().unwrap().to_string();
+        run(ProcessKill, serde_json::json!({"job_id": job_id}))
+            .await
+            .unwrap();
+        // `cmd` still wins when both are present.
+        let out = run(
+            ShellRun,
+            serde_json::json!({"cmd": "echo cmd-wins", "command": "echo ignored"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["stdout"].as_str().unwrap().trim(), "cmd-wins");
     }
 
     #[tokio::test]

@@ -4,8 +4,13 @@
 //! Response (JSON): `{reply, session_id, strategy, errors}` — the exact shape
 //! the frontend's `parseChatReply` requires.
 //! Response (SSE, when `Accept` contains `text/event-stream`): events
-//! `status {phase:"thinking"}` → `message {text}` → `done {session_id, strategy}`,
+//! `status {phase:"thinking"}` → `message {text}` → `done {session_id, strategy, errors}`,
 //! or `error {error: "chat turn failed"}`.
+//!
+//! When no LLM provider is configured (nothing saved via
+//! `POST /api/providers/config` yet) the route answers 503
+//! [`NOT_CONFIGURED_MESSAGE`] — before the turn lock and before the SSE
+//! branch — instead of running a turn.
 
 use std::{
     collections::{HashSet, VecDeque},
@@ -28,6 +33,12 @@ use super::super::{
     ApiError, JsonBody,
 };
 use crate::server::{TurnError, CHAT_STRATEGIES};
+
+/// The single 503 message used both by the pre-turn `is_configured()`
+/// check and by the `TurnError::NotConfigured` mapping below: the chat
+/// brain has no LLM provider to call. Save one via
+/// `POST /api/providers/config` first.
+pub(crate) const NOT_CONFIGURED_MESSAGE: &str = "no LLM provider configured";
 
 fn sse_event(name: &str, payload: &Value) -> Event {
     Event::default()
@@ -110,10 +121,12 @@ pub async fn chat(
         .load_session(&session_id)
         .map_err(|e| ApiError::new(axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("failed to load session: {e}")))?;
     if !state.harness.is_configured() {
-        // Mirrors Python's `brain is None` → 503, checked before the lock.
+        // No provider configured → 503, checked before the lock (mirrors
+        // Python's `brain is None` branch, with the message naming the
+        // actual missing piece: the provider, not the brain).
         return Err(ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "agent brain not configured",
+            NOT_CONFIGURED_MESSAGE,
         ));
     }
 
@@ -145,7 +158,7 @@ pub async fn chat(
         let result = state.harness.run_turn(req).await.map_err(|e| match e {
             TurnError::NotConfigured => ApiError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                "agent brain not configured",
+                NOT_CONFIGURED_MESSAGE,
             ),
             TurnError::Failed(_) => {
                 ApiError::new(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "chat turn failed")
@@ -246,7 +259,7 @@ impl Stream for ChatSseStream {
                                 )));
                                 this.events.push_back(Ok(sse_event(
                                     "done",
-                                    &json!({ "session_id": this.session_id, "strategy": used }),
+                                    &json!({ "session_id": this.session_id, "strategy": used, "errors": r.errors }),
                                 )));
                             }
                             Err(_) => {

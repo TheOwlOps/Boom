@@ -125,7 +125,8 @@ function ProviderCard({
 }) {
   const set = onChange;
 
-  async function handleSave(): Promise<void> {
+  /** Persist the current form values; returns true when the save succeeded. */
+  async function saveConfig(): Promise<boolean> {
     set({ saving: true, error: null });
     try {
       // 1. Local cache (drafts survive reloads even if the backend is down).
@@ -137,6 +138,8 @@ function ProviderCard({
       };
       writeLocalDrafts(drafts);
       // 2. Backend (source of truth; writes ~/.boom/providers.json 0600).
+      // An untouched key input sends "" — the backend keeps the stored key
+      // (sentinel "keep existing").
       const res = await fetch(`${API_BASE}/api/providers/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,14 +158,24 @@ function ProviderCard({
             : `HTTP ${res.status}`;
         throw new Error(msg);
       }
+      return true;
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Save failed" });
+      return false;
     } finally {
       set({ saving: false });
     }
   }
 
+  async function handleSave(): Promise<void> {
+    await saveConfig();
+  }
+
   async function handleTest(): Promise<void> {
+    // The probe must run against the values currently in the form, not the
+    // previously saved config — save first, then test.
+    const saved = await saveConfig();
+    if (!saved) return;
     set({ conn: "testing", connMessage: null, error: null });
     try {
       const res = await fetch(`${API_BASE}/api/providers/test`, {
@@ -352,10 +365,11 @@ function ProviderCard({
         <button
           type="button"
           onClick={handleTest}
-          disabled={card.conn === "testing"}
+          disabled={card.conn === "testing" || card.saving}
+          title="Saves the current values first, then tests the connection"
           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm font-medium text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
         >
-          {card.conn === "testing" ? (
+          {card.conn === "testing" || card.saving ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <Plug className="h-4 w-4" />

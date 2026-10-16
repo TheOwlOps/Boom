@@ -141,10 +141,16 @@ impl Storage {
         })
     }
 
-    /// Resolves `~/.boom/boom.db`, creating `~/.boom` with mode 0700 on Unix.
+    /// Resolves `$BOOM_HOME/boom.db` (or `~/.boom/boom.db` when unset),
+    /// creating the dir with mode 0700 on Unix.
     pub fn default_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or(StorageError::HomeDirNotFound)?;
-        let dir = home.join(".boom");
+        let dir = std::env::var("BOOM_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .map(|h| h.join(".boom"))
+                    .unwrap_or_else(|| PathBuf::from(".boom"))
+            });
         ensure_private_dir(&dir)?;
         Ok(dir.join("boom.db"))
     }

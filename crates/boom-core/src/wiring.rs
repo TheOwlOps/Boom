@@ -452,8 +452,17 @@ impl WiredHarness {
     ) -> Result<sstate::TurnResult, sstate::TurnError> {
         let client = (self.make_client)()
             .map_err(|e| sstate::TurnError::Failed(format!("LLM provider unavailable: {e}")))?;
+        // `model` was read from the provider config at construction; when
+        // it is empty (no config existed at startup) fall back to the
+        // freshly-built client's own default model, so a provider saved
+        // later still gets its configured model on every turn.
+        let model = if self.model.is_empty() {
+            client.default_model().to_string()
+        } else {
+            self.model.clone()
+        };
         let llm: Arc<dyn htypes::LlmClient> =
-            Arc::new(ProviderLlmAdapter::new(client, self.model.clone()));
+            Arc::new(ProviderLlmAdapter::new(client, model));
         let executor: Arc<dyn htypes::ToolExecutor> =
             Arc::new(RegistryToolExecutor::new(self.registry.clone()));
 
@@ -478,8 +487,13 @@ impl WiredHarness {
 }
 
 impl sstate::Harness for WiredHarness {
+    /// Dynamic: the factory re-reads the provider config (file, env, or
+    /// wherever the app layer keeps it) on every turn, so a provider
+    /// saved after startup flips this to `true` without a restart.
+    /// `false` when no provider is configured or the saved config cannot
+    /// build a client — the route answers 503 before taking the turn lock.
     fn is_configured(&self) -> bool {
-        true
+        (self.make_client)().is_ok()
     }
 
     fn model_name(&self) -> Option<String> {

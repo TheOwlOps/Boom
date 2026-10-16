@@ -13,11 +13,29 @@ interface TerminalLogProps {
 const DEFAULT_POLL_MS = 2_000;
 const DEFAULT_MAX_LINES = 1_000;
 
-/** Reduce the /api/logs body to string[]: accepts {lines: []} or a bare array. */
+/**
+ * Reduce the /api/logs body to string[].
+ * Accepts the backend shape {logs: [{ts, msg}]}, the legacy {lines: []},
+ * or a bare array. Anything else yields [].
+ */
 function toLines(body: unknown): string[] {
-  const arr = Array.isArray(body) ? body : (body as { lines?: unknown }).lines;
+  const rec = (Array.isArray(body) ? null : body) as { logs?: unknown; lines?: unknown } | null;
+  const arr = Array.isArray(body) ? body : (rec?.logs ?? rec?.lines);
   if (!Array.isArray(arr)) return [];
-  return arr.filter((l): l is string => typeof l === "string");
+  const out: string[] = [];
+  for (const l of arr) {
+    if (typeof l === "string") {
+      out.push(l);
+      continue;
+    }
+    if (typeof l === "object" && l !== null) {
+      const o = l as Record<string, unknown>;
+      if (typeof o.msg === "string") {
+        out.push(typeof o.ts === "string" && o.ts.length > 0 ? `[${o.ts}] ${o.msg}` : o.msg);
+      }
+    }
+  }
+  return out;
 }
 
 /**

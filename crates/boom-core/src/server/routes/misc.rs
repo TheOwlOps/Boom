@@ -67,7 +67,7 @@ const ACTIVITY_KEYWORDS: &[&str] = &["tool_call", "thinking", "tool", "error", "
 pub async fn activity(State(state): State<AppState>) -> Json<Value> {
     let log = state.log.lock().map(|g| g.clone()).unwrap_or_default();
     let mut activities: Vec<Value> = Vec::new();
-    for e in log.iter().filter(|e| {
+    for (buf_idx, e) in log.iter().enumerate().filter(|(_, e)| {
         let low = e.msg.to_lowercase();
         ACTIVITY_KEYWORDS.iter().any(|k| low.contains(k))
     }) {
@@ -80,8 +80,10 @@ pub async fn activity(State(state): State<AppState>) -> Json<Value> {
             "thinking"
         };
         let msg: String = e.msg.chars().take(160).collect();
+        // Buffer index suffix: `ts` is second-precision, so two matching
+        // entries in the same second would otherwise share an id.
         activities.push(json!({
-            "id": format!("log-{}", e.ts),
+            "id": format!("log-{}-{}", e.ts, buf_idx),
             "timestamp": e.ts,
             "type": act_type,
             "message": msg,
@@ -179,7 +181,18 @@ fn skill_description(skill_dir: &std::path::Path) -> String {
     String::new()
 }
 
-/// `GET /api/skills` → `{skills: [{name, description}], count}`.
+/// Path of a skill's SKILL.md, relative to the process working directory when
+/// the skill lives under it (e.g. `skills/code-review/SKILL.md`), otherwise
+/// the absolute path. Never fabricated: always derived from the real dir.
+fn skill_path(skills_dir: &std::path::Path, name: &str) -> String {
+    let full = skills_dir.join(name).join("SKILL.md");
+    let rel = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| full.strip_prefix(&cwd).ok().map(|p| p.to_path_buf()));
+    rel.unwrap_or(full).to_string_lossy().replace('\\', "/")
+}
+
+/// `GET /api/skills` → `{skills: [{name, description, path}], count}`.
 pub async fn list_skills(State(state): State<AppState>) -> Json<Value> {
     let mut skills: Vec<Value> = Vec::new();
     if let Some(dir) = state.skills_dir.as_deref() {
@@ -194,6 +207,7 @@ pub async fn list_skills(State(state): State<AppState>) -> Json<Value> {
                 skills.push(json!({
                     "name": name,
                     "description": skill_description(&entry.path()),
+                    "path": skill_path(dir, &name),
                 }));
             }
         }
@@ -251,8 +265,8 @@ fn scrub(text: &str, phone: &str, password: &str) -> String {
 }
 
 /// `POST /api/channels/zalo-personal/login` — body `{phone, password}` →
-/// 200 `{ok: true, phone_masked}`. Missing phone/password → 400. The password
-/// is never echoed into the response or the logs.
+/// 200 `{ok: true, connected: true, phone_masked}`. Missing phone/password →
+/// 400. The password is never echoed into the response or the logs.
 pub async fn zalo_login(
     State(state): State<AppState>,
     JsonBody(body): JsonBody,
@@ -272,7 +286,9 @@ pub async fn zalo_login(
     match result {
         Ok(phone_masked) => {
             drop(password);
-            Ok(Json(json!({ "ok": true, "phone_masked": phone_masked })))
+            Ok(Json(
+                json!({ "ok": true, "connected": true, "phone_masked": phone_masked }),
+            ))
         }
         Err(ZaloLoginError::Unavailable) => {
             drop(password);

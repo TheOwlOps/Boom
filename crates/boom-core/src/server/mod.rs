@@ -47,7 +47,7 @@ use axum::{
     extract::FromRequest,
     http::{header, request::Parts, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use serde_json::{Map, Value};
@@ -215,7 +215,12 @@ pub fn router(state: AppState) -> Router {
                 .put(bots::active_not_a_bot_id)
                 .delete(bots::active_not_a_bot_id),
         )
-        .route("/api/bots/{id}", put(bots::update_bot).delete(bots::delete_bot))
+        .route(
+            "/api/bots/{id}",
+            get(bots::get_bot)
+                .put(bots::update_bot)
+                .delete(bots::delete_bot),
+        )
         // providers
         .route("/api/providers", get(providers::list_providers))
         .route("/api/providers/config", post(providers::save_config))
