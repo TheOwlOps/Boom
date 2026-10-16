@@ -102,7 +102,7 @@ def segment_cjk(text: str) -> str:
 
 
 class StateDB:
-    """Hermes-grade persistent SQLite WAL state database with FTS5 cross-session search."""
+    """Production-grade persistent SQLite WAL state database with FTS5 cross-session search."""
 
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)

@@ -30,7 +30,7 @@ else:
     try:
         import httpx
         HTTPX_AVAILABLE = True
-    except ImportError:  # pragma: no cover - httpx is already a Hermes dep
+    except ImportError:  # pragma: no cover - httpx is already a Boom dep
         HTTPX_AVAILABLE = False
         httpx = None
 
@@ -51,7 +51,7 @@ from .auth import load_project_credentials
 # mirror files. Tests monkeypatch sidecar_paths._SIDECAR_DIR.
 from .sidecar_paths import _NPM_ERROR_LOG_MAX_CHARS, _lock_newer_than_install, _npm_error_log, _sidecar_dir
 from .sidecar_paths import dir_writable as _dir_writable
-from hermes_constants import find_node_executable, with_hermes_node_path
+from boom_constants import find_node_executable, with_boom_node_path
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SIDECAR_PORT = 8789
 _DEFAULT_SIDECAR_BIND = "127.0.0.1"
 _MAX_MESSAGE_LENGTH = 8000  # iMessage caps practical size at ~16 KB; conservative, matches BlueBubbles
-# Out-of-process senders (cron, `hermes send`) need the live sidecar's port + spawn-time
+# Out-of-process senders (cron, `boom send`) need the live sidecar's port + spawn-time
 # token; persisted once /healthz passes, removed on every stop / failed-start path.
 # --------------------------------------------------------------------------- Sidecar runtime record The
 # gateway persists this record once the sidecar passes its /healthz readiness check, and removes it on every
@@ -74,12 +74,12 @@ _PHOTON_RETRYABLE_PATTERNS = (
     "internal sidecar error", "upstream connect error", "upstream unavailable", "connection dropped",
     "reset reason: overflow", "upstream_overflow", "upstream_unavailable")
 # iMessage emits Open Graph preview art as attachments right after a URL message;
-# suppress those so Hermes sees the link once.
+# suppress those so Boom sees the link once.
 _RICHLINK_PREVIEW_SUPPRESS_SECONDS = 30.0
 _RICHLINK_PREVIEW_ATTACHMENT_SUFFIX = ".pluginpayloadattachment"
 _TYPING_COOLDOWN_SECONDS = 5.0  # per chat; reduces gRPC pressure during overflow
 # Group-chat wake words — same defaults as BlueBubbles so both iMessage adapters gate alike.
-_DEFAULT_MENTION_PATTERNS = [r"(?<![\w@])@?hermes\s+agent\b[,:\-]?", r"(?<![\w@])@?hermes\b[,:\-]?"]
+_DEFAULT_MENTION_PATTERNS = [r"(?<![\w@])@?boom\s+agent\b[,:\-]?", r"(?<![\w@])@?boom\b[,:\-]?"]
 # Shared/free-tier lines can only reply to conversations the target initiated.
 _TARGET_NOT_ALLOWED_MESSAGE = (
     "shared/free-tier Photon lines cannot initiate outbound sends to new "
@@ -101,8 +101,8 @@ async def _aiter_ndjson_lines(response: Any) -> AsyncIterator[str]:
 # -- Sidecar runtime record ----------------------------------------------------
 
 def _runtime_record_path() -> Path:
-    from hermes_constants import get_hermes_home  # honors profile overrides
-    return get_hermes_home() / "runtime" / _RUNTIME_RECORD_NAME
+    from boom_constants import get_boom_home  # honors profile overrides
+    return get_boom_home() / "runtime" / _RUNTIME_RECORD_NAME
 
 
 def _write_runtime_record(port: int, token: str, pid: int) -> None:
@@ -235,9 +235,9 @@ def check_requirements() -> bool:
         # the (resolved, possibly mirrored) sidecar dir is writable — report
         # available so the gateway creates the adapter and ``_start_sidecar``
         # cold-installs from the committed lockfile (on hosted images the
-        # user has no CLI to run `hermes photon setup`, so the connect path
+        # user has no CLI to run `boom photon setup`, so the connect path
         # must self-heal). Otherwise keep returning False so
-        # `hermes setup` / status surface the missing-deps state.
+        # `boom setup` / status surface the missing-deps state.
         if (find_node_executable("npm") or can_prepare) and _dir_writable(_sidecar_dir()):
             return True
         # DEBUG, not WARNING: normal pre-setup state, and check_fn is polled from hot paths.
@@ -248,13 +248,13 @@ def check_requirements() -> bool:
         if npm_error:
             logger.debug(
                 "photon: spectrum-ts not installed at %s "
-                "(last npm error: %s) — run: hermes photon setup",
+                "(last npm error: %s) — run: boom photon setup",
                 _sidecar_dir(),
                 npm_error,
             )
         else:
             logger.debug(
-                "photon: spectrum-ts not installed at %s — run: hermes photon setup",
+                "photon: spectrum-ts not installed at %s — run: boom photon setup",
                 _sidecar_dir(),
             )
         return False
@@ -262,7 +262,7 @@ def check_requirements() -> bool:
 
 
 def _sidecar_deps_stale() -> bool:
-    """True when node_modules predates the lockfile (`hermes update` rewrites it without
+    """True when node_modules predates the lockfile (`boom update` rewrites it without
     reinstalling); False if either file is missing."""
     return _lock_newer_than_install(_sidecar_dir())
 
@@ -270,7 +270,7 @@ def _sidecar_deps_stale() -> bool:
 def _reinstall_sidecar_deps() -> None:
     """Reinstall the sidecar's node_modules from the lockfile (blocking).
 
-    Mirrors ``hermes photon install-sidecar``: ``npm ci`` for an exact,
+    Mirrors ``boom photon install-sidecar``: ``npm ci`` for an exact,
     reproducible install, falling back to ``npm install`` if the lockfile is
     missing or drifted. Runs the postinstall patch as part of the install.
     Best-effort — a failure here just leaves the (stale) deps in place and the
@@ -280,7 +280,7 @@ def _reinstall_sidecar_deps() -> None:
 
     try:
         npm = find_node_executable("npm")
-        env = with_hermes_node_path()
+        env = with_boom_node_path()
         if npm is None:
             env = pm.ensure("npm").env
             installed = pm.installed_package("npm")
@@ -290,7 +290,7 @@ def _reinstall_sidecar_deps() -> None:
     except pm.InstallError as exc:
         logger.warning("[photon] cannot prepare sidecar dependencies: %s", exc)
         return
-    from hermes_cli._subprocess_compat import windows_hide_flags  # no console flash on Windows
+    from boom_cli._subprocess_compat import windows_hide_flags  # no console flash on Windows
 
     def _run(verb: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -539,7 +539,7 @@ def _lookup_sent_text(chat_id: Optional[str], message_id: Optional[str]) -> Opti
 def _attachment_body(space_id: str, safe_path: str, *, kind: str, name: Optional[str] = None,
                      mime_type: Optional[str] = None, caption: Optional[str] = None) -> dict[str, Any]:
     """``/send-attachment`` body; spectrum-ts infers name/mimeType from the extension,
-    so optional keys are only sent when Hermes supplied them."""
+    so optional keys are only sent when Boom supplied them."""
     body: dict[str, Any] = {
         "spaceId": space_id, "path": safe_path, "kind": "voice" if kind == "voice" else "attachment"}
     body.update({k: v for k, v in (("name", name), ("mimeType", mime_type), ("caption", caption)) if v})
@@ -639,7 +639,7 @@ class PhotonAdapter(BasePlatformAdapter):
         return f"http://{self._sidecar_bind}:{self._sidecar_port}{path}"
 
     def _sidecar_headers(self) -> dict[str, str]:
-        return {"X-Hermes-Sidecar-Token": self._sidecar_token}
+        return {"X-Boom-Sidecar-Token": self._sidecar_token}
 
     # -- Connection lifecycle ------------------------------------------------------
 
@@ -650,7 +650,7 @@ class PhotonAdapter(BasePlatformAdapter):
         if not self._project_id or not self._project_secret:
             self._set_fatal_error(
                 "MISSING_CREDENTIALS",
-                "PHOTON_PROJECT_ID and PHOTON_PROJECT_SECRET are required. Run: hermes photon setup",
+                "PHOTON_PROJECT_ID and PHOTON_PROJECT_SECRET are required. Run: boom photon setup",
                 retryable=False)
             return False
         client = httpx.AsyncClient(timeout=30.0, trust_env=False)
@@ -940,7 +940,7 @@ class PhotonAdapter(BasePlatformAdapter):
 
     @classmethod
     def _pid_is_sidecar(cls, pid: int) -> bool:
-        """True if ``pid``'s command line is a Photon sidecar (any Hermes checkout)."""
+        """True if ``pid``'s command line is a Photon sidecar (any Boom checkout)."""
         out = cls._quick_stdout(["ps", "-p", str(pid), "-o", "command="])
         return out is not None and "photon/sidecar/index.mjs" in out
 
@@ -994,7 +994,7 @@ class PhotonAdapter(BasePlatformAdapter):
     async def _ensure_sidecar_deps(self) -> None:
         """Cold-install or refresh sidecar node_modules before spawn (off the loop)."""
         if not sidecar_deps_installed():
-            # Hosted images have no CLI for `hermes photon setup`: connect bootstraps deps itself.
+            # Hosted images have no CLI for `boom photon setup`: connect bootstraps deps itself.
             logger.info("[photon] sidecar deps not installed; installing into %s", _sidecar_dir())
             await asyncio.to_thread(_reinstall_sidecar_deps)
             if not sidecar_deps_installed():
@@ -1002,9 +1002,9 @@ class PhotonAdapter(BasePlatformAdapter):
                 raise PhotonSidecarStartupError(
                     f"Photon sidecar deps could not be installed into "
                     f"{_sidecar_dir()} (see log for the npm error). "
-                    f"Run: cd {_sidecar_dir()} && npm ci   (or `hermes photon setup`)",
+                    f"Run: cd {_sidecar_dir()} && npm ci   (or `boom photon setup`)",
                     code="SIDECAR_DEPS_MISSING", retryable=False)
-        # `hermes update` bumps the lockfile without reinstalling node_modules; the sidecar
+        # `boom update` bumps the lockfile without reinstalling node_modules; the sidecar
         # would spawn against stale deps and die on every reconnect.
         if _sidecar_deps_stale():
             logger.warning("[photon] sidecar deps are stale (lockfile newer than install); reinstalling before start")
@@ -1017,7 +1017,7 @@ class PhotonAdapter(BasePlatformAdapter):
                 subprocess.run,
                 [self._node_bin, str(_sidecar_dir() / "patch-spectrum-mixed-attachments.mjs"), str(_sidecar_dir())],
                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10, check=False,
-                creationflags=hide_flags, env=with_hermes_node_path())
+                creationflags=hide_flags, env=with_boom_node_path())
             if patch.returncode != 0:
                 raise RuntimeError((patch.stderr or patch.stdout or "").strip())
             if patch.stderr.strip():
@@ -1039,14 +1039,14 @@ class PhotonAdapter(BasePlatformAdapter):
                 raise PhotonSidecarStartupError(str(exc), code="SIDECAR_NODE_MISSING", retryable=False) from exc
         await self._ensure_sidecar_deps()
         await self._reap_stale_sidecar()
-        env = with_hermes_node_path()
+        env = with_boom_node_path()
         env.update({
             "PHOTON_PROJECT_ID": self._project_id, "PHOTON_PROJECT_SECRET": self._project_secret,
             "PHOTON_SIDECAR_PORT": str(self._sidecar_port), "PHOTON_SIDECAR_BIND": self._sidecar_bind,
             "PHOTON_SIDECAR_TOKEN": self._sidecar_token,
             # Exit on stdin EOF so ANY gateway death (incl. SIGKILL) can't orphan it on the port.
             "PHOTON_SIDECAR_WATCH_STDIN": "1"})
-        from hermes_cli._subprocess_compat import windows_hide_flags  # hide child console on Windows
+        from boom_cli._subprocess_compat import windows_hide_flags  # hide child console on Windows
         await self._apply_spectrum_patch(windows_hide_flags())
         try:
             self._sidecar_proc = subprocess.Popen(  # noqa: ASYNC220 -- persistent sidecar; callers use the Popen pipes and poll()
@@ -1063,7 +1063,7 @@ class PhotonAdapter(BasePlatformAdapter):
             # Retrying can never fix a missing binary (OOF-153).
             raise PhotonSidecarStartupError(
                 f"node binary not found ({self._node_bin!r}) — install Node.js "
-                f"18+ or run `hermes pm install`: {exc}",
+                f"18+ or run `boom pm install`: {exc}",
                 code="SIDECAR_NODE_MISSING",
                 retryable=False,
             ) from exc
@@ -1622,8 +1622,8 @@ def _standalone_token_from_record(port: int) -> tuple[Optional[str], int, str]:
         stale_hint = (f" A stale sidecar runtime record was found (pid {record.get('pid')} is not running)"
                       " — the gateway appears to be down.")
     return None, port, (
-        "Photon standalone send requires a running sidecar. Start the Hermes gateway (which spawns "
-        f"the sidecar and records its address under <hermes-home>/runtime/{_RUNTIME_RECORD_NAME}), "
+        "Photon standalone send requires a running sidecar. Start the Boom gateway (which spawns "
+        f"the sidecar and records its address under <boom-home>/runtime/{_RUNTIME_RECORD_NAME}), "
         "or set PHOTON_SIDECAR_TOKEN in this process's environment." + stale_hint)
 
 
@@ -1643,7 +1643,7 @@ async def _standalone_send(
         if not token:
             return send_error(error)
     base = f"http://{_DEFAULT_SIDECAR_BIND}:{port}"
-    headers = {"X-Hermes-Sidecar-Token": token}
+    headers = {"X-Boom-Sidecar-Token": token}
     last_message_id: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
@@ -1693,17 +1693,17 @@ async def _standalone_send(
 # -- Plugin entry point ----------------------------------------------------------
 
 def register(ctx) -> None:
-    """Called by the Hermes plugin loader at startup."""
+    """Called by the Boom plugin loader at startup."""
     from . import cli as _cli  # local: avoid argparse work at module load
     ctx.register_platform(
         name="photon", label="iMessage via Photon", adapter_factory=lambda cfg: PhotonAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
         required_env=["PHOTON_PROJECT_ID", "PHOTON_PROJECT_SECRET"],
         install_hint=(
-            "Run: hermes photon setup  (logs in via device flow, creates a "
+            "Run: boom photon setup  (logs in via device flow, creates a "
             "Spectrum project, links your phone number, installs the "
             "spectrum-ts sidecar)."),
-        setup_fn=_cli.gateway_setup,  # surfaces Photon in the unified `hermes gateway setup` wizard
+        setup_fn=_cli.gateway_setup,  # surfaces Photon in the unified `boom gateway setup` wizard
         env_enablement_fn=_env_enablement, cron_deliver_env_var="PHOTON_HOME_CHANNEL",
         standalone_sender_fn=_standalone_send, allowed_users_env="PHOTON_ALLOWED_USERS",
         allow_all_env="PHOTON_ALLOW_ALL_USERS", max_message_length=_MAX_MESSAGE_LENGTH, emoji="📱",

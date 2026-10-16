@@ -1,8 +1,8 @@
-# Hermes Tools: Execution Engine & Safety Guardrails Specification
+# Boom Tools: Execution Engine & Safety Guardrails Specification
 
 ## 1. Tool Subsystem Overview
 
-Hermes uses a hybrid tool dispatch system that balances broad capability with context efficiency:
+Boom uses a hybrid tool dispatch system that balances broad capability with context efficiency:
 1. **Core Tools** (Directly loaded in system prompt): High-frequency operations like terminal execution, file manipulation, and skill inspection.
 2. **Deferred Tools** (Dynamic Catalog): 100+ specialized tools (GitHub, Canva, Cloud integrations) discovered on-demand via `tool_search`, described with `tool_describe`, and invoked with `tool_call`.
 3. **Programmatic Meta-Execution (`execute_code`)**: Executes Python scripts that invoke tools locally via RPC, collapsing multi-step workflows into zero-context-cost iterations.
@@ -18,7 +18,7 @@ Hermes uses a hybrid tool dispatch system that balances broad capability with co
 - **Safety Floors**: Prohibits interactive blocking commands unless running in PTY mode; enforces timeouts (default 180s, max 600s).
 
 ### B. Precision File Manipulation
-Hermes avoids brute-force file rewriting:
+Boom avoids brute-force file rewriting:
 - **`read_file`**: 1-indexed pagination (`offset`, `limit`) with document text extractors for PDF, Office, and SQLite files.
 - **`patch` (`fuzzy_match.py`)**: Unified find-and-replace using 9 fuzzy matching heuristics (whitespace tolerance, indentation alignment) to guarantee safe edits without clobbering concurrent changes.
 - **`write_file`**: Full file overwriter with mandatory read-before-write safety validation; automatically triggers syntax linters (`ast.parse`, `json.loads`, etc.) upon saving.
@@ -26,7 +26,7 @@ Hermes avoids brute-force file rewriting:
 ### C. Programmatic Kernel (`execute_code`)
 Instead of making 10 individual tool calls (wasting 10 LLM round-trips and filling the context window), the agent can execute a Python script:
 ```python
-from hermes_tools import search_files, read_file, patch
+from boom_tools import search_files, read_file, patch
 
 # Multi-file refactor inside a single turn:
 files = search_files(pattern="old_api_v1", target="content")["matches"]

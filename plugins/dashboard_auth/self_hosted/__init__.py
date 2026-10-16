@@ -6,7 +6,7 @@ URL, exchanges the code, and verifies the **ID token** (the access token is opaq
 against the discovered ``jwks_uri`` with ``iss``/``aud`` pinned. Public and confidential
 (``client_secret`` layered on top of PKCE, never replacing it) clients both work. Config:
 ``dashboard.oauth.self_hosted.{issuer,client_id,scopes,client_secret,id_token_leeway}`` or
-``HERMES_DASHBOARD_OIDC_*`` (leeway is config.yaml-only; default 60s of clock-skew tolerance
+``BOOM_DASHBOARD_OIDC_*`` (leeway is config.yaml-only; default 60s of clock-skew tolerance
 for the ID token's time claims, ``0`` restores strict verification).
 """
 
@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from hermes_cli.dashboard_auth import LoginStart, ProviderError, Session
+from boom_cli.dashboard_auth import LoginStart, ProviderError, Session
 from plugins.dashboard_auth._shared import (
     DEFAULT_TOKEN_LEEWAY_SECONDS,
     JSON_HEADERS,
@@ -299,20 +299,20 @@ def _settings() -> dict:
     def setting(env_name: str, cfg_key: str) -> str:
         return resolve_env_or_cfg(env_name, oidc_cfg.get(cfg_key))
 
-    issuer = setting("HERMES_DASHBOARD_OIDC_ISSUER", "issuer")
-    client_id = setting("HERMES_DASHBOARD_OIDC_CLIENT_ID", "client_id")
+    issuer = setting("BOOM_DASHBOARD_OIDC_ISSUER", "issuer")
+    client_id = setting("BOOM_DASHBOARD_OIDC_CLIENT_ID", "client_id")
     if not issuer or not client_id:
         raise SkipRegistration(
             "Self-hosted OIDC dashboard auth is not configured. Set both an issuer and "
-            "a client_id — either as env vars (HERMES_DASHBOARD_OIDC_ISSUER + "
-            "HERMES_DASHBOARD_OIDC_CLIENT_ID) or under "
+            "a client_id — either as env vars (BOOM_DASHBOARD_OIDC_ISSUER + "
+            "BOOM_DASHBOARD_OIDC_CLIENT_ID) or under "
             "dashboard.oauth.self_hosted.{issuer,client_id} in config.yaml — or pass "
             f"--insecure to skip the OAuth gate entirely. (issuer set: {bool(issuer)}; client_id set: {bool(client_id)})")
     return {
         "issuer": issuer, "client_id": client_id,
-        "scopes": setting("HERMES_DASHBOARD_OIDC_SCOPES", "scopes") or _DEFAULT_SCOPES,
-        # Credential: canonical home is the env var / ~/.hermes/.env. Empty ⇒ public client.
-        "client_secret": setting("HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "client_secret"),
+        "scopes": setting("BOOM_DASHBOARD_OIDC_SCOPES", "scopes") or _DEFAULT_SCOPES,
+        # Credential: canonical home is the env var / ~/.boom/.env. Empty ⇒ public client.
+        "client_secret": setting("BOOM_DASHBOARD_OIDC_CLIENT_SECRET", "client_secret"),
         # Clock-skew tolerance for ID-token exp/nbf/iat (config.yaml only; default 60s, 0 = strict).
         "id_token_leeway": parse_leeway(oidc_cfg.get("id_token_leeway"))}
 

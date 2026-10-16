@@ -1,9 +1,9 @@
-"""Keep Hermes's own auto-thread title rename out of the pinned session-context prompt.
+"""Keep Boom's own auto-thread title rename out of the pinned session-context prompt.
 
 ``chat_name`` keys the pinned prompt, and the title lane renames a new auto-thread between its
-first and second turns. While the thread carries Hermes's title, its chat name keeps the name the
+first and second turns. While the thread carries Boom's title, its chat name keeps the name the
 title replaced. Any other observed name retires the record: equal text is not edit provenance, so
-a moderator who later restores Hermes's title sees it as itself. Records live in memory; after a
+a moderator who later restores Boom's title sees it as itself. Records live in memory; after a
 restart each renamed thread re-renders once.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ class _TitleRename:
 
 
 class SemanticThreadRenames:
-    """Hermes's latest guarded title rename per thread id."""
+    """Boom's latest guarded title rename per thread id."""
 
     def __init__(self) -> None:
         self._records: dict[str, _TitleRename] = {}
@@ -52,7 +52,7 @@ class SemanticThreadRenames:
             raise
 
     def observe_event(self, thread_id: str, name: str) -> None:
-        """Apply one gateway rename event; only Hermes's own replaced -> title step keeps the record."""
+        """Apply one gateway rename event; only Boom's own replaced -> title step keeps the record."""
         record = self._records.get(thread_id)
         if record is None or name == record.last_event_name:
             return

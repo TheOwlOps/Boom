@@ -1,10 +1,10 @@
-# Hermes Agent: System Architecture & Execution Lifecycle Specification
+# Boom Agent: System Architecture & Execution Lifecycle Specification
 
 ## 1. Executive Summary
 
-Hermes Agent is a production-grade, self-improving autonomous agent framework designed to execute complex reasoning and coding workflows across diverse deployment environments (local CLI, cloud VM, serverless sandboxes, and multi-channel messaging platforms).
+Boom Agent is a production-grade, self-improving autonomous agent framework designed to execute complex reasoning and coding workflows across diverse deployment environments (local CLI, cloud VM, serverless sandboxes, and multi-channel messaging platforms).
 
-Unlike static prompt-wrapper architectures, Hermes features:
+Unlike static prompt-wrapper architectures, Boom features:
 - **Closed-Loop Self-Improvement**: Dynamic skill synthesis, in-session memory curation, and FTS5-backed episodic memory retrieval.
 - **Micro-Compaction & Trajectory Compression**: Token budget-aware trajectory management preventing context degradation.
 - **Asynchronous Multi-Platform Gateway**: Unified ingestion bus multiplexing Telegram, Discord, Slack, WhatsApp, and Webhooks into a single event loop.
@@ -100,7 +100,7 @@ User Input Received
 
 ## 4. Context Engineering & Memory Compaction
 
-To prevent token blowout in long-running tasks, Hermes utilizes a three-tier context strategy:
+To prevent token blowout in long-running tasks, Boom utilizes a three-tier context strategy:
 
 ### A. Progressive Disclosure
 Full tool documentation and skill instructions are not dumped into the system prompt. Instead:

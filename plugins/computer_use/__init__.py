@@ -1,8 +1,8 @@
 """Computer-use provider discovery: bundled ``plugins/computer_use/<name>/`` (the built-in ``cua`` driver lives
-here too) then user ``$HERMES_HOME/plugins/<name>/`` (bundled wins on collision). Exactly one provider is active:
+here too) then user ``$BOOM_HOME/plugins/<name>/`` (bundled wins on collision). Exactly one provider is active:
 ``computer_use.backend`` in the active profile's config.yaml names its directory (default ``cua``), read per call.
 Only that provider is imported; the others stay on disk, so a plugin that is installed but not selected is just an
-option in ``hermes tools``. A configured name that resolves to nothing fails; there is no fallback driver."""
+option in ``boom tools``. A configured name that resolves to nothing fails; there is no fallback driver."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BACKEND = "cua"
 _CU_PLUGINS_DIR = Path(__file__).parent
 # Synthetic parent package for user-installed providers (keeps them out of the bundled namespace).
-_USER_NAMESPACE = "_hermes_user_computer_use"
+_USER_NAMESPACE = "_boom_user_computer_use"
 
 
 def _is_computer_use_dir(path: Path) -> bool:
@@ -89,7 +89,7 @@ class _ProviderCollector(_loader.NoopPluginContext):
 
 def configured_backend_name() -> str:
     """``computer_use.backend`` from the active profile's config.yaml (``cua`` when unset)."""
-    from hermes_cli.config import load_config_readonly
+    from boom_cli.config import load_config_readonly
 
     raw = ((load_config_readonly() or {}).get("computer_use") or {}).get("backend")
     return raw.strip() if isinstance(raw, str) and raw.strip() else DEFAULT_BACKEND
@@ -104,5 +104,5 @@ def get_active_provider() -> ComputerUseProvider:
         state = "could not be loaded (see the log)" if find_provider_dir(name) else "is not installed"
         raise LookupError(
             f"computer_use.backend is {name!r}, but that computer-use provider {state} (available: {available}). "
-            "Install it under ~/.hermes/plugins/<name>/ or pick a backend with `hermes tools`.")
+            "Install it under ~/.boom/plugins/<name>/ or pick a backend with `boom tools`.")
     return provider

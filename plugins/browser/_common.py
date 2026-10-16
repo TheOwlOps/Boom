@@ -74,7 +74,7 @@ class CloudBrowserProvider(BrowserProvider):
 
     @staticmethod
     def _session_name(task_id: str) -> str:
-        return f"hermes_{task_id}_{uuid.uuid4().hex[:8]}"
+        return f"boom_{task_id}_{uuid.uuid4().hex[:8]}"
 
     def _post_create(
         self, url: str, headers: dict[str, str], payload: dict[str, object], *, wrap_errors: bool = True

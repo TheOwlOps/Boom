@@ -1,8 +1,8 @@
-# Hermes Gateway: Multi-Channel Ingress & Egress Architecture
+# Boom Gateway: Multi-Channel Ingress & Egress Architecture
 
 ## 1. Architectural Role
 
-The Hermes Gateway is a unified multiplexing server that bridges external communication channels into the agent reasoning core. It decouples network protocols, rate limits, and platform-specific message formatting from the internal ReAct engine.
+The Boom Gateway is a unified multiplexing server that bridges external communication channels into the agent reasoning core. It decouples network protocols, rate limits, and platform-specific message formatting from the internal ReAct engine.
 
 ---
 

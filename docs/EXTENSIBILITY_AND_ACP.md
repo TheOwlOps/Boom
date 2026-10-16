@@ -1,10 +1,10 @@
-# Hermes Extensibility: Plugin Architecture & Agent Client Protocol (ACP)
+# Boom Extensibility: Plugin Architecture & Agent Client Protocol (ACP)
 
 ## 1. Plugin Core Philosophy: "Plugins Never Touch Core"
 
-Hermes strictly enforces structural decoupling:
+Boom strictly enforces structural decoupling:
 - A plugin must never modify core runtime files (`run_agent.py`, `cli.py`, `gateway/run.py`).
-- Plugins reside in isolated directories (`plugins/<name>/`, `~/.hermes/plugins/`, or `./.hermes/plugins/`).
+- Plugins reside in isolated directories (`plugins/<name>/`, `~/.boom/plugins/`, or `./.boom/plugins/`).
 - All integrations occur through a well-defined `PluginContext` (`ctx`) interface exposed during discovery.
 
 ---
@@ -42,10 +42,10 @@ def register(ctx) -> None:
 
 ## 3. Host Process Isolation (`plugins.isolation: host`)
 
-For untrusted or resource-heavy plugins, Hermes provides process-level isolation:
+For untrusted or resource-heavy plugins, Boom provides process-level isolation:
 - **`in_process` (Default)**: Plugins are imported directly into the main Python runtime.
 - **`host` Mode**: Non-bundled plugins run inside an isolated subprocess (`plugin_host_child.py`).
-- **Framed JSON Wire Protocol**: Communication between Hermes Core and the Plugin Host occurs over a dedicated pipe/socket.
+- **Framed JSON Wire Protocol**: Communication between Boom Core and the Plugin Host occurs over a dedicated pipe/socket.
 - **Crash Immunity**: A crash or segfault in a plugin process does not destabilize the core agent loop.
 
 ---

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 class SystemPromptBuilder:
-    """Dynamic system prompt assembly mirroring Hermes Agent architecture."""
+    """Dynamic system prompt assembly for the Boom agent architecture."""
 
     def __init__(self, workspace_root: Path):
         self.workspace_root = Path(workspace_root)

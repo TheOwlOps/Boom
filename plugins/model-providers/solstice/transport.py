@@ -18,7 +18,7 @@ class SolsticeClient(GeminiNativeClient):
     """``GeminiNativeClient`` on ``:generateContentPerUserQuota`` / ``:streamGenerateContentPerUserQuota``."""
 
     GENERATE_METHOD, STREAM_METHOD = "generateContentPerUserQuota", "streamGenerateContentPerUserQuota"
-    MISSING_KEY_ERROR = "Solstice needs a signed-in account. Run `hermes auth add solstice`."
+    MISSING_KEY_ERROR = "Solstice needs a signed-in account. Run `boom auth add solstice`."
 
     def __init__(self, *, base_url: Any = None, **kwargs: Any) -> None:
         # No base means this endpoint, never the generic Gemini default (a different API surface).

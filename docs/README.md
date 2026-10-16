@@ -1,6 +1,6 @@
-# Harness & Hermes Agent Master Architecture Specification
+# Harness & Boom Agent Master Architecture Specification
 
-This documentation suite provides a complete technical analysis and architecture blueprint of the Hermes Agent system, detailing its design patterns, turn lifecycle, multi-channel gateway, tools engine, memory mechanisms, and extensibility protocols.
+This documentation suite provides a complete technical analysis and architecture blueprint of the Boom Agent system, detailing its design patterns, turn lifecycle, multi-channel gateway, tools engine, memory mechanisms, and extensibility protocols.
 
 ## Specification Index
 

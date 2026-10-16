@@ -3,7 +3,7 @@
 Persistent memory via the ByteRover CLI (``brv``): hierarchical context tree with tiered retrieval
 (fuzzy text → LLM-driven search), local-first with optional cloud sync (BRV_API_KEY). Requires the
 ``brv`` CLI (npm install -g byterover-cli, or byterover.dev/install.sh). Working directory is
-$HERMES_HOME/byterover/ (profile-scoped); ``memory.byterover.auto_extract: false`` disables curate hooks.
+$BOOM_HOME/byterover/ (profile-scoped); ``memory.byterover.auto_extract: false`` disables curate hooks.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 def _load_plugin_config() -> dict[str, Any]:
     """Read ``memory.byterover``; fall back to legacy ``memory.provider_config`` (early docs used it)."""
     try:
-        from hermes_cli.config import load_config
+        from boom_cli.config import load_config
         memory_config = load_config().get("memory", {})
     except Exception:
         return {}
@@ -53,8 +53,8 @@ def _load_plugin_config() -> dict[str, Any]:
 
 def _get_brv_cwd() -> Path:
     """Profile-scoped working directory for the brv context tree."""
-    from hermes_constants import get_hermes_home
-    return get_hermes_home() / "byterover"
+    from boom_constants import get_boom_home
+    return get_boom_home() / "byterover"
 
 
 # brv binary resolution (cached, thread-safe): None = unresolved, "" = resolved-missing
@@ -83,12 +83,12 @@ def _brv_child_env(brv_path: str) -> dict[str, str]:
     another profile's — and the launch profile's ``.env`` residue is stripped. Outside multiplex
     the process env IS this profile's own and is passed through unchanged."""
     from agent.secret_scope import UnscopedSecretError, get_secret, is_multiplex_active
-    from hermes_constants import get_hermes_home_override
+    from boom_constants import get_boom_home_override
     from tools.environments.local import build_subprocess_env, strip_launch_profile_env
 
     env = build_subprocess_env(scrub_secrets=False)
     if is_multiplex_active():
-        env = strip_launch_profile_env(env, get_hermes_home_override())
+        env = strip_launch_profile_env(env, get_boom_home_override())
         for key in [k for k in env if k.startswith("BRV_")]:
             env.pop(key, None)
         try:

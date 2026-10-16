@@ -187,4 +187,4 @@ def card_spec_to_cards_v2(card_spec: dict[str, Any]) -> dict[str, Any]:
     header = card_spec.get("header")
     if header:
         card["header"] = _header_to_chat(header)
-    return {"cardId": str(card_spec.get("card_id") or "hermes-card"), "card": card}
+    return {"cardId": str(card_spec.get("card_id") or "boom-card"), "card": card}

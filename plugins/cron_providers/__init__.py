@@ -1,5 +1,5 @@
 """Cron scheduler provider discovery: bundled ``plugins/cron_providers/<name>/`` then user
-``$HERMES_HOME/plugins/<name>/`` (bundled wins on collision). The built-in InProcessCronScheduler
+``$BOOM_HOME/plugins/<name>/`` (bundled wins on collision). The built-in InProcessCronScheduler
 is core, not discovered here, so the fallback can't be removed; one provider is active
 (``cron.provider`` in config.yaml, empty = built-in)."""
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _CRON_PLUGINS_DIR = Path(__file__).parent
 # Synthetic parent package for user-installed providers (keeps them out of the bundled namespace).
-_USER_NAMESPACE = "_hermes_user_cron"
+_USER_NAMESPACE = "_boom_user_cron"
 
 
 def _is_cron_provider_dir(path: Path) -> bool:
@@ -31,7 +31,7 @@ def _is_cron_provider_dir(path: Path) -> bool:
 
 
 def _user_provider_dirs() -> list[Path]:
-    """User-installed ``$HERMES_HOME/plugins/<name>/`` dirs that look like cron providers."""
+    """User-installed ``$BOOM_HOME/plugins/<name>/`` dirs that look like cron providers."""
     user_dir = _loader.user_plugins_dir()
     return [c for c in _loader.iter_plugin_dirs(user_dir) if _is_cron_provider_dir(c)] if user_dir else []
 
@@ -78,7 +78,7 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional[CronScheduler]:
     name = provider_dir.name
     is_bundled = _CRON_PLUGINS_DIR in provider_dir.parents or provider_dir.parent == _CRON_PLUGINS_DIR
     module_name = f"plugins.cron_providers.{name}" if is_bundled else f"{_USER_NAMESPACE}.{name}"
-    from hermes_cli.plugin_isolation import user_plugin_host
+    from boom_cli.plugin_isolation import user_plugin_host
     host = None if is_bundled else user_plugin_host()
     if host is not None:
         return host.load_instance(provider_dir, module_name=module_name, capture="register_cron_scheduler",

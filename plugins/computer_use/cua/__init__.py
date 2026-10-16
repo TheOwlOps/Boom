@@ -16,14 +16,14 @@ class CuaDriverProvider(ComputerUseProvider):
         return CuaDriverBackend(permission_mode=permission_mode)
 
     def is_available(self) -> bool:
-        """macOS/Windows/Linux + cua-driver binary (or env override). `hermes computer-use doctor` names blocked checks."""
+        """macOS/Windows/Linux + cua-driver binary (or env override). `boom computer-use doctor` names blocked checks."""
         if sys.platform not in ("darwin", "win32", "linux"):
             return False
         from tools.computer_use.cua_backend_driver import cua_driver_binary_available
         if cua_driver_binary_available():
             return True
         # No host driver: the tool is still real when the desktop is placed inside a terminal backend whose image
-        # carries cua-driver (nousresearch/hermes-sandbox:desktop). Placement is config; the binary is probed lazily
+        # carries cua-driver (nousresearch/boom-sandbox:desktop). Placement is config; the binary is probed lazily
         # at first use, so this stays a cheap check_fn.
         from tools.bot_desktop import placement
         return placement.resolve().where == placement.TERMINAL

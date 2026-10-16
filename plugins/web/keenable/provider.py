@@ -21,7 +21,7 @@ _KEENABLE_API_URL = "https://api.keenable.ai"
 
 def _keenable_headers(api_key: str) -> dict[str, str]:
     # The keyless tier structurally requires an app-identifier header; no user identifiers are sent.
-    headers = {"X-Keenable-Title": "hermes-agent"}
+    headers = {"X-Keenable-Title": "boom-agent"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers

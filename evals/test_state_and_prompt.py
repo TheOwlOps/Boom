@@ -11,7 +11,7 @@ from loop.token_accounting import TokenAccountant
 from tools.process_manager import ProcessManager
 from tools.browser_tool import BrowserTool
 
-def test_hermes_parity_components():
+def test_boom_parity_components():
     # 1. Test StateDB with FTS5
     test_db = root_dir / "evals" / "test_state.db"
     if test_db.exists():
@@ -110,7 +110,7 @@ def test_hermes_parity_components():
     if proc_json.exists():
         proc_json.unlink()
 
-    print("ALL HERMES PARITY COMPONENT TESTS PASSED.")
+    print("ALL BOOM PARITY COMPONENT TESTS PASSED.")
 
 if __name__ == "__main__":
-    test_hermes_parity_components()
+    test_boom_parity_components()

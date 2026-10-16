@@ -1,8 +1,8 @@
-# Hermes Memory & The Closed Learning Loop Specification
+# Boom Memory & The Closed Learning Loop Specification
 
 ## 1. The Tri-Tier Memory Architecture
 
-Hermes implements a structured memory architecture designed for persistence, precision, and low token overhead across sessions:
+Boom implements a structured memory architecture designed for persistence, precision, and low token overhead across sessions:
 
 ```
 +-----------------------------------------------------------------------------------+
@@ -46,7 +46,7 @@ To prevent hundreds of skills from polluting the context window:
 
 ## 3. The Autonomous Self-Learning Loop (Reflexion)
 
-Hermes is not a static agent; it improves its own knowledge base through a closed learning loop:
+Boom is not a static agent; it improves its own knowledge base through a closed learning loop:
 
 ```
 Task Execution (User Request -> Reasoning -> Tool Calling)

@@ -34,8 +34,8 @@ Boom's agent skills live in `skills/` — each skill is a directory containing a
 | `software-development/codebase-inspection` | Inspect codebase with pygount: LOC, languages, ratios. |
 | `software-development/dogfood` | Exploratory web app QA: find bugs, collect evidence, write reports. |
 | `software-development/github` | GitHub via `gh` CLI: PRs, issues, reviews, repos, auth. |
-| `software-development/hermes-agent-skill-authoring` | Write SKILL.md in a repo: standard frontmatter and structure. |
-| `software-development/inspecting-hermes-desktop-dom` | Read live Hermes desktop DOM/CSS via CDP. |
+| `software-development/boom-agent-skill-authoring` | Write SKILL.md in a repo: standard frontmatter and structure. |
+| `software-development/inspecting-boom-desktop-dom` | Read live Boom desktop DOM/CSS via CDP. |
 | `software-development/node-inspect-debugger` | Debug Node.js via `--inspect` + Chrome DevTools Protocol CLI. |
 | `software-development/python-debugpy` | Debug Python: pdb REPL + debugpy remote (DAP). |
 | `software-development/requesting-code-review` | Pre-commit review: security scan, quality gates, auto-fix. |
@@ -177,7 +177,7 @@ Delegate coding to other coding-agent CLIs.
 | `autonomous-ai-agents/claude-code` | Delegate coding to Claude Code CLI (features, PRs). |
 | `autonomous-ai-agents/codex` | Delegate coding to OpenAI Codex CLI (features, PRs). |
 | `autonomous-ai-agents/opencode` | Delegate coding to OpenCode CLI (features, PR reviews). |
-| `autonomous-ai-agents/hermes-agent` | Use, configure, theme, extend, and orchestrate Hermes Agent. |
+| `autonomous-ai-agents/boom-agent` | Use, configure, theme, extend, and orchestrate Boom Agent. |
 | `autonomous-ai-agents/computer-use` | Background-first desktop control; escalate on signal. |
 
 ---
