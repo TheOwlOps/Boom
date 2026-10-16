@@ -1,0 +1,11 @@
+//! Route handlers, one module per area — mirroring the `_handle_*`
+//! methods of `gateway/api.py`.
+
+pub mod bots;
+pub mod chat;
+pub mod groups;
+pub mod health;
+pub mod marketplace;
+pub mod misc;
+pub mod providers;
+pub mod tools;

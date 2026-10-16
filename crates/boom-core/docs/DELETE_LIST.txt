@@ -1,0 +1,31 @@
+DELETE_LIST — files Python-sidecar CHỈ được xóa SAU KHI verify xong
+(parity gate + tauri dev + CI build xanh, xem INTEGRATION_PLAN.md mục 2).
+Python KHÔNG bị xóa khỏi repo: gateway/api.py và toàn bộ gateway/ GIỮ NGUYÊN
+vì mobile vẫn dùng.
+
+1. scripts/build-backend.sh
+   Lý do: script build PyInstaller cho sidecar `boom-backend` của DESKTOP.
+   Sau patch, desktop.yml không còn gọi nó; không file nào khác reference
+   (đã grep: chỉ desktop.yml gọi). Mobile không dùng.
+
+2. gateway/boom-backend.spec
+   Lý do: PyInstaller spec cho sidecar desktop. Chỉ được reference bởi
+   scripts/build-backend.sh (dòng SPEC="$REPO/gateway/boom-backend.spec").
+   Xóa cùng với #1.
+
+3. gateway/pyi_runtime_hook.py
+   Lý do: PyInstaller runtime hook cho sidecar desktop. Không có import nào
+   khác reference (đã grep toàn repo: chỉ build-backend.sh nhắc tới spec,
+   hook được spec gọi). Xóa cùng với #1.
+
+4. gateway/binaries/ (thư mục output build)
+   Lý do: nơi build-backend.sh copy binary `boom-backend-<triple>` để
+   tauri.conf.json `externalBin` bundle. Hiện thư mục KHÔNG tồn tại trong
+   repo (chỉ sinh ra lúc CI chạy). Không cần xóa gì — nhưng nếu CI cũ từng
+   commit nhầm binary vào đây thì dọn.
+
+KHÔNG XÓA (giữ nguyên):
+- gateway/api.py và toàn bộ gateway/ (mobile dùng, và là baseline parity)
+- apps/desktop/src/components/BackendStatus.tsx (vẫn gọi 3 commands giữ nguyên tên)
+- tauri-plugin-shell trong Cargo.toml: có thể prune sau (mục 6 trong plan),
+  nhưng để lại cũng không hại gì; quyết định khi dọn deps.

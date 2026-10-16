@@ -1,0 +1,262 @@
+//! Axum HTTP server: router construction, CORS, and `serve()`.
+//!
+//! Route inventory (ported from `gateway/api.py`):
+//!
+//! ```text
+//! GET    /api/health  /api/version  /api/updates/check  /api/logs
+//!        /api/activity  /api/sessions  /api/channels/status
+//!        /api/channels/zalo-personal/status  /api/dag/status
+//!        /api/tools  /api/skills  /api/groups  /api/bots
+//!        /api/providers  /api/providers/ollama/status
+//!        /api/marketplace  /api/marketplace/installed
+//! POST   /api/chat  /api/tools/run  /api/groups/mute  /api/groups/policy
+//!        /api/bots  /api/bots/active  /api/providers/config
+//!        /api/providers/test  /api/marketplace/install
+//!        /api/marketplace/uninstall
+//!        /api/channels/zalo-personal/login  /api/channels/zalo-personal/logout
+//! PUT    /api/bots/{id}
+//! DELETE /api/bots/{id}
+//! ```
+
+pub mod defaults;
+pub mod routes;
+pub mod state;
+
+pub use state::{
+    channel_credential_hint, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
+    split_marketplace_id, AppState, Bot, BotTools, BoxFuture, DagNode, Group, Harness,
+    LogEntry, MarketplaceError, NewBot, OllamaStatus, PluginMeta, ProviderConfig,
+    ProviderConfigError, ProviderMeta, ProviderRegistry, Storage, StorageError, ToolInfo,
+    ToolRegistry, TurnError, TurnRequest, TurnResult, UpdateInfo, Updater, ZaloLoginError,
+    ZaloPersonal, ACTIVITY_FRESH_SEC, CHAT_STRATEGIES, KNOWN_CHANNELS, LOG_MAX, MAX_BODY_BYTES,
+};
+
+use std::{net::SocketAddr, time::Duration};
+
+use axum::{
+    body::Bytes,
+    extract::FromRequest,
+    http::{header, request::Parts, HeaderValue, Method, Request, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post, put},
+    Json, Router,
+};
+use serde_json::{Map, Value};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+
+// ---------------------------------------------------------------------------
+// ApiError: every error answers {"error": "..."} with the right status code.
+// ---------------------------------------------------------------------------
+
+/// API error: always serializes as `{"error": message}` — the contract shape
+/// Python's `_error` / `send_error` produce for every failure.
+#[derive(Debug)]
+pub struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiError {
+    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self { status, message: message.into() }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_FOUND, message)
+    }
+
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let body = serde_json::json!({ "error": self.message });
+        (self.status, Json(body)).into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JsonBody: strict JSON-object extractor with the Python error shapes.
+// ---------------------------------------------------------------------------
+
+/// Extracts the request body as a JSON object, enforcing Python's
+/// `_read_json_body` contract:
+/// - body > 1 MiB → 400 `"request body too large"`
+/// - empty/whitespace body → `{}`
+/// - invalid JSON → 400 `"request body is not valid JSON"`
+/// - valid JSON that is not an object → 400 `"request body must be a JSON object"`
+pub struct JsonBody(pub Map<String, Value>);
+
+impl<S> FromRequest<S> for JsonBody
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request<axum::body::Body>, _state: &S) -> Result<Self, Self::Rejection> {
+        let bytes = Bytes::from_request(req, _state)
+            .await
+            .map_err(|_| ApiError::bad_request("failed to read request body"))?;
+        if bytes.len() > MAX_BODY_BYTES {
+            return Err(ApiError::bad_request("request body too large"));
+        }
+        if bytes.iter().all(|b| b.is_ascii_whitespace()) {
+            return Ok(JsonBody(Map::new()));
+        }
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| ApiError::bad_request("request body is not valid JSON"))?;
+        match value {
+            Value::Object(map) => Ok(JsonBody(map)),
+            _ => Err(ApiError::bad_request("request body must be a JSON object")),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CORS: any local origin (localhost / 127.0.0.1, any port), mirroring Python.
+// ---------------------------------------------------------------------------
+
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(
+            |origin: &HeaderValue, _parts: &Parts| {
+                let b = origin.as_bytes();
+                b.starts_with(b"http://localhost:") || b.starts_with(b"http://127.0.0.1:")
+            },
+        ))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::CONTENT_TYPE, header::ACCEPT, header::AUTHORIZATION])
+        .max_age(Duration::from_secs(600))
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+/// Unknown routes answer 404 `{"error": "not found"}` (Python's else branch).
+async fn not_found() -> ApiError {
+    ApiError::not_found("not found")
+}
+
+/// Build the full v1 router. Exported so tests and embedders can drive it
+/// in-process with a mock [`AppState`].
+pub fn router(state: AppState) -> Router {
+    use routes::*;
+
+    Router::new()
+        // health / version
+        .route("/api/health", get(health::health))
+        .route("/api/version", get(health::version))
+        .route("/api/updates/check", get(misc::updates_check))
+        // chat
+        .route("/api/chat", post(chat::chat))
+        // tools
+        .route("/api/tools", get(tools::list_tools))
+        .route("/api/tools/run", post(tools::run_tool))
+        // skills
+        .route("/api/skills", get(misc::list_skills))
+        // channels
+        .route("/api/channels/status", get(misc::channels_status))
+        .route(
+            "/api/channels/zalo-personal/status",
+            get(misc::zalo_status),
+        )
+        .route(
+            "/api/channels/zalo-personal/login",
+            post(misc::zalo_login),
+        )
+        .route(
+            "/api/channels/zalo-personal/logout",
+            post(misc::zalo_logout),
+        )
+        // dag
+        .route("/api/dag/status", get(misc::dag_status))
+        // logs / activity / sessions
+        .route("/api/logs", get(misc::logs))
+        .route("/api/activity", get(misc::activity))
+        .route("/api/sessions", get(misc::sessions))
+        // groups
+        .route("/api/groups", get(groups::list_groups))
+        .route("/api/groups/mute", post(groups::mute))
+        .route("/api/groups/policy", post(groups::policy))
+        // bots
+        .route("/api/bots", get(bots::list_bots).post(bots::create_bot))
+        .route(
+            "/api/bots/active",
+            post(bots::set_active)
+                .put(bots::active_not_a_bot_id)
+                .delete(bots::active_not_a_bot_id),
+        )
+        .route("/api/bots/{id}", put(bots::update_bot).delete(bots::delete_bot))
+        // providers
+        .route("/api/providers", get(providers::list_providers))
+        .route("/api/providers/config", post(providers::save_config))
+        .route("/api/providers/test", post(providers::test_connection))
+        .route(
+            "/api/providers/ollama/status",
+            get(providers::ollama_status),
+        )
+        // marketplace
+        .route("/api/marketplace", get(marketplace::catalog))
+        .route(
+            "/api/marketplace/installed",
+            get(marketplace::installed),
+        )
+        .route("/api/marketplace/install", post(marketplace::install))
+        .route(
+            "/api/marketplace/uninstall",
+            post(marketplace::uninstall),
+        )
+        .fallback(not_found)
+        // The default 2 MiB body limit is disabled: JsonBody enforces the
+        // Python-compatible 1 MiB cap with the exact {"error"} shape.
+        .layer(axum::extract::DefaultBodyLimit::disable())
+        .layer(cors_layer())
+        .with_state(state)
+}
+
+/// Serve the API on 127.0.0.1 (localhost-only, like Python — v1 has no auth).
+///
+/// Port comes from the `BOOM_API_PORT` env var (default 18080); use
+/// [`serve_on_port`] when the port is already known.
+pub async fn serve(port: u16, state: AppState) {
+    serve_on_port(port, state).await
+}
+
+/// Serve on an explicit port.
+pub async fn serve_on_port(port: u16, state: AppState) {
+    let app = router(state);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[boom-core] failed to bind {addr}: {e}");
+            return;
+        }
+    };
+    eprintln!("[boom-core] Boom core API listening on http://127.0.0.1:{port}");
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("[boom-core] server error: {e}");
+    }
+}
+
+/// Resolve the listen port: `BOOM_API_PORT` env var, default 18080
+/// (mirrors Python's `DEFAULT_PORT`).
+pub fn resolve_port() -> u16 {
+    std::env::var("BOOM_API_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(18080)
+}
