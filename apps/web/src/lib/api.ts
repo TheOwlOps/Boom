@@ -298,6 +298,60 @@ export function uninstallMarketplaceItem(id: string): Promise<void> {
   return sendJson('POST', '/api/marketplace/uninstall', () => undefined, { id });
 }
 
+/* ---------------- Provider setup wizard ----------------------------------- */
+
+/**
+ * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ *   POST /api/providers/config -> { provider_id, api_key, model, base_url? } -> { ok: true }
+ *   POST /api/providers/test   -> { provider_id } -> { ok: boolean, message: string }
+ *
+ * Keys are only ever sent to the backend; the client never persists them
+ * (localStorage included).
+ */
+export interface ProviderConfigDraft {
+  /** API key for the provider; omit when the provider needs no key (Ollama). */
+  apiKey?: string;
+  /** Model id the wizard picked for this provider. */
+  model?: string;
+  /** Custom base URL (OpenAI-compatible endpoints only). */
+  baseUrl?: string;
+}
+
+function parseOkFlag(v: unknown, path: string): void {
+  if (!isRecord(v) || v.ok !== true) throw new Error(`malformed response: ${path}`);
+}
+
+/** Save the wizard's provider choice (writes ~/.boom/providers.json 0600). */
+export function saveProviderConfig(providerId: string, draft: ProviderConfigDraft): Promise<void> {
+  return sendJson('POST', '/api/providers/config',
+    (v) => parseOkFlag(v, 'POST /api/providers/config'),
+    {
+      provider_id: providerId,
+      api_key: draft.apiKey,
+      model: draft.model,
+      base_url: draft.baseUrl,
+    });
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  message: string | null;
+}
+
+function parseProviderTest(v: unknown): ProviderTestResult {
+  if (!isRecord(v)) throw new Error('malformed response: POST /api/providers/test');
+  if (typeof v.ok !== 'boolean') throw new Error('malformed response: POST /api/providers/test — ok must be a boolean');
+  return { ok: v.ok, message: typeof v.message === 'string' ? v.message : null };
+}
+
+/**
+ * Test the currently saved config for `providerId`.
+ * Call `saveProviderConfig()` first — the backend tests what it has stored.
+ */
+export function testProviderConnection(providerId: string): Promise<ProviderTestResult> {
+  return sendJson('POST', '/api/providers/test', parseProviderTest, { provider_id: providerId });
+}
+
 /* ---------------- Zalo Personal ----------------------------------------- */
 
 /**
@@ -343,6 +397,34 @@ export function zaloPersonalLogin(phone: string, password: string): Promise<Zalo
 
 export function zaloPersonalLogout(): Promise<void> {
   return sendJson('POST', '/api/channels/zalo-personal/logout', () => undefined);
+}
+
+/* ---------------- Ollama ----------------------------------------------- */
+
+/**
+ * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ *   GET /api/providers/ollama/status -> { running: boolean, models: string[] }
+ *
+ * Always answers 200 — `running: false` means Ollama is not installed,
+ * not running, or unreachable on localhost:11434.
+ */
+export interface OllamaStatus {
+  /** Whether the local Ollama daemon answered. */
+  running: boolean;
+  /** Installed model names (e.g. ["llama3.1", "codellama:7b"]). */
+  models: string[];
+}
+
+function parseOllamaStatus(v: unknown): OllamaStatus {
+  const path = 'GET /api/providers/ollama/status';
+  if (!isRecord(v)) throw new Error(`malformed response: ${path}`);
+  if (typeof v.running !== 'boolean') throw new Error(`malformed response: ${path} — running must be a boolean`);
+  if (!isStringArray(v.models)) throw new Error(`malformed response: ${path} — models must be string[]`);
+  return { running: v.running, models: v.models };
+}
+
+export function getOllamaStatus(): Promise<OllamaStatus> {
+  return getJson('/api/providers/ollama/status', parseOllamaStatus);
 }
 
 interface SseState { text: string | null; sessionId: string; strategy: string; errors: Record<string, string> }

@@ -35,6 +35,7 @@ import Marketplace, {
 } from "./components/Marketplace";
 import { Toast } from "./components/Toast";
 import BackendStatus from "./components/BackendStatus";
+import WelcomeGate from "./components/WelcomeGate";
 import {
   getMarketplace,
   getMarketplaceInstalled,
@@ -336,6 +337,7 @@ export default function App() {
   const activeLabel = TABS.find((t) => t.id === mainTab)?.label ?? mainTab;
 
   return (
+    <WelcomeGate>
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       {/* Update banner — Tauri desktop only (renders null in the browser). */}
       <UpdateChecker />
@@ -434,5 +436,6 @@ export default function App() {
         <Toast key={toast.id} message={toast.message} type={toast.type} />
       )}
     </div>
+    </WelcomeGate>
   );
 }

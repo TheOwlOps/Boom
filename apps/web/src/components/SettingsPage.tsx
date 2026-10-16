@@ -13,6 +13,7 @@ import {
   Sun,
   Type,
   Volume2,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -26,6 +27,7 @@ import type {
 import { ProviderSettings } from "./ProviderSettings";
 import { useManualUpdateCheck } from "./UpdateChecker";
 import { getAppVersion, isTauriEnvironment } from "../lib/appVersion";
+import { SETUP_COMPLETE_KEY } from "../hooks/useSetupWizard";
 import packageJson from "../../package.json";
 
 /* ------------------------------------------------------------------ */
@@ -645,6 +647,28 @@ export default function SettingsPage() {
                   >
                     Issue tracker
                   </a>
+                }
+              />
+              <SettingRow
+                icon={<Wand2 size={16} />}
+                label="Setup wizard"
+                description="Re-run the first-run setup to reconfigure your provider."
+                control={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        window.localStorage.removeItem(SETUP_COMPLETE_KEY);
+                      } catch {
+                        // Storage unavailable: reload still resets in-memory state.
+                      }
+                      window.location.reload();
+                    }}
+                    className="btn-hover flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface-3)]"
+                  >
+                    <Wand2 size={13} aria-hidden="true" />
+                    Run setup again
+                  </button>
                 }
               />
             </SectionCard>

@@ -241,6 +241,47 @@ def _marketplace_backend():
     return MarketplaceBackend()
 
 
+# --- Ollama local-LLM status --------------------------------------------------
+# Ollama runs its own HTTP daemon on localhost:11434. Querying it with the
+# stdlib keeps this check free of extra dependencies. The timeout is short
+# on purpose: a hung localhost call should never stall the gateway.
+
+_OLLAMA_BASE_URL = "http://localhost:11434"
+_OLLAMA_TIMEOUT_S = 3.0
+
+
+def _check_ollama_status():
+    """Probe the local Ollama daemon and list installed models.
+
+    Returns ``{"running": True, "models": ["llama3.1", ...]}`` when Ollama
+    answers ``GET /api/tags``, otherwise ``{"running": False, "models": []}``.
+
+    Never raises: connection errors, timeouts, non-2xx responses and
+    malformed JSON all degrade to ``running: False``.
+    """
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(_OLLAMA_BASE_URL + "/api/tags")
+        with urllib.request.urlopen(req, timeout=_OLLAMA_TIMEOUT_S) as resp:
+            if resp.status != 200:
+                return {"running": False, "models": []}
+            data = json.loads(resp.read().decode("utf-8"))
+        models = []
+        tags = data.get("models", [])
+        if isinstance(tags, list):
+            for entry in tags:
+                if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                    # "llama3.1:latest" -> display just "llama3.1"; keep the
+                    # tag when it is not "latest" (e.g. "codellama:7b").
+                    name, _, tag = entry["name"].partition(":")
+                    models.append(name if tag in ("", "latest") else f"{name}:{tag}")
+    except Exception:
+        # URLError, TimeoutError, socket errors, JSONDecodeError, ...
+        return {"running": False, "models": []}
+    return {"running": True, "models": models}
+
+
 def _zalo_personal_adapter():
     """Builds a ZaloPersonalAdapter. Import is lazy on purpose (same reason
     as _groups_manager): importing this module must never break when the
@@ -569,6 +610,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_bots_list()
         elif path == "/api/providers":
             self._handle_providers_list()
+        elif path == "/api/providers/ollama/status":
+            self._handle_ollama_status()
         elif path == "/api/marketplace":
             self._handle_marketplace_catalog()
         elif path == "/api/marketplace/installed":
@@ -906,6 +949,14 @@ class _Handler(BaseHTTPRequestHandler):
             api_log(f"/api/providers/test error: {e}")
             return self._error(500, "failed to test provider connection")
         self._send_json(200, {"ok": ok, "message": message})
+
+    def _handle_ollama_status(self):
+        """GET /api/providers/ollama/status -> {running, models}.
+
+        ``_check_ollama_status`` never raises, so this handler always
+        answers 200 — even when Ollama is not installed/running.
+        """
+        self._send_json(200, _check_ollama_status())
 
     def _handle_marketplace_catalog(self):
         """GET /api/marketplace — installable-items catalog."""
