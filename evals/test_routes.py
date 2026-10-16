@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Chay tu repo root: routes/ nam o ../gateway/routes/
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "gateway"))
 
 from routes import (  # noqa: E402
     ALL_ROUTES,

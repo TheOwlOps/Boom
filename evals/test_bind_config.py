@@ -5,6 +5,8 @@ import sys
 
 # Cho phep chay truc tiep tu thu muc chua file nay.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Chay tu repo root: bind_config.py nam o ../gateway/
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gateway"))
 
 from bind_config import (
     BindConfig,
