@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote
 
 
-from tools.ws_client import WebSocket
+from agent.src.tools.ws_client import WebSocket
 
 from gateway.channel import ChannelAdapter
 

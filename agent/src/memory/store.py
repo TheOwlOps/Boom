@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 class MemoryStore:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init_db()
 

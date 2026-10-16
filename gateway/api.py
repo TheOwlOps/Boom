@@ -392,8 +392,10 @@ class _Handler(BaseHTTPRequestHandler):
         if self.api.loop is not None:
             try:
                 self.api.loop.load_session(session_id)
-            except Exception:
-                return self._error(500, "failed to load session")
+            except Exception as err:
+                import traceback
+                traceback.print_exc()
+                return self._error(500, f"failed to load session: {err}")
         if self.api.brain is None:
             return self._error(503, "agent brain not configured")
 
