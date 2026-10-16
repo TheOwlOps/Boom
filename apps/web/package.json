@@ -11,7 +11,13 @@
     "url": "https://github.com/TheOwlOps/Boom.git",
     "directory": "apps/web"
   },
-  "keywords": ["ai-agent", "dashboard", "react", "vite", "chatbot"],
+  "keywords": [
+    "ai-agent",
+    "dashboard",
+    "react",
+    "vite",
+    "chatbot"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -21,6 +27,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.0",
     "@xyflow/react": "^12.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.400.0",

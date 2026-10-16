@@ -89,6 +89,13 @@ fn list_toolsets() -> Vec<&'static str> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Auto-update plugin: Phase 1 wiring. Update checks are triggered
+        // manually via the JS API (`@tauri-apps/plugin-updater`); the native
+        // updater endpoint format is TBD and will land in a later phase.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Process plugin: exposes restart/exit so the UI can offer a
+        // "Restart" button after an update is installed.
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

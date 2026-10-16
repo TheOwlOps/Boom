@@ -24,3 +24,10 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.4" }
 tauri-plugin-log = "2"
+# Phase 1 wiring: default features are disabled because the plugin's `zip`
+# optional dependency (zip 2.x/4.x) is entirely yanked on crates.io, which
+# breaks version resolution. `rustls-tls` is kept so update checks over HTTPS
+# work via the JS API; bundle extraction (the `zip` feature) stays off until
+# a non-yanked zip release is available, and will be re-enabled in a later phase.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-process = "2"

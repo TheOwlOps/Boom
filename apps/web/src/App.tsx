@@ -27,6 +27,7 @@ import LogViewer from "./components/LogViewer";
 import { ActivityFeed } from "./components/ActivityFeed";
 import BotManager from "./components/BotManager";
 import SettingsPage from "./components/SettingsPage";
+import UpdateChecker from "./components/UpdateChecker";
 
 /**
  * Top-level dashboard views rendered in the center column.
@@ -227,6 +228,8 @@ export default function App() {
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
+      {/* Update banner — Tauri desktop only (renders null in the browser). */}
+      <UpdateChecker />
       {/* Left column — desktop sidebar (260px, 68px when collapsed) */}
       <div
         className={`hidden shrink-0 overflow-hidden border-r border-[var(--border)] bg-[var(--surface)] md:block ${

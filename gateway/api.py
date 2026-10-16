@@ -431,6 +431,23 @@ class _Handler(BaseHTTPRequestHandler):
                     "skills_count": skills_count,
                 },
             )
+        elif path == "/api/version":
+            try:
+                from agent.src.version import get_current_version
+
+                version = get_current_version()
+            except Exception:
+                version = "0.1.0"
+            self._send_json(200, {"version": version})
+        elif path == "/api/updates/check":
+            try:
+                from agent.src.version import check_github_update, UpdateCheckError
+
+                self._send_json(200, check_github_update())
+            except UpdateCheckError as e:
+                self._send_json(502, {"error": str(e)[:500]})
+            except Exception as e:
+                self._send_json(502, {"error": f"update check failed: {e}"[:500]})
         elif path == "/api/logs":
             from urllib.parse import parse_qs
 
