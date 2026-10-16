@@ -6,6 +6,7 @@ import {
   MessageSquare,
   Radio,
   ScrollText,
+  Settings,
   Sparkles,
   Users,
   Workflow,
@@ -25,6 +26,7 @@ import GroupManager from "./components/GroupManager";
 import LogViewer from "./components/LogViewer";
 import { ActivityFeed } from "./components/ActivityFeed";
 import BotManager from "./components/BotManager";
+import SettingsPage from "./components/SettingsPage";
 
 /**
  * Top-level dashboard views rendered in the center column.
@@ -42,7 +44,8 @@ type MainTab =
   | "dag"
   | "channels"
   | "tools"
-  | "skills";
+  | "skills"
+  | "settings";
 
 const MAIN_TABS: readonly MainTab[] = [
   "chat",
@@ -53,6 +56,7 @@ const MAIN_TABS: readonly MainTab[] = [
   "channels",
   "tools",
   "skills",
+  "settings",
 ];
 
 function isMainTab(value: unknown): value is MainTab {
@@ -112,6 +116,7 @@ const TABS: Array<{
   { id: "channels", label: "Channels", icon: Radio, group: "ops" },
   { id: "tools", label: "Tools", icon: Wrench, group: "ops" },
   { id: "skills", label: "Skills", icon: Sparkles, group: "ops" },
+  { id: "settings", label: "Settings", icon: Settings, group: "ops" },
 ];
 
 /**
@@ -253,6 +258,7 @@ export default function App() {
           {mainTab === "channels" && <ChannelMonitor />}
           {mainTab === "tools" && <ToolManager />}
           {mainTab === "skills" && <SkillList />}
+          {mainTab === "settings" && <SettingsPage />}
         </div>
       </main>
 

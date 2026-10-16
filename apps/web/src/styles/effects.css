@@ -1,0 +1,735 @@
+/* ==========================================================================
+ * Boom Web UI — Effects CSS
+ * --------------------------------------------------------------------------
+ * Pure-CSS effect library for the Boom web client. Dark-theme first,
+ * no external dependencies, no JavaScript required.
+ *
+ * Performance rules followed throughout this file:
+ *   - Animations only touch transform, opacity and filter.
+ *   - Never animate width/height/margin/padding (avoids layout thrash).
+ *   - All infinite animations are compositor-friendly (GPU layer only).
+ *   - A single `prefers-reduced-motion` block disables every animation.
+ *
+ * Sections:
+ *   1. Typing reveal        (.typing-reveal)
+ *   2. Gradient mesh bg     (.mesh-bg)
+ *   3. Message entrance     (.msg-enter)
+ *   4. Thinking indicator   (.thinking-dots)
+ *   5. Hover glow           (.glow-hover)
+ *   6. Tab transitions      (.tab-fade)
+ *   7. Skeleton shimmer     (.skeleton-shimmer)
+ *   8. Custom scrollbar     (global)
+ *   9. Reduced motion       (@media)
+ * ========================================================================== */
+
+
+/* ==========================================================================
+ * 1. TYPING REVEAL — smooth character-by-character reveal for streamed
+ *    AI responses.
+ *
+ *    How it works: the keyframes animate a stepped fade/slide, and JS sets
+ *    `animation-delay` per character (or uses the `--i` custom property to
+ *    stagger via `animation-delay: calc(var(--i) * 18ms)`).
+ *
+ *    Minimal JS:
+ *      el.querySelectorAll('.typing-reveal > span').forEach((s, i) =>
+ *        s.style.setProperty('--i', i));
+ *
+ *    Usage:
+ *      <p class="typing-reveal">
+ *        <span>H</span><span>e</span><span>l</span><span>l</span><span>o</span>
+ *      </p>
+ * ========================================================================== */
+
+.typing-reveal {
+  display: inline;
+}
+
+.typing-reveal > span {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.35em);
+  filter: blur(3px);
+  animation: typing-reveal-in 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  /* JS sets --i per character; fallback = no delay */
+  animation-delay: calc(var(--i, 0) * 16ms);
+  will-change: transform, opacity, filter;
+}
+
+/* Keep the animation cheap: only transform / opacity / filter are animated. */
+@keyframes typing-reveal-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* Caret shown while streaming is still in progress */
+.typing-reveal.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  border-radius: 1px;
+  animation: typing-caret-blink 0.9s steps(2, jump-none) infinite;
+}
+
+@keyframes typing-caret-blink {
+  50% { opacity: 0; }
+}
+
+/* ==========================================================================
+ * 2. GRADIENT MESH BACKGROUND — slow-drifting radial-gradient blobs.
+ *
+ *    The container holds absolutely-positioned blob layers. Each blob uses
+ *    transform + opacity only, so the animation stays on the compositor.
+ *    Keep blob count low (3–4) and blur moderate to avoid GPU stalls.
+ *
+ *    Usage:
+ *      <div class="mesh-bg" aria-hidden="true">
+ *        <span class="mesh-blob mesh-blob--a"></span>
+ *        <span class="mesh-blob mesh-blob--b"></span>
+ *        <span class="mesh-blob mesh-blob--c"></span>
+ *      </div>
+ * ========================================================================== */
+
+.mesh-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.mesh-blob {
+  position: absolute;
+  width: 55vmax;
+  height: 55vmax;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.34;
+  will-change: transform, opacity;
+  animation: mesh-drift 20s ease-in-out infinite alternate;
+}
+
+/* Tint variants tuned for a dark theme */
+.mesh-blob--a {
+  background: radial-gradient(circle at center,
+    rgba(99, 102, 241, 0.55) 0%,
+    rgba(99, 102, 241, 0) 68%);
+  top: -18%;
+  left: -12%;
+  animation-delay: -6s;
+}
+
+.mesh-blob--b {
+  background: radial-gradient(circle at center,
+    rgba(16, 185, 129, 0.38) 0%,
+    rgba(16, 185, 129, 0) 68%);
+  bottom: -22%;
+  right: -14%;
+  animation-delay: -13s;
+}
+
+.mesh-blob--c {
+  background: radial-gradient(circle at center,
+    rgba(236, 72, 153, 0.30) 0%,
+    rgba(236, 72, 153, 0) 68%);
+  top: 28%;
+  left: 42%;
+  animation-duration: 26s;
+  animation-delay: -3s;
+}
+
+/* Drift in a wide slow arc; opacity breathes subtly. */
+@keyframes mesh-drift {
+  0% {
+    transform: translate3d(-6%, -4%, 0) scale(1);
+    opacity: 0.30;
+  }
+  50% {
+    transform: translate3d(8%, 6%, 0) scale(1.08);
+    opacity: 0.40;
+  }
+  100% {
+    transform: translate3d(-2%, 10%, 0) scale(0.96);
+    opacity: 0.28;
+  }
+}
+
+/* ==========================================================================
+ * 3. MESSAGE ENTRANCE — slide-up + fade-in when a message appears.
+ *
+ *    Usage: add .msg-enter to a message bubble when it mounts.
+ * ========================================================================== */
+
+.msg-enter {
+  opacity: 0;
+  animation: msg-enter-in 300ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes msg-enter-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* User messages come from the right, assistant messages from the left. */
+.msg-enter--user   { animation-name: msg-enter-in-right; }
+.msg-enter--ai     { animation-name: msg-enter-in-left; }
+
+@keyframes msg-enter-in-right {
+  from { opacity: 0; transform: translateX(18px) translateY(10px); }
+  to   { opacity: 1; transform: translateX(0)    translateY(0); }
+}
+
+@keyframes msg-enter-in-left {
+  from { opacity: 0; transform: translateX(-18px) translateY(10px); }
+  to   { opacity: 1; transform: translateX(0)     translateY(0); }
+}
+
+/* ==========================================================================
+ * 4. THINKING INDICATOR — three staggered pulsing dots.
+ *
+ *    Each dot rises/fades with a stagger delay (0 / 140ms / 280ms),
+ *    which reads as a smooth "breathing wave" instead of a blunt blink.
+ *
+ *    Usage:
+ *      <span class="thinking-dots" role="status" aria-label="Thinking">
+ *        <i></i><i></i><i></i>
+ *      </span>
+ * ========================================================================== */
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.thinking-dots > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  transform: translateY(0) scale(0.9);
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.thinking-dots > i:nth-child(2) { animation-delay: 0.14s; }
+.thinking-dots > i:nth-child(3) { animation-delay: 0.28s; }
+
+@keyframes thinking-pulse {
+  0%, 100% {
+    opacity: 0.25;
+    transform: translateY(0) scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.1);
+  }
+}
+
+/* Optional waveform variant: bars instead of dots */
+.thinking-dots--bars > i {
+  border-radius: 2px;
+  width: 4px;
+  height: 12px;
+}
+
+/* ==========================================================================
+ * 5. HOVER GLOW — subtle elevation + glow for buttons and cards.
+ *
+ *    Only box-shadow/transform/opacity transitions: no repaint-heavy
+ *    properties. Glow color follows a CSS variable so themes can override.
+ * ========================================================================== */
+
+.glow-hover {
+  --glow-color: rgba(99, 102, 241, 0.45);
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+  will-change: transform;
+}
+
+.glow-hover:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 20px -6px rgba(0, 0, 0, 0.55),
+    0 0 18px -2px var(--glow-color);
+}
+
+.glow-hover:active {
+  transform: translateY(0) scale(0.985);
+  box-shadow:
+    0 2px 10px -4px rgba(0, 0, 0, 0.5),
+    0 0 8px -2px var(--glow-color);
+}
+
+/* Accent variants */
+.glow-hover--green  { --glow-color: rgba(16, 185, 129, 0.45); }
+.glow-hover--pink   { --glow-color: rgba(236, 72, 153, 0.45); }
+.glow-hover--amber  { --glow-color: rgba(245, 158, 11, 0.45); }
+
+/* ==========================================================================
+ * 6. TAB TRANSITIONS — gentle fade + rise when switching tabs.
+ *
+ *    Apply .tab-fade to the tab panel container; re-trigger the animation
+ *    on switch by re-adding the class or toggling .tab-fade--active.
+ * ========================================================================== */
+
+.tab-fade {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.tab-fade--active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* One-shot variant: plays once when the class is added, then holds. */
+.tab-fade--once {
+  opacity: 0;
+  animation: tab-fade-in 300ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes tab-fade-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================================
+ * 7. SKELETON SHIMMER — loading placeholder shimmer.
+ *
+ *    A diagonal highlight sweeps across the element via a background
+ *    gradient animated with `background-position` ... NOTE: animating
+ *    background-position triggers paint on some engines, so this file
+ *    instead moves a child ::after layer with transform (compositor only).
+ *
+ *    Usage:
+ *      <div class="skeleton-shimmer" style="height: 14px; border-radius: 6px;"></div>
+ * ========================================================================== */
+
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  isolation: isolate;
+}
+
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.10) 42%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.10) 58%,
+    transparent 80%
+  );
+  transform: translateX(-60%) skewX(-8deg);
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes skeleton-sweep {
+  0%   { transform: translateX(-60%) skewX(-8deg); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateX(60%)  skewX(-8deg); opacity: 0; }
+}
+
+/* ==========================================================================
+ * 8. CUSTOM SCROLLBAR — thin dark scrollbars for the whole app.
+ *
+ *    Uses ::-webkit-scrollbar (Chrome/Edge/Safari) and the standard
+ *    `scrollbar-width` / `scrollbar-color` (Firefox).
+ * ========================================================================== */
+
+* {
+  scrollbar-width: thin;                      /* Firefox */
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 200ms ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ==========================================================================
+ * 9. REDUCED MOTION — respect the user's OS accessibility setting.
+ *    Everything animation/transition becomes instant.
+ * ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-reveal > span,
+  .mesh-blob,
+  .msg-enter,
+  .msg-enter--user,
+  .msg-enter--ai,
+  .thinking-dots > i,
+  .tab-fade,
+  .tab-fade--once,
+  .skeleton-shimmer::after,
+  .typing-reveal.streaming::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .typing-reveal > span {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .msg-enter,
+  .tab-fade,
+  .tab-fade--once {
+    opacity: 1;
+    transform: none;
+  }
+
+  .thinking-dots > i {
+    opacity: 0.7;
+    transform: none;
+  }
+
+  .skeleton-shimmer::after {
+    display: none;
+  }
+
+  .glow-hover,
+  .glow-hover:hover,
+  .glow-hover:active {
+    transform: none;
+    box-shadow: none;
+    transition: none;
+  }
+}
+
+/* ===== Chat-specific classes (from chat-polish) ===== */
+/* effects.css — chat polish visual effects for ChatView.
+ *
+ * Imported by apps/web/src/components/ChatView.tsx:
+ *     import "../styles/effects.css";
+ *
+ * Theme tokens come from ../tokens/theme.css (var(--bg), --surface-2, --border,
+ * --text, --muted, --accent, --accent-hover, --success, --font-mono).
+ * Dark-first; the light theme inherits the same token names.
+ */
+
+/* ------------------------------------------------------------------ */
+/* 1. Typing effect: smooth word-by-word reveal for AI messages.       */
+/*    JS reveals one word-chunk at a time; the newest chunk gets       */
+/*    .typing-word so it fades/slides in, and .typing-caret blinks     */
+/*    at the end while the reply is still "typing".                    */
+/* ------------------------------------------------------------------ */
+
+.typing-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.typing-word {
+  display: inline-block;
+  animation: typing-word-in 0.28s ease-out both;
+}
+
+@keyframes typing-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+.typing-caret {
+  display: inline-block;
+  width: 8px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: typing-caret-blink 0.9s steps(2, start) infinite;
+}
+
+@keyframes typing-caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Typing indicator ("bot đang trả lời…") shown while waiting.      */
+/* ------------------------------------------------------------------ */
+
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: typing-dot-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Message actions on hover: Copy (+ Regenerate for last AI msg).   */
+/* ------------------------------------------------------------------ */
+
+.msg-row {
+  position: relative;
+}
+
+.msg-actions {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.msg-row:hover .msg-actions,
+.msg-row:focus-within .msg-actions {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.msg-action-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.msg-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.msg-action-btn.is-copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Markdown polish for assistant messages (react-markdown output).  */
+/*    CodeBlock already ships a copy button; here we darken code       */
+/*    blocks, style tables/blockquote/lists and tint links accent.     */
+/* ------------------------------------------------------------------ */
+
+.msg-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+  font-size: 14px;
+  display: block;
+  overflow-x: auto;
+}
+
+.msg-markdown th,
+.msg-markdown td {
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  text-align: left;
+}
+
+.msg-markdown thead th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.msg-markdown tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.msg-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.msg-markdown a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.msg-markdown blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: rgba(99, 102, 241, 0.06);
+  color: var(--muted);
+}
+
+.msg-markdown ul,
+.msg-markdown ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.msg-markdown li {
+  margin: 3px 0;
+}
+
+.msg-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.msg-markdown p {
+  margin: 6px 0;
+}
+
+.msg-markdown p:first-child {
+  margin-top: 0;
+}
+
+.msg-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* Darker code blocks with mono font (CodeBlock renders its own <pre>). */
+.msg-markdown pre {
+  background: #0d0d14;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.msg-markdown :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Reduced motion: reveal instantly, no bouncing dots.              */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-word {
+    animation: none;
+  }
+  .typing-caret {
+    animation: none;
+  }
+  .typing-dots span {
+    animation: none;
+    opacity: 0.8;
+  }
+  .msg-actions {
+    transition: none;
+  }
+}

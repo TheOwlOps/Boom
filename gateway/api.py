@@ -209,6 +209,14 @@ def _bots_manager():
     code at load time)."""
     from agent.src.business.bots import BotManager
     return BotManager(db_path=_BOTS_DB)
+
+
+def _providers_manager():
+    """Builds the provider ProviderManager. Import is lazy on purpose (same
+    reason as _bots_manager: importing this module must never import agent
+    code at load time)."""
+    from providers.manager import ProviderManager
+    return ProviderManager()
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
@@ -509,6 +517,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_groups_list()
         elif path == "/api/bots":
             self._handle_bots_list()
+        elif path == "/api/providers":
+            self._handle_providers_list()
         else:
             self._error(404, "not found")
 
@@ -526,6 +536,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_bots_create()
         elif path == "/api/bots/active":
             self._handle_bots_set_active()
+        elif path == "/api/providers/config":
+            self._handle_providers_config()
+        elif path == "/api/providers/test":
+            self._handle_providers_test()
         else:
             self._error(404, "not found")
 
@@ -758,6 +772,78 @@ class _Handler(BaseHTTPRequestHandler):
         if not ok:
             return self._error(404, f"bot not found: {bot_id}")
         self._send_json(200, {"ok": True, "bot": bot})
+
+    # ------------------------------------------------------- providers
+
+    def _handle_providers_list(self):
+        """GET /api/providers — provider metadata + active id + has_key flags.
+
+        Never returns API keys.
+        """
+        try:
+            mgr = _providers_manager()
+            providers = []
+            for meta in mgr.list_providers():
+                meta = dict(meta)
+                meta["has_key"] = mgr.has_key(meta["id"])
+                providers.append(meta)
+            active = mgr.get_active_provider()
+        except Exception as e:
+            api_log(f"/api/providers error: {e}")
+            return self._error(500, "failed to list providers")
+        self._send_json(200, {"providers": providers, "active": active})
+
+    def _handle_providers_config(self):
+        """POST /api/providers/config — body {provider_id, api_key, model, base_url?}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        provider_id = data.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            return self._error(400, "provider_id is required")
+        api_key = data.get("api_key")
+        model = data.get("model")
+        base_url = data.get("base_url")
+        for field, value in (("api_key", api_key), ("model", model)):
+            if value is not None and not isinstance(value, str):
+                return self._error(400, f"{field} must be a string")
+        if base_url is not None and not isinstance(base_url, str):
+            return self._error(400, "base_url must be a string")
+        try:
+            from providers.manager import UnknownProviderError
+            mgr = _providers_manager()
+            mgr.save_config(
+                provider_id.strip(),
+                api_key or "",
+                model or "",
+                base_url,
+            )
+        except UnknownProviderError:
+            return self._error(400, f"unknown provider: {provider_id}")
+        except ValueError as e:
+            return self._error(400, str(e))
+        except Exception as e:
+            api_log(f"/api/providers/config error: {e}")
+            return self._error(500, "failed to save provider config")
+        self._send_json(200, {"ok": True, "provider_id": provider_id.strip()})
+
+    def _handle_providers_test(self):
+        """POST /api/providers/test — body {provider_id} -> {ok, message}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        provider_id = data.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            return self._error(400, "provider_id is required")
+        try:
+            mgr = _providers_manager()
+            ok, message = mgr.test_connection(provider_id.strip())
+        except Exception as e:
+            api_log(f"/api/providers/test error: {e}")
+            return self._error(500, "failed to test provider connection")
+        self._send_json(200, {"ok": ok, "message": message})
 
     def _resolve_bot_context(self, bot_id):
         """Resolve (system_prompt, tool_names) for a bot id.

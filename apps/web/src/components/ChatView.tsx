@@ -1,16 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PanelRight, SendHorizonal, RotateCcw, MessageCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { PanelRight, SendHorizonal, RotateCcw, MessageCircle, Copy, Check, Bot } from "lucide-react";
 import { listBots, postChat, setActiveBot } from "../lib/api";
-import type { Bot, ChatMessage, ChatRequest, Strategy } from "../lib/types";
+import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
 import { ThinkingDots } from "./ThinkingDots";
+import "../styles/effects.css";
 
 // CLIENT-SIDE ANIMATION (NOT live token streaming): the backend returns the
 // full reply at once (see API_CONTRACT.md `POST /api/chat`), and this reveals
-// it character-by-character (~15ms/char) purely as a typewriter visual effect.
+// it word-by-word as a typewriter visual effect. The newest word gets the
+// `.typing-word` CSS class (fade/slide in, see ../styles/effects.css) and a
+// blinking `.typing-caret` trails the end until the reveal finishes.
 // True token streaming is a v2 backend item.
-const TYPEWRITER_MS_PER_CHAR = 15;
+const TYPEWRITER_MS_PER_WORD = 60;
 const NEAR_BOTTOM_PX = 80;
+const MAX_INPUT_PX = 200; // composer auto-resize cap
+const COPY_FEEDBACK_MS = 1500;
 
 type Props = {
   sessionId: string | null;
@@ -23,6 +29,56 @@ function uid(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Split text into word chunks, keeping trailing whitespace per chunk. */
+function splitWords(text: string): string[] {
+  return text.match(/\S+\s*/g) ?? [];
+}
+
+/**
+ * Plain-text renderer used while an assistant message is "typing".
+ * Markdown is applied only after the reveal finishes (via MessageBubble),
+ * so partially-revealed markup never renders broken mid-stream.
+ */
+function TypingText({ text, wordsShown }: { text: string; wordsShown: number }) {
+  const chunks = useMemo(() => splitWords(text), [text]);
+  const visible = chunks.slice(0, wordsShown);
+  return (
+    <div className="typing-plain" aria-label="Assistant reply, still typing">
+      {visible.map((chunk, i) =>
+        i === visible.length - 1 ? (
+          <span key={i} className="typing-word">
+            {chunk}
+          </span>
+        ) : (
+          <span key={i}>{chunk}</span>
+        ),
+      )}
+      <span className="typing-caret" aria-hidden="true" />
+    </div>
+  );
+}
+
+// Inline layout matching MessageBubble's assistant row (kept local so the
+// typing placeholder looks identical to the final markdown bubble).
+const typingRowStyle: CSSProperties = {
+  display: "flex",
+  gap: 10,
+  justifyContent: "flex-start",
+  padding: "6px 0",
+};
+const typingAvatarStyle: CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: 999,
+  background: "var(--accent)",
+  flexShrink: 0,
+  marginTop: 2,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+const typingBodyStyle: CSSProperties = { maxWidth: "85%", padding: "10px 4px" };
+
 export function ChatView({ sessionId, onTogglePanel }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -31,12 +87,23 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
   const [lastStrategy, setLastStrategy] = useState<Strategy | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Typewriter reveal state: id of the assistant message being revealed.
+  // Typewriter reveal state: id of the assistant message being revealed and
+  // how many word chunks are currently visible.
   const [typingId, setTypingId] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(0);
+  const [revealedWords, setRevealedWords] = useState(0);
+
+  // Copy-to-clipboard feedback: id of the message showing "Copied".
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   // Custom bots (Grok-style): roster + active bot picker.
-  const [bots, setBots] = useState<Bot[]>([]);
+  const [bots, setBots] = useState<BotInfo[]>([]);
   const [activeBotId, setActiveBotId] = useState<string | null>(() => {
     try {
       return localStorage.getItem("boom.activeBotId");
@@ -76,7 +143,7 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
     };
   }, []);
 
-  const activeBot: Bot | null = bots.find((b) => b.id === activeBotId) ?? null;
+  const activeBot: BotInfo | null = bots.find((b) => b.id === activeBotId) ?? null;
 
   const switchBot = useCallback(
     async (id: string) => {
@@ -103,6 +170,7 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
   );
 
   const listRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -116,11 +184,6 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
     // or the loader the api-client worker provides); no fake messages here.
   }, [sessionId]);
 
-  const scrollToBottom = useCallback(() => {
-    const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, []);
-
   const handleScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
@@ -128,13 +191,30 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
       el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
   }, []);
 
-  // Auto-scroll on new content — only when the user is already near the
-  // bottom, so reading old messages never gets yanked away.
-  useEffect(() => {
-    if (nearBottomRef.current) scrollToBottom();
-  }, [messages, revealed, phase, scrollToBottom]);
+  const scrollToBottomSmooth = useCallback(() => {
+    // Smooth-scroll the sentinel into view; respects the user's scroll
+    // position because callers check nearBottomRef first.
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
 
-  // CLIENT-SIDE typewriter reveal: see the comment block at the top of file.
+  const followInstant = useCallback(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // Auto-scroll on new messages / phase changes: smooth, and only when the
+  // user is already near the bottom — reading old messages never gets yanked.
+  useEffect(() => {
+    if (nearBottomRef.current) scrollToBottomSmooth();
+  }, [messages.length, phase, scrollToBottomSmooth]);
+
+  // While the typewriter reveals words, follow instantly instead of smooth:
+  // a smooth animation per word would queue up and lag behind the reveal.
+  useEffect(() => {
+    if (typingId && nearBottomRef.current) followInstant();
+  }, [revealedWords, typingId, followInstant]);
+
+  // CLIENT-SIDE word-by-word reveal: see the comment block at the top of file.
   // This is NOT live token streaming — the full reply already arrived.
   useEffect(() => {
     if (!typingId) return;
@@ -143,26 +223,34 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
       setTypingId(null);
       return;
     }
+    const totalWords = splitWords(typingMsg.text).length;
     if (
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
-      setRevealed(typingMsg.text.length); // motion off → show instantly
+      setRevealedWords(totalWords); // motion off → show instantly
       setTypingId(null);
       return;
     }
-    setRevealed(0);
+    setRevealedWords(0);
     const timer = window.setInterval(() => {
-      setRevealed((n) => Math.min(n + 1, typingMsg.text.length));
-    }, TYPEWRITER_MS_PER_CHAR);
+      setRevealedWords((n) => Math.min(n + 1, totalWords));
+    }, TYPEWRITER_MS_PER_WORD);
     return () => window.clearInterval(timer);
   }, [typingId, messages]);
 
   useEffect(() => {
     if (!typingId) return;
     const typingMsg = messages.find((m) => m.id === typingId);
-    if (typingMsg && revealed >= typingMsg.text.length) setTypingId(null);
-  }, [typingId, messages, revealed]);
+    if (typingMsg && revealedWords >= splitWords(typingMsg.text).length) {
+      setTypingId(null);
+    }
+  }, [typingId, messages, revealedWords]);
+
+  const autoresize = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`;
+  }, []);
 
   const send = useCallback(
     async (promptText?: string) => {
@@ -173,7 +261,7 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
       const userMsg: ChatMessage = { id: uid(), role: "user", text: prompt, ts: Date.now() };
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
-      if (inputRef.current) inputRef.current.style.height = "auto";
+      if (inputRef.current) autoresize(inputRef.current);
       setSending(true);
       setPhase("thinking");
 
@@ -198,13 +286,46 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
         setPhase(null);
       }
     },
-    [input, sending, sessionId, activeBot]
+    [input, sending, sessionId, activeBot, autoresize]
   );
 
   const retryLast = useCallback(() => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (lastUser) void send(lastUser.text);
   }, [messages, send]);
+
+  /**
+   * Regenerate the latest assistant reply: drop it (and anything after the
+   * last user message), then re-send the same prompt.
+   */
+  const regenerate = useCallback(() => {
+    if (sending) return;
+    const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
+    if (lastUserIdx < 0) return;
+    const prompt = messages[lastUserIdx].text;
+    setMessages((prev) => {
+      const idx = prev.map((m) => m.role).lastIndexOf("user");
+      return idx < 0 ? prev : prev.slice(0, idx + 1);
+    });
+    void send(prompt);
+  }, [messages, sending, send]);
+
+  const copyText = useCallback(async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for non-secure contexts (same approach as MessageParts).
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopiedId(id);
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopiedId(null), COPY_FEEDBACK_MS);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -215,13 +336,19 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    const el = e.target;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    autoresize(e.target);
   };
 
   const title = sessionId ? `Session ${sessionId.slice(0, 8)}…` : "New conversation";
   const canSend = !sending && input.trim().length > 0;
+
+  // Id of the newest assistant message — the only one that gets Regenerate.
+  const lastAssistantId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
 
   return (
     <section className="chat-view" aria-label="Chat">
@@ -295,9 +422,54 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
         )}
 
         {messages.map((msg) => {
-          const display =
-            msg.id === typingId ? { ...msg, text: msg.text.slice(0, revealed) } : msg;
-          return <MessageBubble key={msg.id} message={display} />;
+          const isTyping = msg.id === typingId;
+          const copied = copiedId === msg.id;
+          return (
+            <div key={msg.id} className="msg-row">
+              {/* Hover actions: Copy on every message, Regenerate only on the
+                  latest assistant reply. CSS reveals them on .msg-row:hover. */}
+              <div className="msg-actions" role="toolbar" aria-label="Message actions">
+                <button
+                  type="button"
+                  className={`msg-action-btn${copied ? " is-copied" : ""}`}
+                  onClick={() => void copyText(msg.id, msg.text)}
+                  aria-label={copied ? "Copied to clipboard" : "Copy message"}
+                >
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                {msg.role === "assistant" && msg.id === lastAssistantId && !isTyping && (
+                  <button
+                    type="button"
+                    className="msg-action-btn"
+                    onClick={regenerate}
+                    disabled={sending}
+                    aria-label="Regenerate reply"
+                  >
+                    <RotateCcw size={13} />
+                    Regenerate
+                  </button>
+                )}
+              </div>
+
+              {isTyping ? (
+                // Typing placeholder: plain text word reveal; full markdown
+                // renders via MessageBubble once the reveal finishes.
+                <div className="msg-appear" style={typingRowStyle}>
+                  <div aria-hidden="true" style={typingAvatarStyle}>
+                    <Bot size={16} color="#fff" />
+                  </div>
+                  <div style={typingBodyStyle}>
+                    <TypingText text={msg.text} wordsShown={revealedWords} />
+                  </div>
+                </div>
+              ) : (
+                <div className="msg-markdown">
+                  <MessageBubble message={msg} />
+                </div>
+              )}
+            </div>
+          );
         })}
 
         {phase && (
@@ -315,7 +487,22 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
             </button>
           </div>
         )}
+
+        {/* Scroll sentinel: smooth auto-scroll target (see scrollToBottomSmooth). */}
+        <div ref={bottomRef} aria-hidden="true" />
       </div>
+
+      {/* Typing indicator: visible near the composer while waiting for a reply. */}
+      {sending && (
+        <div className="typing-indicator" role="status" aria-live="polite">
+          <span className="typing-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span>{phase ? `${phase}…` : "bot đang trả lời…"}</span>
+        </div>
+      )}
 
       <form
         className="chat-composer"
@@ -331,7 +518,7 @@ export function ChatView({ sessionId, onTogglePanel }: Props) {
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Message Boom…"
+          placeholder={sending ? "bot đang trả lời…" : "Message Boom…"}
           disabled={sending}
           aria-label="Message input"
         />
