@@ -13,7 +13,7 @@
  *   POST   /api/bots            -> {bot: {...}}
  *   PUT    /api/bots/:id        -> {bot: {...}}
  *   DELETE /api/bots/:id        -> {ok: true}
- *   POST   /api/bots/active     {id} -> {ok: true}
+ *   POST   /api/bots/active     {"bot_id": "..."} -> {ok: true}
  *
  * All responses are validated at runtime (unknown + narrowing, same pattern
  * as lib/api.ts); malformed shapes throw instead of rendering garbage.
@@ -156,7 +156,9 @@ async function apiSetActiveBot(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bots/active`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
+    // The gateway reads `bot_id` (see _handle_bots_set_active in gateway/api.py);
+    // sending a different field makes the call fail with "bot_id is required".
+    body: JSON.stringify({ bot_id: id }),
   });
   await parseJsonBody(res, "POST /api/bots/active");
 }

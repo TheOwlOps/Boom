@@ -244,8 +244,8 @@ export default function App() {
 
   /**
    * Open the Marketplace modal and (re)load its data.
-   * The gateway has no marketplace endpoints yet, so each fetch falls back
-   * to local data instead of failing the modal.
+   * The gateway may not implement every marketplace endpoint, so each fetch
+   * falls back to local data instead of failing the modal.
    */
   const openMarketplace = () => {
     setMarketplaceOpen(true);

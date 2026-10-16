@@ -55,7 +55,7 @@ hiddenimports += sorted(
 )
 
 # Third-party deps pulled in by tool modules (stdlib needs no entry).
-hiddenimports += ["yaml"]
+hiddenimports += ["yaml", "pydantic"]
 
 # ------------------------------------------------------------------- data
 # skills/*/SKILL.md are read from disk at runtime (extensibility.skill_loader

@@ -95,13 +95,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Bundle output lives under the Tauri project dir, not the repo root:
+      # `defaults.run.working-directory` only affects `run:` steps, while
+      # action inputs (like this `path`) resolve from `github.workspace`.
       - name: Upload artifacts
         id: upload
         uses: actions/upload-artifact@v4
         with:
           name: boom-desktop-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/bundle/
+            apps/web/src-tauri/target/${{ matrix.target }}/release/bundle/
           retention-days: 30
 
       # SignPath opt-in gate. GitHub forbids the `secrets` context in step
@@ -243,25 +246,14 @@ jobs:
             -o latest.json
           python3 -c "import json; d=json.load(open('latest.json')); assert len(d['platforms'])==4; print('latest.json valid:', d['version'])"
 
-      # Checksums for every release asset, so users can verify installer
-      # integrity (the app is not code-signed yet).
-      - name: Generate SHA256SUMS.txt
+      # Flatten the downloaded artifacts (they land in per-platform subdirs
+      # under dist/ because of merge-multiple) into dist/flat/, preferring the
+      # SignPath-signed MSI when signing ran. Done before checksums so that
+      # SHA256SUMS.txt covers exactly the files attached to the release.
+      - name: Flatten release assets
         run: |
           set -euo pipefail
-          # latest.json is generated at the repo root; copy it under dist/
-          # so the checksum file covers every asset attached to the release.
-          cp latest.json dist/latest.json
-          bash scripts/generate-checksums.sh dist/
-
-      - name: Upload installers, signatures, latest.json and checksums
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
           # Installer files plus any .sig files tauri build produced.
-          # Artifacts land in per-platform subdirs under dist/ (merge-multiple),
-          # so flatten them to dist/ root first.
           shopt -s globstar nullglob
           mkdir -p dist/flat
           for f in dist/**/*.AppImage dist/**/*.msi dist/**/*.dmg dist/**/*.sig; do
@@ -277,7 +269,27 @@ jobs:
             cp -f "$SIGNED_MSI" "dist/flat/$(basename "$SIGNED_MSI")"
             echo "Shipping SignPath-signed MSI: $(basename "$SIGNED_MSI")"
           fi
-          ASSETS=(dist/flat/* latest.json dist/SHA256SUMS.txt)
+          # latest.json is generated at the repo root; include it in the flat
+          # set so the checksum file covers every asset attached to the release.
+          cp latest.json dist/flat/latest.json
+
+      # Checksums for every release asset, so users can verify installer
+      # integrity (the app is not code-signed yet). Scans dist/flat/ only:
+      # scanning all of dist/ would see the signed and unsigned MSI under the
+      # same basename and abort on the checksum conflict when SignPath
+      # signing is enabled (generate-checksums.sh dedupe guard).
+      - name: Generate SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          bash scripts/generate-checksums.sh dist/flat/
+
+      - name: Upload installers, signatures, latest.json and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          ASSETS=(dist/flat/*)
           ls -la "${ASSETS[@]}"
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
           echo "Uploaded ${#ASSETS[@]} assets to $TAG"

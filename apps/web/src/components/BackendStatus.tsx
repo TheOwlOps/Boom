@@ -149,7 +149,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
       />
       <div className="min-w-0 flex-1">
         <h2 className="text-base font-semibold text-neutral-100">
-          Backend chưa chạy
+          Backend is not running
         </h2>
         <p className="mt-1 text-sm text-neutral-400">
           {getBackendHelpText()}
@@ -166,7 +166,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
             ) : (
               <Play className="h-4 w-4" aria-hidden="true" />
             )}
-            Khởi động Backend
+            Start backend
           </button>
           <button
             type="button"
@@ -174,7 +174,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
             className="btn-hover flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-medium text-neutral-200"
           >
             <RotateCw className="h-4 w-4" aria-hidden="true" />
-            Thử lại
+            Retry
           </button>
         </div>
       </div>

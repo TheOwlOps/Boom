@@ -140,10 +140,9 @@ function DoneStep({
       <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 via-sky-500 to-emerald-500 text-4xl shadow-lg shadow-indigo-950/60">
         🎉
       </div>
-      <h2 className="mb-2 text-3xl font-bold text-neutral-100">Sẵn sàng!</h2>
+      <h2 className="mb-2 text-3xl font-bold text-neutral-100">You&apos;re all set!</h2>
       <p className="mx-auto mb-8 max-w-sm text-sm text-neutral-400">
-        Thêm API key bất cứ lúc nào trong Settings để Boom bắt đầu trò chuyện
-        với AI.
+        Add an API key any time in Settings so Boom can start chatting with AI.
       </p>
       <button
         type="button"
@@ -151,7 +150,7 @@ function DoneStep({
         disabled={saving}
         className="glow-hover inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-sky-600 px-8 py-3 text-base font-semibold text-white disabled:opacity-50"
       >
-        Bắt đầu dùng Boom
+        Start using Boom
         <ArrowRight className="h-5 w-5" />
       </button>
     </div>

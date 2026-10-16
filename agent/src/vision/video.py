@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -73,15 +74,22 @@ class VideoProcessor:
     def __init__(
         self,
         ocr_fn: Optional[Callable[[str], str]] = None,
-        work_dir: str = "/tmp/boom_frames",
+        work_dir: Optional[str] = None,
     ) -> None:
         """Args:
             ocr_fn: function(path) -> text. When None, auto-tries Boom's
                 tools.ocr_tool. When that's also missing, frames still
                 extract fine — only the text will be empty.
-            work_dir: root dir for extracted frames.
+            work_dir: root dir for extracted frames. Defaults to
+                $BOOM_VIDEO_FRAMES_DIR, falling back to the platform temp
+                dir (e.g. /tmp/boom_frames on Linux). Never hardcode /tmp:
+                respect $TMPDIR on macOS/Windows.
         """
         self.ocr_fn = ocr_fn if ocr_fn is not None else _resolve_default_ocr()
+        if work_dir is None:
+            work_dir = os.environ.get("BOOM_VIDEO_FRAMES_DIR") or str(
+                Path(tempfile.gettempdir()) / "boom_frames"
+            )
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._ffmpeg = shutil.which("ffmpeg")

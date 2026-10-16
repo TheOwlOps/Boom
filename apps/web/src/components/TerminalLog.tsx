@@ -32,15 +32,20 @@ export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_M
   useEffect(() => {
     if (pollIntervalMs <= 0) return;
     let cancelled = false;
-    const seen = new Set<string>();
     const load = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/logs`);
         if (!res.ok || cancelled) return;
-        const fresh = toLines(await res.json()).filter((l) => !seen.has(l));
-        if (fresh.length === 0) return;
-        fresh.forEach((l) => seen.add(l));
-        setPolled((prev) => [...prev, ...fresh].slice(-maxLines));
+        const fresh = toLines(await res.json());
+        if (fresh.length === 0 || cancelled) return;
+        // Dedupe against what is already on screen inside the state updater,
+        // so no unbounded "seen" set grows across polls in long sessions.
+        setPolled((prev) => {
+          const prevSet = new Set(prev);
+          const added = fresh.filter((l) => !prevSet.has(l));
+          if (added.length === 0) return prev;
+          return [...prev, ...added].slice(-maxLines);
+        });
       } catch { /* API unavailable — component still renders logs from props */ }
     };
     void load();

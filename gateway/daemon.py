@@ -26,14 +26,20 @@ class GatewayDaemon:
         delivery_ledger: Optional[DeliveryLedger] = None,
         telegram_token: Optional[str] = None,
         discord_token: Optional[str] = None,
-        zalo_bridge_url: str = "http://127.0.0.1:8787",
+        zalo_bridge_url: Optional[str] = None,
         root_dir: Optional[Any] = None
     ):
         self.runner_fn = runner_fn
         self.ledger = delivery_ledger or DeliveryLedger()
+        # Zalo bridge URL is overridable via $BOOM_ZALO_BRIDGE_URL so the
+        # hardcoded 127.0.0.1:8787 default is not the only option.
         self.tg_token = telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
         self.dc_token = discord_token or os.getenv("DISCORD_BOT_TOKEN")
-        self.zalo_url = zalo_bridge_url
+        self.zalo_url = (
+            zalo_bridge_url
+            or os.environ.get("BOOM_ZALO_BRIDGE_URL")
+            or "http://127.0.0.1:8787"
+        )
         self.root_dir = root_dir
         self.ingress: Optional[IngressServer] = None
         self.discord: Optional[DiscordChannel] = None

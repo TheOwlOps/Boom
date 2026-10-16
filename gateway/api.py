@@ -28,6 +28,28 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from pathlib import Path
 
+
+def _sanitize_proxy_env():
+    """Remove malformed no_proxy entries that crash httpx.
+
+    httpx 0.28.x fails with InvalidURL when no_proxy contains bracketed
+    IPv6 literals (e.g. "[::1]") because it builds keys like
+    "all://*[::1]". Strip bracketed entries; bare IPv6 without brackets
+    is left alone (httpx handles those).
+    """
+    for key in ("no_proxy", "NO_PROXY"):
+        val = os.environ.get(key)
+        if not val:
+            continue
+        parts = [p.strip() for p in val.split(",")]
+        clean = [p for p in parts if not (p.startswith("[") and p.endswith("]"))]
+        if len(clean) != len(parts):
+            os.environ[key] = ",".join(clean)
+
+
+_sanitize_proxy_env()
+
+
 def _repo_root():
     """Repo root for ``__file__``-relative resources (skills/, data/, ...).
 
@@ -104,7 +126,10 @@ def _build_activity_payload():
             reverse=True,
         )
         if files:
-            data = json.loads(open(files[0], encoding="utf-8").read())
+            # Use a context manager so the file handle is always closed,
+            # even if the JSON is malformed.
+            with open(files[0], encoding="utf-8") as fh:
+                data = json.loads(fh.read())
             steps = data.get("steps") or []
             for s in steps[-20:]:
                 tool = s.get("action_tool")
@@ -484,7 +509,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 from agent.src.environment import AgentEnvironment
                 env = AgentEnvironment()
-                tools_count = len(getattr(env, "tools", {}) or {})
+                tools_count = len(env.get_tools() or {})
             except Exception:
                 pass
             try:
@@ -570,7 +595,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 from agent.src.environment import AgentEnvironment
                 env = AgentEnvironment()
-                for name, t in (getattr(env, "tools", {}) or {}).items():
+                for name, t in (env.get_tools() or {}).items():
                     tools.append({
                         "name": name,
                         "description": getattr(t, "description", "") or "",
@@ -696,7 +721,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             from agent.src.environment import AgentEnvironment
             env = AgentEnvironment()
-            tools = getattr(env, "tools", {}) or {}
+            tools = env.get_tools() or {}
             if tool_name not in tools:
                 return self._error(404, f"tool not found: {tool_name}")
             tool = tools[tool_name]

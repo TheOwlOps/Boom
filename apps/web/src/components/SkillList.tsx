@@ -108,7 +108,7 @@ export default function SkillList() {
     <div>
       {!usingApi && (
         <p className="mb-3 text-xs text-neutral-500">
-          No /api/skills yet — showing static data scanned from the repo (25 skills).
+          No /api/skills yet — showing static data scanned from the repo ({FALLBACK_SKILLS.length} skills).
         </p>
       )}
       <ul className="grid gap-3 sm:grid-cols-2">

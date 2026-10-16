@@ -113,6 +113,10 @@ export default function DagViewer() {
       if (alive) void fetchDag();
     };
     const start = () => {
+      // Guard against stacking intervals: visibilitychange always alternates,
+      // but a stray double-start (e.g. a visibility event while polling was
+      // already running) must never leave two pollers alive.
+      stop();
       tick();
       timer.current = window.setInterval(tick, POLL_MS);
     };

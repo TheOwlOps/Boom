@@ -503,7 +503,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
           <div className="provider-prompt" role="status">
             <KeyRound size={16} aria-hidden="true" className="provider-prompt-icon" />
             <p className="provider-prompt-text">
-              Chưa cấu hình AI provider — thêm API key trong Settings để Boom trả lời tin nhắn.
+              No AI provider configured — add an API key in Settings so Boom can reply.
             </p>
             {onOpenSettings && (
               <button
@@ -511,14 +511,14 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
                 className="provider-prompt-button"
                 onClick={onOpenSettings}
               >
-                Mở Settings
+                Open Settings
               </button>
             )}
             <button
               type="button"
               className="provider-prompt-dismiss"
               onClick={() => setNoProvider(false)}
-              aria-label="Bỏ qua"
+              aria-label="Dismiss"
             >
               <X size={14} />
             </button>
@@ -546,7 +546,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
             <span />
             <span />
           </span>
-          <span>{phase ? `${phase}…` : "bot đang trả lời…"}</span>
+          <span>{phase ? `${phase}…` : "Boom is replying…"}</span>
         </div>
       )}
 
@@ -564,7 +564,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder={sending ? "bot đang trả lời…" : "Message Boom…"}
+          placeholder={sending ? "Boom is replying…" : "Message Boom…"}
           disabled={sending}
           aria-label="Message input"
         />

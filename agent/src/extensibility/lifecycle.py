@@ -131,6 +131,8 @@ class PluginManager:
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         # {name: {"manifest": dict, "enabled": bool, "module": module|None}}
         self.plugins: Dict[str, Dict[str, Any]] = {}
+        # Persisted enabled-plugin list so enable() survives refresh().
+        self._state_file = self.plugins_dir / ".enabled.json"
         # Use PluginContext (has register_tool) instead of a plain dict,
         # so plugin register(ctx)/on_enable(ctx) hooks work correctly.
         if ctx is not None:
@@ -140,10 +142,37 @@ class PluginManager:
             self.ctx = PluginContext()
         self.refresh()
 
+    def _load_enabled(self) -> set:
+        """Read the persisted set of enabled plugin names."""
+        try:
+            import json
+            if self._state_file.is_file():
+                data = json.loads(self._state_file.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return set(data)
+        except Exception:
+            pass
+        return set()
+
+    def _save_enabled(self) -> None:
+        """Persist the enabled-plugin set atomically."""
+        import json
+        import os
+        enabled = sorted(n for n, i in self.plugins.items() if i["enabled"])
+        tmp = self._state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(enabled), encoding="utf-8")
+        os.replace(tmp, self._state_file)
+
     # -- internal ---------------------------------------------------------
 
     def refresh(self) -> None:
         """Re-scans plugins_dir, loading every installed plugin's manifest."""
+        previously_enabled = self._load_enabled()
+        # Also keep in-memory enabled flags so refresh() doesn't wipe
+        # plugins enabled earlier in this process lifetime.
+        previously_enabled |= {
+            n for n, i in self.plugins.items() if i["enabled"]
+        }
         self.plugins.clear()
         for p in sorted(self.plugins_dir.iterdir()):
             manifest_file = p / "plugin.json"
@@ -152,9 +181,10 @@ class PluginManager:
                     manifest = load_manifest(manifest_file)
                 except ValueError:
                     continue  # broken manifest: skip, don't crash the manager
-                self.plugins[manifest["name"]] = {
+                name = manifest["name"]
+                self.plugins[name] = {
                     "manifest": manifest,
-                    "enabled": False,
+                    "enabled": name in previously_enabled,
                     "module": None,
                     "dir": p,
                 }
@@ -274,6 +304,7 @@ class PluginManager:
                     "error": f"plugin '{pname}' failed to enable: {exc}",
                     "enabled_order": enabled_now}
 
+        self._save_enabled()
         return {"enabled": True, "name": name, "enabled_order": enabled_now}
 
     def disable(self, name: str) -> dict:
@@ -299,10 +330,15 @@ class PluginManager:
                 return {"disabled": False,
                         "error": f"plugin '{name}': on_disable failed: {exc}"}
         info["enabled"] = False
+        self._save_enabled()
         return {"disabled": True, "name": name}
 
     def uninstall(self, name: str) -> dict:
-        """Uninstalls: disables first, calls on_uninstall if present, then deletes the directory."""
+        """Uninstalls: disables first, calls on_uninstall if present, then deletes the directory.
+
+        Refuses to delete bundled plugins (shipped with the repo / tracked by
+        git) — those can only be disabled, not removed.
+        """
         if name not in self.plugins:
             return {"uninstalled": False,
                     "error": f"plugin '{name}' is not installed"}
@@ -310,6 +346,22 @@ class PluginManager:
         result = self.disable(name)
         if not result.get("disabled"):
             return {"uninstalled": False, "error": result.get("error", "")}
+
+        plugin_dir = self.plugins[name]["dir"]
+        # Don't delete bundled plugins (tracked in git).
+        try:
+            import subprocess
+            tracked = subprocess.run(
+                ["git", "ls-files", str(plugin_dir)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if tracked.returncode == 0 and tracked.stdout.strip():
+                del self.plugins[name]
+                self._save_enabled()
+                return {"uninstalled": True, "name": name,
+                        "note": "bundled plugin disabled (not deleted)"}
+        except Exception:
+            pass  # git check failed: fall through to normal uninstall
 
         module = self.plugins[name]["module"]
         if module is not None and hasattr(module, "on_uninstall"):
@@ -320,11 +372,12 @@ class PluginManager:
                         "error": f"plugin '{name}': on_uninstall failed: {exc}"}
 
         try:
-            shutil.rmtree(self.plugins[name]["dir"])
+            shutil.rmtree(plugin_dir)
         except OSError as exc:
             return {"uninstalled": False,
                     "error": f"could not delete plugin directory '{name}': {exc}"}
         del self.plugins[name]
+        self._save_enabled()
         return {"uninstalled": True, "name": name}
 
     def list(self) -> list:
