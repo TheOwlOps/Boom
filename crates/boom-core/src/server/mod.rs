@@ -20,6 +20,7 @@
 
 pub mod defaults;
 pub mod file_providers;
+pub mod plugin_registry;
 pub mod routes;
 pub mod state;
 

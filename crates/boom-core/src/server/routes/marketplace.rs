@@ -12,10 +12,11 @@ use serde_json::{json, Value};
 
 use super::super::{
     defaults::{plugin_map, tool_name_set},
-    state::{AppState, ToolInfo},
+    plugin_registry::{discover_plugins, find_plugin, plugins_dir},
+    state::{AppState, PluginMeta, ToolInfo},
     ApiError, JsonBody, MarketplaceError,
 };
-use crate::server::{split_marketplace_id, StorageError};
+use crate::server::split_marketplace_id;
 
 // ---------------------------------------------------------------------------
 // Category mapping (ported from agent/src/marketplace.py keyword rules).
@@ -95,6 +96,30 @@ fn categorize_item(name: &str, description: &str) -> &'static str {
 // Catalog
 // ---------------------------------------------------------------------------
 
+/// All plugins known to the server: discovered from `~/.boom/plugins/` on
+/// disk, merged with the enabled state stored in SQLite. A plugin whose
+/// folder was deleted disappears from the catalog (Python's PluginManager
+/// behaves the same way).
+fn all_plugins(state: &AppState) -> Vec<PluginMeta> {
+    let stored: std::collections::HashMap<String, bool> = state
+        .storage
+        .plugins()
+        .into_iter()
+        .map(|p| (p.name, p.enabled))
+        .collect();
+    discover_plugins()
+        .into_iter()
+        .map(|d| PluginMeta {
+            name: d.name.clone(),
+            description: d.description,
+            icon: d.icon,
+            version: d.version,
+            author: d.author,
+            enabled: stored.get(&d.name).copied().unwrap_or(false),
+        })
+        .collect()
+}
+
 /// One catalog item. Plugins always carry `version`/`author` (possibly "");
 /// tools omit them — exactly like Python's `_plugin_item` / `_tool_item`.
 /// `featured` is a curated whitelist (`FEATURED_PLUGINS`) — never the default.
@@ -138,7 +163,7 @@ fn tool_item(tool: &ToolInfo, disabled: &HashSet<String>) -> Value {
 }
 
 fn build_catalog(state: &AppState) -> Vec<Value> {
-    let plugins = state.storage.plugins();
+    let plugins = all_plugins(state);
     let tools = state.tools.list_tools();
     let disabled: HashSet<String> = state.storage.disabled_tools().into_iter().collect();
 
@@ -168,8 +193,10 @@ pub async fn catalog(State(state): State<AppState>) -> Json<Value> {
 }
 
 /// `GET /api/marketplace/installed` → `{installed: ["plugin:x", "tool:y", ...]}`.
+/// A plugin counts as installed when its folder exists on disk (mirroring
+/// Python's `get_installed`); a builtin tool counts when it is not disabled.
 pub async fn installed(State(state): State<AppState>) -> Json<Value> {
-    let plugins = state.storage.plugins();
+    let plugins = all_plugins(&state);
     let tools = state.tools.list_tools();
     let disabled: HashSet<String> = state.storage.disabled_tools().into_iter().collect();
 
@@ -207,7 +234,7 @@ pub async fn install(
         Some(id) if !id.trim().is_empty() => id.trim().to_string(),
         _ => return Err(ApiError::bad_request("id is required")),
     };
-    let plugins = state.storage.plugins();
+    let plugins = all_plugins(&state);
     let tools = state.tools.list_tools();
     let (kind, name) = split_marketplace_id(
         &item_id,
@@ -217,26 +244,37 @@ pub async fn install(
     .map_err(marketplace_error)?;
 
     if kind == "plugin" {
-        // No registry in the default build: only already-known plugins can
-        // be enabled (Python: registry download → 404 "plugin 'x' not found").
-        if !plugins.iter().any(|p| p.name == name) {
-            return Err(marketplace_error(MarketplaceError::new(
-                format!("plugin '{name}' not found"),
-                404,
-            )));
-        }
+        // Real registry: the plugin must exist as a folder under
+        // ~/.boom/plugins/ with a plugin.json manifest. Installing enables
+        // it (records enabled=true in SQLite).
+        let discovered = match find_plugin(&name) {
+            Some(d) => d,
+            None => {
+                return Err(marketplace_error(MarketplaceError::new(
+                    format!(
+                        "plugin '{name}' not found — add it to {} first \
+                         (each plugin is a folder containing plugin.json)",
+                        plugins_dir().display()
+                    ),
+                    404,
+                )))
+            }
+        };
         state
             .storage
-            .enable_plugin(&name)
-            .map_err(|e| match e {
-                StorageError::NotFound(_) => marketplace_error(MarketplaceError::new(
-                    format!("plugin '{name}' not found"),
-                    404,
-                )),
-                _ => marketplace_error(MarketplaceError::new(
+            .install_plugin(&PluginMeta {
+                name: discovered.name,
+                description: discovered.description,
+                icon: discovered.icon,
+                version: discovered.version,
+                author: discovered.author,
+                enabled: true,
+            })
+            .map_err(|_| {
+                marketplace_error(MarketplaceError::new(
                     format!("could not enable plugin '{name}'"),
                     500,
-                )),
+                ))
             })?;
         return Ok(Json(json!({ "ok": true, "id": format!("plugin:{name}") })));
     }
@@ -262,7 +300,7 @@ pub async fn uninstall(
         Some(id) if !id.trim().is_empty() => id.trim().to_string(),
         _ => return Err(ApiError::bad_request("id is required")),
     };
-    let plugins = state.storage.plugins();
+    let plugins = all_plugins(&state);
     let tools = state.tools.list_tools();
     let (kind, name) = split_marketplace_id(
         &item_id,
@@ -272,12 +310,33 @@ pub async fn uninstall(
     .map_err(marketplace_error)?;
 
     if kind == "plugin" {
-        if !state.storage.uninstall_plugin(&name) {
-            return Err(marketplace_error(MarketplaceError::new(
-                format!("plugin '{name}' is not installed"),
-                404,
-            )));
-        }
+        // Uninstall disables the plugin (enabled=false) but never deletes
+        // its folder on disk.
+        let discovered = match find_plugin(&name) {
+            Some(d) => d,
+            None => {
+                return Err(marketplace_error(MarketplaceError::new(
+                    format!("plugin '{name}' is not installed"),
+                    404,
+                )))
+            }
+        };
+        state
+            .storage
+            .install_plugin(&PluginMeta {
+                name: discovered.name,
+                description: discovered.description,
+                icon: discovered.icon,
+                version: discovered.version,
+                author: discovered.author,
+                enabled: false,
+            })
+            .map_err(|_| {
+                marketplace_error(MarketplaceError::new(
+                    format!("could not uninstall plugin '{name}'"),
+                    500,
+                ))
+            })?;
         return Ok(Json(json!({ "ok": true, "id": format!("plugin:{name}") })));
     }
 

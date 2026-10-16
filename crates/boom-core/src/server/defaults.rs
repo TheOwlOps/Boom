@@ -511,6 +511,14 @@ impl Storage for MemoryStorage {
         Ok(())
     }
 
+    fn install_plugin(&self, meta: &PluginMeta) -> Result<(), StorageError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal(format!("could not install plugin '{}'", meta.name))
+        })?;
+        inner.plugins.insert(meta.name.clone(), meta.clone());
+        Ok(())
+    }
+
     fn uninstall_plugin(&self, name: &str) -> bool {
         self.inner
             .lock()

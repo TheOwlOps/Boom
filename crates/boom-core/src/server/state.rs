@@ -321,6 +321,9 @@ pub trait Storage: Send + Sync {
     // -- marketplace --
     fn plugins(&self) -> Vec<PluginMeta>;
     fn enable_plugin(&self, name: &str) -> Result<(), StorageError>;
+    /// Record (upsert) a plugin's metadata, e.g. after discovering it on
+    /// disk. Overwrites any existing entry for the same name.
+    fn install_plugin(&self, meta: &PluginMeta) -> Result<(), StorageError>;
     fn uninstall_plugin(&self, name: &str) -> bool;
     fn disabled_tools(&self) -> BTreeSet<String>;
     fn set_tool_disabled(&self, name: &str, disabled: bool);

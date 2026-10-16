@@ -130,12 +130,6 @@ impl SqliteStorage {
             .set_json(&group_key(&group.channel, &group.group_id), group)
     }
 
-    /// Record an installed plugin (called by the plugin installer; the
-    /// marketplace routes only enable/uninstall already-known plugins).
-    pub fn install_plugin(&self, meta: &ApiPluginMeta) -> StoreResult<()> {
-        self.db.kv().set_json(&plugin_key(&meta.name), meta)
-    }
-
     fn bot_meta(&self, id: &str) -> StoreResult<BotMeta> {
         let meta: Option<BotMeta> = self.db.kv().get_json(&bot_meta_key(id))?;
         Ok(meta.unwrap_or_default())
@@ -443,6 +437,13 @@ impl ApiStorage for SqliteStorage {
         plugin.enabled = true;
         self.db.kv().set_json(&key, &plugin).map_err(api_error)?;
         Ok(())
+    }
+
+    fn install_plugin(&self, meta: &ApiPluginMeta) -> Result<(), ApiError> {
+        self.db
+            .kv()
+            .set_json(&plugin_key(&meta.name), meta)
+            .map_err(api_error)
     }
 
     fn uninstall_plugin(&self, name: &str) -> bool {
