@@ -18,9 +18,16 @@ interface BoomiAvatarProps {
 
 /** Public-dir asset paths — keep in sync with apps/desktop/public/. */
 export const BOOMI_MASCOT_SRC = "/boomi-mascot.webp";
+/** Thinking animation variants — cycled randomly for variety. */
+const BOOMI_THINKING_VIDEOS = [
+  "/boomi-thinking.mp4",
+  "/boomi-thinking-deep.mp4",
+  "/boomi-thinking-curious.mp4",
+  "/boomi-thinking-compute.mp4",
+  "/boomi-thinking-eureka.mp4",
+];
 const BOOMI_VIDEOS: Record<string, string> = {
   idle: "/boomi-idle.mp4",
-  thinking: "/boomi-thinking.mp4",
   happy: "/boomi-happy.mp4",
   talking: "/boomi-talking.mp4",
   waving: "/boomi-waving.mp4",
@@ -40,8 +47,17 @@ export function BoomiAvatar({
   const style = { width: size, height: size };
 
   // Animated video for lively states (like Muse's live avatar).
+  // Thinking cycles randomly through 5 variants for variety.
   // Falls back to static image for error or when animated=false.
-  const videoSrc = animated ? BOOMI_VIDEOS[status] : null;
+  let videoSrc: string | null = null;
+  if (animated) {
+    if (status === "thinking") {
+      const idx = Math.floor(Math.random() * BOOMI_THINKING_VIDEOS.length);
+      videoSrc = BOOMI_THINKING_VIDEOS[idx];
+    } else {
+      videoSrc = BOOMI_VIDEOS[status] ?? null;
+    }
+  }
 
   if (animated && videoSrc) {
     return (
