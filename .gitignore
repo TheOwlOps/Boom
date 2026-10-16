@@ -341,3 +341,13 @@ scratch/
 *.log
 *.exe
 gateway/binaries/
+
+# Android (apps/mobile/android)
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+apps/mobile/android/app/build/
+apps/mobile/android/build/
+apps/mobile/android/.gradle/

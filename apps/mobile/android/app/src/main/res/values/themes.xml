@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme: the Compose UI draws everything; this only styles the
+         system chrome (status bar) before Compose takes over. -->
+    <style name="Theme.Boom" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B0E14</item>
+        <item name="android:navigationBarColor">#0B0E14</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
