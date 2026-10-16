@@ -1,0 +1,16 @@
+[package]
+name = "boom-text"
+version = "0.1.0"
+edition = "2021"
+description = "Text utilities for Boom: stats, keywords, lines-around-window, over a JSON stdin/stdout protocol."
+
+[[bin]]
+name = "boom-text"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

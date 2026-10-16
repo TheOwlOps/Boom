@@ -3,6 +3,10 @@ members = [
     "crates/core",
     "crates/gateway",
     "crates/cli",
+    "crates/perf/search",
+    "crates/perf/chunker",
+    "crates/perf/hasher",
+    "crates/perf/textutil",
     "apps/web/src-tauri"
 ]
 resolver = "2"
