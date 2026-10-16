@@ -175,6 +175,7 @@ jobs:
 
       - name: Generate latest.json
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_FILE: ${{ steps.files.outputs.appimage_file }}
           MSI_FILE: ${{ steps.files.outputs.msi_file }}
           DMG_X64_FILE: ${{ steps.files.outputs.dmg_x64_file }}
