@@ -38,3 +38,15 @@ tauri-plugin-process = "2"
 # Shell plugin: used to spawn the `boom-backend` PyInstaller binary as a
 # Tauri sidecar (with a python3 dev fallback when the sidecar is absent).
 tauri-plugin-shell = "2"
+# Pure Rust backend (replaces Python/PyInstaller): axum HTTP server serving
+# the same /api/* surface as gateway/api.py, spawned in-process by Tauri.
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+# HTTP client for LLM provider calls (chat endpoint). default-features=false
+# drops native-tls (no system OpenSSL needed); rustls is pure Rust.
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+
+[dev-dependencies]
+# Needed by backend endpoint tests (tower::ServiceExt::oneshot).
+tower = { version = "0.4", features = ["util"] }
