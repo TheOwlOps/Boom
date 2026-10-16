@@ -197,7 +197,14 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           # Installer files plus any .sig files tauri build produced.
-          ASSETS=(dist/*.AppImage dist/*.msi dist/*.dmg dist/*.sig latest.json)
+          # Artifacts land in per-platform subdirs under dist/ (merge-multiple),
+          # so flatten them to dist/ root first.
+          shopt -s globstar nullglob
+          mkdir -p dist/flat
+          for f in dist/**/*.AppImage dist/**/*.msi dist/**/*.dmg dist/**/*.sig; do
+            cp "$f" dist/flat/ 2>/dev/null || true
+          done
+          ASSETS=(dist/flat/* latest.json)
           ls -la "${ASSETS[@]}"
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
           echo "Uploaded ${#ASSETS[@]} assets to $TAG"
