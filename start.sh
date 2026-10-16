@@ -1,13 +1,12 @@
 #!/bin/bash
 # Boom - Unified startup script
 #
-# Usage: ./start.sh [api|web|gateway|all|status] [--help]
+# Usage: ./start.sh [api|gateway|all|status] [--help]
 #
 # Services (all bind to 127.0.0.1 by default):
-#   api      Python HTTP API for the web UI   (port 18080, override with BOOM_API_PORT)
-#   web      Web UI served by vite preview    (port 5173,  override with BOOM_WEB_PORT)
+#   api      Python HTTP API                   (port 18080, override with BOOM_API_PORT)
 #   gateway  Multi-channel gateway daemon     (ingress port 8788, override with BOOM_INGRESS_PORT)
-#   all      api + web + gateway
+#   all      api + gateway
 #   status   Show which services are running
 #
 # Ports, logs and pid files: ports can be overridden with the env vars above.
@@ -18,7 +17,6 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MODE="${1:-all}"
 
 API_PORT="${BOOM_API_PORT:-18080}"
-WEB_PORT="${BOOM_WEB_PORT:-5173}"
 INGRESS_PORT="${BOOM_INGRESS_PORT:-8788}"
 
 # Namespace pid/log files by repo path hash: two checkouts on one machine
@@ -28,7 +26,6 @@ RUNDIR="/tmp/boom-${PID_TAG}"
 mkdir -p "$RUNDIR"
 
 API_PIDFILE="$RUNDIR/api.pid"
-WEB_PIDFILE="$RUNDIR/web.pid"
 GATEWAY_PIDFILE="$RUNDIR/gateway.pid"
 
 log()  { echo "[boom] $*"; }
@@ -75,17 +72,6 @@ pip_install() { # pip_install <pkgs...>: pip install with PEP 668 fallback
     fi
     fail "pip install $* failed. See /tmp/boom-pip-err.log for details."
     return 1
-}
-
-check_node() {
-    need_cmd node "Install Node.js >= 20 (https://nodejs.org/) or use devbox: 'devbox shell'." || return 1
-    local major
-    major="$(node --version | sed 's/^v//; s/\..*//')"
-    if [ "$major" -lt 20 ] 2>/dev/null; then
-        fail "node is $(node --version) but the web UI requires Node >= 20."
-        return 1
-    fi
-    need_cmd npm "Node.js ships with npm; reinstall Node.js from https://nodejs.org/." || return 1
 }
 
 # --- port / process helpers --------------------------------------------------
@@ -141,44 +127,6 @@ start_api() {
     log "API running (pid $pid): http://127.0.0.1:${API_PORT}"
 }
 
-start_web() {
-    check_node || return 1
-    if service_pid "$WEB_PIDFILE" >/dev/null; then
-        log "Web UI already running (pid $(service_pid "$WEB_PIDFILE"))."
-        return 0
-    fi
-    if port_in_use "$WEB_PORT"; then
-        fail "port $WEB_PORT is already in use. Stop the other service or set BOOM_WEB_PORT to a free port."
-        return 1
-    fi
-    (
-        cd "$ROOT/apps/web" || exit 1
-        if [ ! -x "node_modules/.bin/vite" ]; then
-            log "Installing web dependencies (npm install)..."
-            npm install --no-audit --no-fund --no-progress || exit 1
-        fi
-        if [ ! -f "dist/index.html" ]; then
-            log "Building web UI (npm run build)..."
-            npm run build || exit 1
-        fi
-        log "Starting web UI on 127.0.0.1:${WEB_PORT}..."
-        # Use the local vite binary directly: npx would prompt to download vite
-        # when node_modules is incomplete and hang on headless machines.
-        # --strictPort: fail loudly instead of silently moving to another port.
-        nohup ./node_modules/.bin/vite preview \
-            --port "$WEB_PORT" --host 127.0.0.1 --strictPort \
-            >>"$RUNDIR/web.log" 2>&1 &
-        printf '%s\n%s\n' "$!" "$ROOT" > "$WEB_PIDFILE"
-    ) || return 1
-    if ! wait_for_port "$WEB_PORT" 20; then
-        log "Web UI failed to listen on :$WEB_PORT. Last log lines:"
-        tail -n 20 "$RUNDIR/web.log" >&2
-        rm -f "$WEB_PIDFILE"
-        return 1
-    fi
-    log "Web UI running (pid $(service_pid "$WEB_PIDFILE")): http://127.0.0.1:${WEB_PORT}"
-}
-
 start_gateway() {
     check_python || return 1
     if service_pid "$GATEWAY_PIDFILE" >/dev/null; then
@@ -212,7 +160,7 @@ start_gateway() {
 
 show_status() {
     local name pidfile port pid
-    for spec in "API:$API_PIDFILE:$API_PORT" "Web UI:$WEB_PIDFILE:$WEB_PORT" "Gateway:$GATEWAY_PIDFILE:$INGRESS_PORT"; do
+    for spec in "API:$API_PIDFILE:$API_PORT" "Gateway:$GATEWAY_PIDFILE:$INGRESS_PORT"; do
         name="${spec%%:*}"; rest="${spec#*:}"
         pidfile="${rest%%:*}"; port="${rest##*:}"
         if pid="$(service_pid "$pidfile")"; then
@@ -232,7 +180,6 @@ print_help() {
     echo ""
     echo "Environment overrides:"
     echo "  BOOM_API_PORT       API port (default 18080)"
-    echo "  BOOM_WEB_PORT       Web UI port (default 5173)"
     echo "  BOOM_INGRESS_PORT   Gateway ingress port (default 8788)"
     echo "  BOOM_HOME           Config/state directory (default ~/.boom); run 'python3 boom.py setup' to configure."
     echo ""
@@ -242,17 +189,14 @@ print_help() {
 rc=0
 case "$MODE" in
     api)     start_api || rc=1 ;;
-    web)     start_web || rc=1 ;;
     gateway) start_gateway || rc=1 ;;
     all)
         start_api || rc=1
-        start_web || rc=1
         start_gateway || rc=1
         echo ""
         if [ "$rc" -eq 0 ]; then
             log "All services running:"
             echo "  API:      http://127.0.0.1:${API_PORT}"
-            echo "  Web UI:   http://127.0.0.1:${WEB_PORT}"
             echo "  Gateway:  ingress on 127.0.0.1:${INGRESS_PORT}"
         else
             fail "Some services failed to start. Check the logs in $RUNDIR/."
@@ -263,7 +207,7 @@ case "$MODE" in
     status)  show_status ;;
     help|--help|-h) print_help ;;
     *)
-        echo "Usage: $0 [api|web|gateway|all|status] [--help]" >&2
+        echo "Usage: $0 [api|gateway|all|status] [--help]" >&2
         exit 1
         ;;
 esac

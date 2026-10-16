@@ -27,13 +27,13 @@ def _repo_root() -> Path:
 
 
 def get_current_version() -> str:
-    """Return the current version read from ``apps/web/package.json``.
+    """Return the current version read from ``apps/desktop/package.json``.
 
     Never hardcodes the version; falls back to ``FALLBACK_VERSION``
     when the file is missing or unreadable.
     """
     try:
-        pkg = _repo_root() / "apps" / "web" / "package.json"
+        pkg = _repo_root() / "apps" / "desktop" / "package.json"
         data = json.loads(pkg.read_text(encoding="utf-8"))
         version = str(data.get("version", "")).strip()
         if version:

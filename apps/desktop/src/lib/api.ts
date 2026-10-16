@@ -18,40 +18,19 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 /** Chat (SSE) needs a longer budget — the model streams for a while. */
 const CHAT_TIMEOUT_MS = 120_000;
 
-import { isTauriEnvironment } from "./appVersion";
-
 /**
- * True when the UI runs inside the Tauri desktop shell. Uses the shared
- * `isTauriEnvironment()` helper (checks `window.__TAURI_INTERNALS__` for
- * Tauri v2); it is absent in plain web browsers and dev servers.
- */
-const isTauri = isTauriEnvironment();
-
-/**
- * Base message for every backend-outage failure. It tells the user exactly
- * what to do instead of surfacing a cryptic "Failed to fetch".
- *
- * @deprecated Web/dev wording only — desktop users would not understand the
- * python3 instruction. Prefer {@link getBackendHelpText()} for the
- * context-appropriate text. Kept exported for backward compatibility.
+ * Base message for every backend-outage failure. The desktop app spawns the
+ * backend itself, so the fix is a restart — not a shell command.
  */
 export const BACKEND_UNREACHABLE_MESSAGE =
-  'Cannot reach Boom backend at http://localhost:18080. Start it with: python3 gateway/api.py';
-
-/**
- * Desktop (Tauri) wording: the app spawns the backend itself, so the fix
- * is a restart — not a shell command the user never sees.
- */
-const BACKEND_UNREACHABLE_MESSAGE_TAURI =
   'Boom backend is not running. Please restart the app — it starts automatically.';
 
 /**
- * Context-aware help text for backend-outage failures:
- * - Desktop (Tauri): ask for an app restart (the backend starts automatically).
- * - Web / dev server: keep the actionable `python3 gateway/api.py` command.
+ * Help text for backend-outage failures. The frontend always runs inside
+ * Tauri now; kept as a function so existing imports keep working.
  */
 export function getBackendHelpText(): string {
-  return isTauri ? BACKEND_UNREACHABLE_MESSAGE_TAURI : BACKEND_UNREACHABLE_MESSAGE;
+  return BACKEND_UNREACHABLE_MESSAGE;
 }
 
 /**

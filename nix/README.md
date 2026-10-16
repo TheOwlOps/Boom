@@ -4,7 +4,7 @@ Reproducible Boom environments with plain Nix.
 
 This directory contains the module definitions for the repo's `flake.nix`.
 Together they give you a bit-for-bit reproducible dev shell and two buildable
-packages (Python API + web UI), using Nix the straightforward way — no
+packages (Python API + desktop UI), using Nix the straightforward way — no
 abstraction layers on top.
 
 > **New to this setup?** If you just want to run Boom quickly, use
@@ -34,7 +34,7 @@ nix develop
 What you get:
 
 - **Python 3.12** with `httpx` and `pydantic` (enough to run `python3 boom.py` and the API)
-- **Node.js 22** (for `apps/web`, npm)
+- **Node.js 22** (for `apps/desktop`, npm)
 - **tesseract** with Vietnamese (`vie`) and English (`eng`) data (for the OCR tool)
 - `PYTHONPATH` and `BOOM_API_PORT=18080` set automatically
 
@@ -42,8 +42,8 @@ Try it:
 
 ```bash
 python3 boom.py --help
-./start.sh all                 # gateway + API + web UI
-cd apps/web && npm install && npm run build
+./start.sh all                 # gateway + API
+cd apps/desktop && npm install && npm run build
 ```
 
 ## `nix build` / `nix run` — the API package
@@ -62,20 +62,20 @@ ships a `makeWrapper`-based launcher that `cd`s into the source tree before
 executing `python -m gateway.api`. It works identically on any machine with
 Nix, regardless of where you invoke it from.
 
-## `nix build .#web` — the web UI package
+## `nix build .#desktop` — the desktop UI package
 
-`packages.web` builds `apps/web` (React + Vite) into static files.
+`packages.desktop` builds `apps/desktop` (React + Vite) into static files.
 
 ```bash
-nix build .#web
+nix build .#desktop
 # -> ./result/ contains the dist/ output; serve it with any static server
 ```
 
 > ⚠️ **Before first use:** replace the `npmDepsHash` placeholder in
-> `nix/pkg-web.nix`. Get the real hash with:
+> `nix/pkg-desktop.nix`. Get the real hash with:
 >
 > ```bash
-> nix run nixpkgs#prefetch-npm-deps -- ./apps/web/package-lock.json
+> nix run nixpkgs#prefetch-npm-deps -- ./apps/desktop/package-lock.json
 > ```
 >
 > then paste the resulting `sha256-...` value over the placeholder string
@@ -83,19 +83,19 @@ nix build .#web
 > the placeholder is there so nobody ships a wrong value accidentally.
 >
 > Note: this package builds with **npm**, matching the Dockerfile.
-> `apps/web` also has a `pnpm-lock.yaml`, but the canonical build path is npm.
+> `apps/desktop` also has a `pnpm-lock.yaml`, but the canonical build path is npm.
 
 ## File map
 
 | File | Purpose |
 |------|---------|
-| `../flake.nix` | Flake entrypoint. Inputs: `nixpkgs` `nixos-24.11`, `flake-utils`. Outputs: `devShells.default`, `packages.default` (API), `packages.web`. |
+| `../flake.nix` | Flake entrypoint. Inputs: `nixpkgs` `nixos-24.11`, `flake-utils`. Outputs: `devShells.default`, `packages.default` (API), `packages.desktop`. |
 | `nix/shell.nix` | `nix develop` shell: combines the Python, Node and system environments, sets `PYTHONPATH` / `BOOM_API_PORT` in `shellHook`. |
 | `nix/python.nix` | Python 3.12 + `httpx` + `pydantic` environment. |
 | `nix/node.nix` | Node.js 22 environment. |
 | `nix/system.nix` | System deps: tesseract + `vie`/`eng` language data. |
 | `nix/pkg-api.nix` | `boom-api` package: self-contained `python -m gateway.api` via `mkDerivation` + `makeWrapper`. No network fetch, so no hash needed. |
-| `nix/pkg-web.nix` | `boom-web` package: `npm install && npm run build` via `buildNpmPackage`, output copied from `dist/` to `$out`. Needs a real `npmDepsHash` (see above). |
+| `nix/pkg-desktop.nix` | `boom-desktop` package: `npm install && npm run build` via `buildNpmPackage`, output copied from `dist/` to `$out`. Needs a real `npmDepsHash` (see above). |
 | `nix/README.md` | This file. |
 
 ## nix/ vs devbox.json vs Dockerfile
@@ -114,14 +114,14 @@ fidelity.
 **Rule of thumb:**
 
 - **Develop locally:** `devbox shell` (or `nix develop` if you know Nix).
-- **Verify "runs identically everywhere":** `nix build` / `nix run` / `nix build .#web`.
+- **Verify "runs identically everywhere":** `nix build` / `nix run` / `nix build .#desktop`.
 - **Ship / deploy:** `Dockerfile` (or Nix → OCI if you prefer a fully Nix pipeline).
 
 ## Notes
 
 - The flake pins `nixpkgs` to `nixos-24.11`. To upgrade the dependency set,
   run `nix flake update` and re-verify both packages and the dev shell.
-- `nix build .#web` requires network access on first build to fetch npm deps
+- `nix build .#desktop` requires network access on first build to fetch npm deps
   (via the fixed-output derivation). After that it's cached.
 - On macOS (aarch64/x86_64), `buildNpmPackage` and tesseract work, but the
   API package is marked `platforms.unix` — Linux is the primary target.

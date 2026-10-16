@@ -1,15 +1,16 @@
-# Boom Web UI (`apps/web`)
+# Boom Desktop (`apps/desktop`)
 
-Grokbot-style clean chat UI for the Boom agent: sidebar sessions, chat with
-typewriter reveal, right inspector panel (DAG graph + channel status), settings
-drawer (theme / font size / backend health). Dark-first design tokens.
+Grokbot-style clean chat UI for the Boom agent as a **native desktop app**
+(Tauri + React): sidebar sessions, chat with typewriter reveal, right
+inspector panel (DAG graph + channel status), settings drawer (theme /
+font size / backend health). Dark-first design tokens.
 
 Spec sources: `~/workspace/boom-mods/webui/DESIGN_CONTRACT.md` (design) and
 `~/workspace/boom-mods/webui/API_CONTRACT.md` (backend contract).
 
 ## Run it
 
-Two processes — the Python gateway API and the Vite dev server.
+Two processes — the Python gateway API and the Tauri desktop app.
 
 **1. Backend** — from the repo root:
 
@@ -19,32 +20,36 @@ python -m gateway.api
 ```
 
 No auth in v1 — the server binds to `127.0.0.1` only (localhost).
-CORS allows `http://localhost:5173` (Vite) and `http://localhost:1420` (Tauri).
+CORS allows `http://localhost:1420` (Tauri) and `http://localhost:5173`
+(the Vite dev server that `tauri dev` runs underneath) — never `*`.
 
-**2. Frontend** — from `apps/web`:
+**2. Desktop app** — from `apps/desktop`:
 
 ```bash
 npm install
-npm run dev     # http://localhost:5173
+npm run tauri dev     # Tauri window with hot reload
 ```
 
-The UI talks to the gateway at `VITE_API_BASE` (default
+The app talks to the gateway at `VITE_API_BASE` (default
 `http://localhost:18080`):
 
 ```bash
-VITE_API_BASE=http://127.0.0.1:18080 npm run dev
+VITE_API_BASE=http://127.0.0.1:18080 npm run tauri dev
 ```
 
-Production build:
+Production build (native installers):
 
 ```bash
-npm run build   # tsc && vite build -> dist/
+npm run tauri build   # bundles land in src-tauri/target/release/bundle/
 ```
+
+See `../../docs/DESKTOP_BUILD.md` for system requirements, the Python-backend
+sidecar story, and auto-update.
 
 ## Architecture
 
 ```
-apps/web/
+apps/desktop/
 ├── index.html                  # Google Fonts (Outfit / Work Sans / JetBrains Mono)
 ├── tailwind.config.js          # colors read CSS vars -> theme switch needs no rebuild
 ├── postcss.config.js

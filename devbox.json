@@ -24,7 +24,7 @@
     "init_hook": [
       "echo '🤖 Boom dev environment ready'",
       "echo '  API:     http://127.0.0.1:18080'",
-      "echo '  Web UI:  http://127.0.0.1:5173'",
+      "echo '  Desktop: cd apps/desktop && npm run dev (Tauri dev)'",
       "echo ''",
       "echo 'Run: ./start.sh all'"
     ],
@@ -32,8 +32,8 @@
       "start": "./start.sh all",
       "stop": "./stop.sh",
       "test": "python3 -m pytest evals/ -q 2>/dev/null || ls evals/test_*.py | head -5",
-      "web_build": "cd apps/web && npm run build",
-      "web_install": "cd apps/web && npm install"
+      "desktop_build": "cd apps/desktop && npm run build",
+      "desktop_install": "cd apps/desktop && npm install"
     }
   }
 }

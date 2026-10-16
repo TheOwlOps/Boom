@@ -42,13 +42,13 @@ use serde::{Deserialize, Serialize};
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Per-request timeout for LLM calls. The web UI budgets 120s for chat
-/// (`CHAT_TIMEOUT_MS` in `apps/web/src/lib/api.ts`), so the backend matches.
+/// Per-request timeout for LLM calls. The desktop UI budgets 120s for chat
+/// (`CHAT_TIMEOUT_MS` in `apps/desktop/src/lib/api.ts`), so the backend matches.
 const LLM_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Exact error string returned with HTTP 503 when no provider is configured.
-/// The web UI keys on this value (`PROVIDER_NOT_CONFIGURED_ERROR` in
-/// `apps/web/src/lib/api.ts`) to show its "open Settings" prompt instead of
+/// The desktop UI keys on this value (`PROVIDER_NOT_CONFIGURED_ERROR` in
+/// `apps/desktop/src/lib/api.ts`) to show its "open Settings" prompt instead of
 /// a generic backend-unreachable error.
 const NOT_CONFIGURED_ERROR: &str = "agent brain not configured";
 
@@ -572,8 +572,8 @@ async fn complete(
 // HTTP API
 // ---------------------------------------------------------------------------
 
-/// `POST /api/chat` request body. Matches the web UI's `ChatRequest`
-/// (`apps/web/src/lib/api.ts`): `{"prompt", "bot_id"?, "session_id"?}`.
+/// `POST /api/chat` request body. Matches the desktop UI's `ChatRequest`
+/// (`apps/desktop/src/lib/api.ts`): `{"prompt", "bot_id"?, "session_id"?}`.
 /// `bot_id` / `session_id` are accepted for forward compatibility; routing to
 /// a specific bot is not implemented yet.
 #[derive(Debug, Deserialize)]

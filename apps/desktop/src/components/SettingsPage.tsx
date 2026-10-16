@@ -26,7 +26,7 @@ import type {
 // `ProviderSettings` React component.
 import { ProviderSettings } from "./ProviderSettings";
 import { useManualUpdateCheck } from "./UpdateChecker";
-import { getAppVersion, isTauriEnvironment } from "../lib/appVersion";
+import { getAppVersion } from "../lib/appVersion";
 import { SETUP_COMPLETE_KEY } from "../hooks/useSetupWizard";
 import packageJson from "../../package.json";
 
@@ -605,7 +605,7 @@ export default function SettingsPage() {
           {section === "about" && (
             <SectionCard
               title="About"
-              description="Version and links for this Boom web client."
+              description="Version and links for this Boom desktop app."
             >
               <SettingRow
                 icon={<Info size={16} />}
@@ -617,8 +617,8 @@ export default function SettingsPage() {
                   </span>
                 }
               />
-              {/* Update checks need the Tauri updater plugin — desktop only. */}
-              {isTauriEnvironment() && <UpdateCheckRow />}
+              {/* The frontend always runs inside Tauri; updater is always available. */}
+              <UpdateCheckRow />
               <SettingRow
                 icon={<Plug size={16} />}
                 label="Source code"

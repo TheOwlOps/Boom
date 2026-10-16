@@ -5,7 +5,7 @@
  * that can be bound to channels. Exactly one bot is "active" at a time;
  * the active bot drives replies on its bound channels.
  *
- * Drop-in for `apps/web/src/components/` (same relative imports as
+ * Drop-in for `apps/desktop/src/components/` (same relative imports as
  * ToolManager: `../lib/api` and `../data/toolCatalog`).
  *
  * Endpoints (backed by the gateway bots routes):

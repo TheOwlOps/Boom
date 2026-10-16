@@ -2,10 +2,9 @@
  * Current app version resolution.
  *
  * The Tauri desktop shell is the source of truth: `getVersion()` reads the
- * bundle version from native app metadata. In a plain browser (web dev /
- * preview) there is no native shell, so we fall back to the build-time
- * `VITE_APP_VERSION` env var, then to the npm package version, and finally
- * to a hardcoded fallback. Never throws.
+ * bundle version from native app metadata. Build-time `VITE_APP_VERSION`,
+ * the npm package version, and a hardcoded fallback remain as safety nets.
+ * Never throws.
  */
 
 import packageJson from "../../package.json";
@@ -15,8 +14,7 @@ const FALLBACK_VERSION = "0.1.0";
 
 /**
  * Detects whether the frontend runs inside the Tauri desktop shell.
- * Safe to call anywhere (including plain browsers): it only reads a
- * well-known property off `window`.
+ * Always true in production (web build removed); kept for safety.
  */
 export function isTauriEnvironment(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

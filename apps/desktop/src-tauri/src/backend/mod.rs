@@ -1,7 +1,7 @@
 //! HTTP server for the Boom Rust backend core.
 //!
 //! Serves the same JSON API surface as the legacy Python backend so the
-//! desktop web UI keeps working unchanged. This module is a pure library:
+//! desktop UI keeps working unchanged. This module is a pure library:
 //! the Tauri app (or any binary) starts the server with [`serve`], which
 //! reads the port from the `BOOM_API_PORT` environment variable and falls
 //! back to `18080`.
@@ -34,7 +34,7 @@ use tower_http::cors::CorsLayer;
 use providers::{ConfigError, ConfigResponse, ProviderConfigRequest, ProviderStore, ProvidersResponse};
 
 /// Backend version reported by `/api/health`; kept in sync with the Tauri
-/// package version in `apps/web/src-tauri/Cargo.toml`.
+/// package version in `apps/desktop/src-tauri/Cargo.toml`.
 pub const VERSION: &str = "0.2.4";
 
 /// Port used when `BOOM_API_PORT` is unset or unparsable.

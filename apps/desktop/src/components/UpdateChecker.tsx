@@ -14,7 +14,6 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { isTauriEnvironment } from "../lib/appVersion";
 
 /** Visual phase of the update banner. */
 type BannerPhase = "available" | "downloading" | "installed" | "failed";
@@ -22,9 +21,9 @@ type BannerPhase = "available" | "downloading" | "installed" | "failed";
 /**
  * Runs one manual update check against the configured Tauri updater
  * endpoints. Resolves with the pending `Update` when a newer version is
- * announced, or `null` when the app is up to date, when not running inside
- * Tauri, or when the check itself failed. A failed check is intentionally
- * silent: update infrastructure must never crash the app.
+ * announced, or `null` when the app is up to date or the check itself
+ * failed. A failed check is intentionally silent: update infrastructure
+ * must never crash the app.
  *
  * Ownership note: the returned `Update` holds a resource on the Rust side.
  * Call `update.close()` when you are done with it without installing.
@@ -36,7 +35,6 @@ export function useManualUpdateCheck(): {
   const [checking, setChecking] = useState(false);
 
   const checkNow = useCallback(async (): Promise<Update | null> => {
-    if (!isTauriEnvironment()) return null;
     setChecking(true);
     try {
       // `check()` resolves with `null` when no update is available and
@@ -55,12 +53,12 @@ export function useManualUpdateCheck(): {
 /**
  * Update banner for the Tauri desktop app.
  *
- * Auto-checks once on mount (Tauri only). When an update is announced it
- * shows a fixed top banner: "Update now" downloads + installs with a live
- * progress bar, then the banner flips to "Update installed" with a
- * "Restart now" button that relaunches the app. Renders nothing outside
- * the Tauri shell, and every Tauri call is guarded so a broken updater
- * backend can never crash the app.
+ * Auto-checks once on mount. When an update is announced it shows a fixed
+ * top banner: "Update now" downloads + installs with a live progress bar,
+ * then the banner flips to "Update installed" with a "Restart now" button
+ * that relaunches the app. Renders nothing when no update is pending;
+ * every Tauri call is guarded so a broken updater backend can never crash
+ * the app.
  */
 export default function UpdateChecker() {
   const { checkNow } = useManualUpdateCheck();
@@ -162,8 +160,8 @@ export default function UpdateChecker() {
     }
   }, []);
 
-  // Outside Tauri, or with no pending update, render nothing — never an error.
-  if (!isTauriEnvironment() || dismissed || !update) return null;
+  // With no pending update, render nothing — never an error.
+  if (dismissed || !update) return null;
 
   const versionLabel =
     phase === "available" ? (

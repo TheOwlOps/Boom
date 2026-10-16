@@ -15,8 +15,8 @@ pkgs.mkShell {
     echo ""
     echo "  Lệnh dùng nhanh:"
     echo "    python3 boom.py              # chạy agent CLI"
-    echo "    ./start.sh all               # chạy gateway + API + web UI"
-    echo "    cd apps/web && npm install && npm run build"
+    echo "    ./start.sh all               # chạy gateway + API"
+    echo "    cd apps/desktop && npm install && npm run build"
     echo ""
 
     export PYTHONPATH="$PWD:$PWD/agent/src"

@@ -8,7 +8,7 @@
 //!
 //! The functions intentionally depend only on `std`, `serde` and `serde_json`
 //! (no axum, no new dependencies). An axum router — e.g.
-//! `apps/web/src-tauri/src/backend/mod.rs` — can wrap them directly:
+//! `apps/desktop/src-tauri/src/backend/mod.rs` — can wrap them directly:
 //!
 //! ```ignore
 //! async fn get_tools() -> axum::Json<serde_json::Value> {

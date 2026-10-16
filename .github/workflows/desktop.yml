@@ -32,7 +32,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: apps/web
+        working-directory: apps/desktop
 
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +53,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/web/src-tauri -> target
+          workspaces: apps/desktop/src-tauri -> target
 
       - name: Install frontend deps
         run: npm install --no-audit --no-fund
@@ -66,7 +66,7 @@ jobs:
 
       # Build the Python backend into a standalone sidecar binary that Tauri
       # bundles (expected at gateway/binaries/boom-backend-<target-triple>).
-      # Runs from the repo root (job defaults work in apps/web), with bash on
+      # Runs from the repo root (job defaults work in apps/desktop), with bash on
       # all runners so the build script works on Windows too.
       - name: Build Python backend
         working-directory: ${{ github.workspace }}

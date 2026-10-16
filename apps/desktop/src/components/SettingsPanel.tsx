@@ -259,7 +259,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             {row(
               <Server size={16} />,
               "Backend",
-              "API the web UI is currently talking to.",
+              "API the desktop app is currently talking to.",
             )}
             <code className="settings-base-url">{API_BASE}</code>
             <button

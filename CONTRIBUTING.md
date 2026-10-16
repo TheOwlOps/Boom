@@ -53,7 +53,7 @@ python3 -m pytest evals/ -q   # or: for f in evals/test_*.py; do python3 "$f"; d
 1. **One feature per PR.** Keep diffs focused and reviewable.
 2. **Include tests** for all new behavior.
 3. **Update docs** if you add anything user-facing.
-4. **CI must pass:** Python tests, web build, and nix check.
+4. **CI must pass:** Python tests, the desktop (Tauri) build, and nix check.
 
 ### Before you open a PR
 

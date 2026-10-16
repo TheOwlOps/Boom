@@ -1,5 +1,5 @@
-// MessageParts.tsx — chat message rendering primitives for Boom web UI.
-// Staged: message-parts/components/MessageParts.tsx  |  Mirrors: apps/web/src/components/MessageParts.tsx
+// MessageParts.tsx — chat message rendering primitives for Boom desktop UI.
+// Staged: message-parts/components/MessageParts.tsx  |  Mirrors: apps/desktop/src/components/MessageParts.tsx
 // Integration: pnpm add react-markdown remark-gfm
 // Animation classes (keyframes live in shared animations.css, NOT defined here):
 //   msg-appear (message mount), toolcall-pulse (tool running state)

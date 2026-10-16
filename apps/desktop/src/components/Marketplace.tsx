@@ -10,7 +10,7 @@
  *   - cards: emoji icon, bold name, 2-line description, Add/Added button
  *   - Bots tab: same layout, "Use" buttons instead of Add
  *
- * Drop-in for `apps/web/src/components/`. Fully controlled: the parent owns
+ * Drop-in for `apps/desktop/src/components/`. Fully controlled: the parent owns
  * `open`, `items`, `categories`, `bots` and `installedIds`; this component
  * only manages transient UI state (tab, search, active chip).
  *

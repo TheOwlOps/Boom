@@ -1,7 +1,7 @@
 {
-  "name": "@theowlops/boom-web",
+  "name": "@theowlops/boom-desktop",
   "version": "0.2.4",
-  "description": "Web dashboard for Boom — autonomous multi-channel AI agent",
+  "description": "Boom desktop app — Tauri + React",
   "type": "module",
   "license": "MIT",
   "author": "TheOwlOps",
@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/TheOwlOps/Boom.git",
-    "directory": "apps/web"
+    "directory": "apps/desktop"
   },
   "keywords": [
     "ai-agent",
@@ -21,7 +21,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },

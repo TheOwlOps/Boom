@@ -17,7 +17,7 @@
   <img src="docs/boom_harness.gif" width="100%" alt="Boom harness orchestrating Muse agent loops"/>
 </p>
 
-**Boom** is an autonomous, multi-channel AI agent harness. Chat with it through Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the web dashboard. It plans, codes, researches, and runs your business operations on its own, with a human in the approval loop for anything risky.
+**Boom** is an autonomous, multi-channel AI agent harness. Chat with it through Telegram, Discord, Slack, Zalo, LINE, WhatsApp, Feishu, or Messenger — or use the desktop or mobile app. It plans, codes, researches, and runs your business operations on its own, with a human in the approval loop for anything risky.
 
 > **Harness, not a model.** Boom orchestrates frontier LLMs (OpenAI, Anthropic, and others) — think OpenClaw, rebuilt for multi-channel business operations.
 
@@ -37,57 +37,73 @@
 | 📊 **Documents** | Native XLSX (formulas/charts), PPTX, PDF generation |
 | 🔌 **Plugins** | Manifest-based, with lifecycle, sandboxing, and dependency resolution |
 | 🛡️ **Production** | Circuit breakers, rate limiting, structured logging, graceful shutdown |
+| 🖥️ **Clients** | Desktop (Tauri + React) · Mobile (Android PWA) |
 
 ## 🚀 Quick Start
 
-Prerequisites: **Python >= 3.11** and (for the web UI) **Node.js >= 20 + npm**.
+Prerequisites: **Python >= 3.11**, plus **Node.js >= 20 + npm** for the desktop app.
 The easiest path is Devbox, which provides both reproducibly.
 
-### Devbox (recommended)
+### Setup (all clients)
 
 ```bash
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
 devbox shell    # reproducible environment (Nix-powered): Python 3.12, Node 22
-./start.sh all
-```
-
-### Manual
-
-```bash
-git clone https://github.com/TheOwlOps/Boom.git
-cd Boom
-pip install httpx "pydantic>=2" pyyaml   # must match pyproject.toml dependencies
-./start.sh all
-```
-
-`start.sh` checks for Python/Node and installs missing Python packages
-automatically. To talk to a real LLM and enable channels, run the setup
-wizard once — it stores config in `~/.boom/` (override with `BOOM_HOME`):
-
-```bash
 python3 boom.py setup
 ```
 
-### Docker
+Without Devbox:
 
 ```bash
-docker compose up --build
+pip install httpx "pydantic>=2" pyyaml   # must match pyproject.toml dependencies
+python3 boom.py setup
 ```
 
-Open **http://127.0.0.1:5173** for the web dashboard.
+The setup wizard stores config in `~/.boom/` (override with `BOOM_HOME`) — to
+talk to a real LLM and enable channels.
+
+### Desktop (Tauri + React)
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri dev     # Tauri window with hot reload
+```
+
+Production installers:
+
+```bash
+cd apps/desktop
+npm run tauri build   # bundles land in src-tauri/target/release/bundle/
+```
+
+The desktop app talks to the Python gateway API (`gateway/api.py`, default
+`:18080`), which it spawns automatically on launch. See
+[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) for system requirements, the
+Python-backend sidecar story, and auto-update.
+
+### Mobile (Android PWA)
+
+```bash
+cd apps/mobile
+python3 -m http.server 8080
+```
+
+Open `http://<your-machine-IP>:8080` on the phone (same Wi-Fi as the machine),
+then *Add to Home Screen*. Point the app at the gateway by setting `API_BASE`
+in `index.html` — full instructions in
+[apps/mobile/README.md](apps/mobile/README.md).
 
 ### Services
 
-`./start.sh [api|web|gateway|all|status]` — `all` (the default) starts
+`./start.sh [api|gateway|all|status]` — `all` (the default) starts
 everything; `./stop.sh` stops it. Ports can be overridden with
-`BOOM_API_PORT` (default 18080), `BOOM_WEB_PORT` (default 5173) and
-`BOOM_INGRESS_PORT` (default 8788):
+`BOOM_API_PORT` (default 18080) and `BOOM_INGRESS_PORT` (default 8788):
 
 | Service | What | Default port |
 |---------|------|--------------|
-| API | Python HTTP API for the web UI | 18080 |
-| Web UI | Dashboard, served by `vite preview` | 5173 |
+| API | Python HTTP API (desktop + mobile clients) | 18080 |
 | Gateway | Multi-channel daemon (Telegram, Discord, …) | 8788 (ingress) |
 
 ## 🛡️ Windows SmartScreen
@@ -133,7 +149,8 @@ verify your download with SHA256 checksums, and the roadmap to signed installers
 ```
 
 - **Python** (`agent/`): brain, tools, orchestration, business logic
-- **TypeScript** (`apps/web/`): React dashboard
+- **TypeScript** (`apps/desktop/`): React desktop app (Tauri)
+- **HTML/JS** (`apps/mobile/`): Android PWA client
 - **Rust** (`crates/`): sandbox host
 
 ## 🧪 Testing

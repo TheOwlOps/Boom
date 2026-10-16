@@ -2,7 +2,7 @@
 #
 # Provides a reproducible dev shell (Python 3.12, Node 22, tesseract) and
 # two packages: the Python agent API (`packages.default`) and the React
-# web UI (`packages.web`). Per-package module definitions live in nix/.
+# desktop UI (`packages.desktop`). Per-package module definitions live in nix/.
 {
   description = "Boom - reproducible dev environment and packages";
 
@@ -20,6 +20,6 @@
         devShells.default = pkgs.callPackage ./nix/shell.nix { inherit pkgs; };
 
         packages.default = pkgs.callPackage ./nix/pkg-api.nix { inherit pkgs; };
-        packages.web = pkgs.callPackage ./nix/pkg-web.nix { inherit pkgs; };
+        packages.desktop = pkgs.callPackage ./nix/pkg-desktop.nix { inherit pkgs; };
       });
 }

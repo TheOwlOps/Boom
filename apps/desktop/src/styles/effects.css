@@ -450,7 +450,7 @@
 /* ===== Chat-specific classes (from chat-polish) ===== */
 /* effects.css — chat polish visual effects for ChatView.
  *
- * Imported by apps/web/src/components/ChatView.tsx:
+ * Imported by apps/desktop/src/components/ChatView.tsx:
  *     import "../styles/effects.css";
  *
  * Theme tokens come from ../tokens/theme.css (var(--bg), --surface-2, --border,

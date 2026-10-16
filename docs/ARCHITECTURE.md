@@ -77,7 +77,7 @@ Beyond the 5 main layers:
 - **Skills**: `skills/` (80 skills) + `extensibility/skill_loader.py` (cache, search-ranking, versioning) — see SKILLS.md.
 - **Plugins**: `plugins/` (manifest/lifecycle/sandbox v2) + `install_skill`/`list_skills`/`view_skill` tools.
 - **Extended channels**: `gateway/channels/` for 8 channels; broadcast sends bulk messages with delay + dry_run.
-- **Entry points**: `boom.py` → `agent/src/cli.py` (CLI + `boom setup` wizard), `gateway/api.py` (REST :18080), web UI (`apps/`).
+- **Entry points**: `boom.py` → `agent/src/cli.py` (CLI + `boom setup` wizard), `gateway/api.py` (REST :18080), desktop app (`apps/desktop/`).
 - **Reproducible env**: `devbox.json` (Python 3.12, Node 22, tesseract) is the recommended way to run; `Dockerfile` + `docker-compose.yml` for deploy; `flake.nix` + `nix/` for Nix.
 - **DeepSearch/DeepThink**: `agent/src/research/deepsearch.py` (search→fetch→entities→new-query loop, ≤5 hops), `crossref.py` (claim cross-checking), `deepthink.py` (multi-perspective analysis, source reliability) — used via the `research/*` skills and the `research_brief` tool.
 - **Heavy orchestration**: `orchestration/dynamic.py` — spawn/retire agents by context (Coder, Data Scientist, Researcher, Visual Analyst, Financial Modeler, Validator).

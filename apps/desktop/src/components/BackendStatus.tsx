@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Play, RotateCw } from "lucide-react";
 import { API_BASE, getBackendHelpText } from "../lib/api";
-import { isTauriEnvironment } from "../lib/appVersion";
 
 /** Poll the Python backend health endpoint every 5 seconds. */
 const POLL_MS = 5_000;
@@ -34,15 +33,10 @@ async function probeHealth(): Promise<boolean> {
 
 /**
  * Asks the Tauri shell to start the bundled Python backend.
- * No-op (with a console warning) outside the desktop shell.
+ * The frontend always runs inside Tauri, so no environment guard needed.
  */
 async function startBackendNative(): Promise<void> {
-  if (!isTauriEnvironment()) {
-    console.warn("[BackendStatus] start_backend requires the Tauri desktop shell.");
-    return;
-  }
   try {
-    // Dynamic import keeps the web (non-Tauri) bundle clean.
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("start_backend");
   } catch (err) {

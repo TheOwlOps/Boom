@@ -16,7 +16,7 @@ belongs_to_repo() { # belongs_to_repo <pid> -> 0 if the process runs from $ROOT
     [ -n "$pid" ] || return 1
     [ -d "/proc/$pid" ] || return 1
     cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)" || return 1
-    [ "$cwd" = "$ROOT" ] || [ "$cwd" = "$ROOT/apps/web" ]
+    [ "$cwd" = "$ROOT" ]
 }
 
 stop_pidfile() { # stop_pidfile <pidfile> <label>
@@ -64,13 +64,9 @@ pkill_in_repo() { # pkill_in_repo <label> <pgrep-pattern>
 }
 
 stop_pidfile "$RUNDIR/api.pid"     "API"
-stop_pidfile "$RUNDIR/web.pid"     "Web UI"
 stop_pidfile "$RUNDIR/gateway.pid" "Gateway"
 
-# NOTE: start.sh launches vite directly (./node_modules/.bin/vite preview), so
-# the server's cmdline looks like ".../vite/bin/vite.js preview ...".
 pkill_in_repo "API"     "gateway\.api"
-pkill_in_repo "Web UI"  "vite.*preview"
 pkill_in_repo "Gateway" "boom\.py --gateway"
 
 echo "[boom] All services stopped."

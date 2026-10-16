@@ -1,8 +1,8 @@
 # nix/node.nix — Node.js environment for TheOwlOps/Boom.
 #
 # PURPOSE
-#   Provides the Node.js runtime used to build the Boom web UI
-#   (apps/web — React 18 + Vite 5 + TypeScript) via:
+#   Provides the Node.js runtime used to build the Boom desktop UI
+#   (apps/desktop — React 18 + Vite 5 + TypeScript) via:
 #       npm install && npm run build
 #
 # NIXPKGS
@@ -27,6 +27,6 @@
 { pkgs }:
 
 {
-  # The Node.js runtime for the web UI build.
+  # The Node.js runtime for the desktop UI build.
   nodejs = pkgs.nodejs_22;
 }

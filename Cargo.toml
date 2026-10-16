@@ -7,6 +7,6 @@ members = [
     "crates/perf/chunker",
     "crates/perf/hasher",
     "crates/perf/textutil",
-    "apps/web/src-tauri"
+    "apps/desktop/src-tauri"
 ]
 resolver = "2"

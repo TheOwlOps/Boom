@@ -209,7 +209,7 @@ fn resolve_python_binary() -> Option<String> {
 /// 1. Bundled layout: walk up from the running executable looking for
 ///    `<dir>/gateway/api.py` (covers packaged app bundles).
 /// 2. Dev layout: probe the current directory and a few levels up, so running
-///    from `apps/web` (i.e. `apps/web/../..` == repo root) also resolves.
+///    from `apps/desktop` (i.e. `apps/desktop/../..` == repo root) also resolves.
 fn resolve_gateway_script() -> Option<PathBuf> {
     if let Ok(exe) = env::current_exe() {
         let mut dir = exe.parent().map(Path::to_path_buf);

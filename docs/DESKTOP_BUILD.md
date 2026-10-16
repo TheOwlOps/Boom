@@ -1,6 +1,6 @@
 # Boom Desktop — Tauri Build Guide
 
-Tauri 2 wrapper for the Boom web dashboard (`apps/web`). This doc covers system
+Tauri 2 wrapper for the Boom desktop app (`apps/desktop`). This doc covers system
 requirements, build steps, output locations, and the Python backend story.
 
 ## 1. System requirements
@@ -44,7 +44,7 @@ rustup default stable
 ## 2. Build steps
 
 ```bash
-cd apps/web
+cd apps/desktop
 npm install
 npx tauri build
 ```
@@ -52,7 +52,7 @@ npx tauri build
 For development (hot reload):
 
 ```bash
-cd apps/web
+cd apps/desktop
 npm install
 npx tauri dev
 ```
@@ -63,7 +63,7 @@ The Tauri config (`src-tauri/tauri.conf.json`) uses `npm run dev` /
 
 ## 3. Build outputs
 
-Bundles land under `apps/web/src-tauri/target/release/bundle/`:
+Bundles land under `apps/desktop/src-tauri/target/release/bundle/`:
 
 | OS      | Artifact                                   |
 |---------|--------------------------------------------|
@@ -87,7 +87,7 @@ Two options:
   # terminal 1
   cd gateway && python3 api.py
   # terminal 2
-  cd apps/web && npx tauri dev
+  cd apps/desktop && npx tauri dev
   ```
 
 - **Production bundle** — bundle the Python backend as a sidecar binary.
@@ -105,7 +105,7 @@ Two options:
 - Icons: all required formats present in `src-tauri/icons/`
   (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.icns`, `icon.ico`).
 - Version is pinned to `0.1.0` in both `tauri.conf.json` and `Cargo.toml`
-  (matches `apps/web/package.json`).
+  (matches `apps/desktop/package.json`).
 ## 6. Release builds & auto-update (`latest.json`)
 
 ### Triggering a release build
@@ -115,8 +115,8 @@ The `desktop.yml` workflow builds installers for all 4 targets on:
 1. **Tag push** — push a tag named `desktop-v*`:
    ```bash
    # IMPORTANT: bump the app version first so installer filenames match the tag.
-   # Update the version in apps/web/src-tauri/tauri.conf.json,
-   # apps/web/src-tauri/Cargo.toml and apps/web/package.json, commit, then:
+   # Update the version in apps/desktop/src-tauri/tauri.conf.json,
+   # apps/desktop/src-tauri/Cargo.toml and apps/desktop/package.json, commit, then:
    git tag desktop-v0.2.0
    git push origin desktop-v0.2.0
    ```
@@ -141,7 +141,7 @@ After all 4 build jobs succeed, the `release` job (in the same workflow) runs:
 
 The desktop app polls the updater endpoint
 `https://github.com/TheOwlOps/Boom/releases/latest/download/latest.json`
-(configured in `apps/web/src-tauri/tauri.conf.json` under `plugins.updater.endpoints`),
+(configured in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.endpoints`),
 which always serves the `latest.json` of the newest release.
 
 ### Generating `latest.json` by hand

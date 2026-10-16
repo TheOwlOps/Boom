@@ -34,7 +34,7 @@ EXPECTED_CHECK_NAMES = {
     "config_file",
     "env_file",
     "rust_binaries",
-    "web_node_modules",
+    "desktop_node_modules",
 }
 
 

@@ -29,9 +29,10 @@ WARN = "WARN"
 FAIL = "FAIL"
 STATUSES = (OK, WARN, FAIL)
 
-# Ports used by Boom services: web UI preview, Python API server, TS gateway.
+# Ports used by Boom services: Tauri dev server (vite, under `tauri dev`),
+# Python API server, TS gateway.
 PORTS = {
-    5173: "web UI (vite preview)",
+    5173: "desktop dev server (vite, under tauri dev)",
     18080: "Python API server",
     8788: "TS gateway",
 }
@@ -52,11 +53,11 @@ class Check:
 
 
 def find_repo_root() -> Optional[Path]:
-    """Locate the Boom repo root: dir containing agent/src, gateway and apps/web.
+    """Locate the Boom repo root: dir containing agent/src, gateway and apps/desktop.
 
     Searches upward from this file's location first, then from the cwd.
     """
-    markers = (Path("agent") / "src", Path("gateway"), Path("apps") / "web")
+    markers = (Path("agent") / "src", Path("gateway"), Path("apps") / "desktop")
 
     def probe(start: Path) -> Optional[Path]:
         cur = start.resolve()
@@ -149,7 +150,7 @@ def check_node() -> Check:
     if node is None:
         return Check(
             "node", WARN,
-            "node not found on PATH (needed to build/run the web UI)",
+            "node not found on PATH (needed to build/run the desktop UI)",
             fix="Install Node.js 20+, e.g.: nvm install 22 && nvm use 22  (https://nodejs.org)",
         )
     node_v = _run_version([node, "--version"]) or "version unknown"
@@ -224,7 +225,7 @@ def check_repo_root() -> Check:
     if root is None:
         return Check(
             "repo_root", FAIL,
-            "Could not detect the Boom repo root (expected dirs: agent/src, gateway, apps/web)",
+            "Could not detect the Boom repo root (expected dirs: agent/src, gateway, apps/desktop)",
             fix="cd into your Boom checkout, then re-run: python3 -m agent.src.doctor",
         )
     return Check("repo_root", OK, f"Repo root detected: {root}")
@@ -250,20 +251,20 @@ def check_rust_binaries(repo_root: Optional[Path]) -> Check:
     )
 
 
-def check_web_node_modules(repo_root: Optional[Path]) -> Check:
+def check_desktop_node_modules(repo_root: Optional[Path]) -> Check:
     if repo_root is None:
         return Check(
-            "web_node_modules", WARN,
-            "Repo root unknown, cannot locate apps/web/node_modules/",
+            "desktop_node_modules", WARN,
+            "Repo root unknown, cannot locate apps/desktop/node_modules/",
             fix="cd into your Boom checkout, then re-run: python3 -m agent.src.doctor",
         )
-    nm = repo_root / "apps" / "web" / "node_modules"
+    nm = repo_root / "apps" / "desktop" / "node_modules"
     if nm.is_dir() and any(nm.iterdir()):
-        return Check("web_node_modules", OK, f"Web dependencies installed: {nm}")
+        return Check("desktop_node_modules", OK, f"Desktop UI dependencies installed: {nm}")
     return Check(
-        "web_node_modules", WARN,
-        f"Web dependencies missing: {nm} not found or empty",
-        fix="From the repo root: cd apps/web && npm install   # (repo also ships pnpm-lock.yaml: pnpm install works too)",
+        "desktop_node_modules", WARN,
+        f"Desktop UI dependencies missing: {nm} not found or empty",
+        fix="From the repo root: cd apps/desktop && npm install   # (repo also ships pnpm-lock.yaml: pnpm install works too)",
     )
 
 
@@ -296,7 +297,7 @@ def run_checks() -> List[Check]:
         _safe(check_config_file),
         _safe(lambda: check_env_file(repo_root)),
         _safe(lambda: check_rust_binaries(repo_root)),
-        _safe(lambda: check_web_node_modules(repo_root)),
+        _safe(lambda: check_desktop_node_modules(repo_root)),
     ]
     return checks
 

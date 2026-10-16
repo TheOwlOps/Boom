@@ -75,7 +75,7 @@ py -3 evals/test_state_and_prompt.py
 py -3 evals/test_parity_deep.py
 py -3 evals/test_parity_tools_and_owner_guard.py
 py -3 evals/test_production_operations.py
-(cd apps/web && pnpm build)
+(cd apps/desktop && pnpm build)
 ```
 `evals/test_live_loop.py` needs a live provider and is not part of the offline suite.
 Result: **100% PASS across Rust, Python, and TypeScript**.
