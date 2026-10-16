@@ -3,6 +3,7 @@ import { MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings } 
 import { listSessions } from "../lib/api";
 import type { Session } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
+import { BoomiAvatar } from "./BoomiAvatar";
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -35,7 +36,8 @@ function timeAgo(iso: string | null): string {
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="sidebar-logo" title="Boom">
-      <span className="logo-dot" aria-hidden="true" />
+      {/* Boomi mascot as the app icon; replaces the plain logo dot. */}
+      <BoomiAvatar size={28} alt="Boomi" />
       {!collapsed && <span className="font-display logo-word">Boom</span>}
     </div>
   );

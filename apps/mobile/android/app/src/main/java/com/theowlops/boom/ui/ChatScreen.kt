@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -57,6 +58,8 @@ data class ChatMessage(
     val text: String,
     val isUser: Boolean,
     val timestamp: Long,
+    /** Reflects in the bot avatar; user messages ignore it. Defaults to [BoomiStatus.IDLE]. */
+    val status: BoomiStatus = BoomiStatus.IDLE,
 )
 
 /**
@@ -98,6 +101,7 @@ fun ChatScreen(api: BoomApiService, serverUrl: String) {
                             text = "Error: ${result.message}",
                             isUser = false,
                             timestamp = System.currentTimeMillis(),
+                            status = BoomiStatus.ERROR,
                         )
                     )
                 }
@@ -112,18 +116,24 @@ fun ChatScreen(api: BoomApiService, serverUrl: String) {
             .padding(horizontal = 12.dp),
     ) {
         if (messages.isEmpty() && !isLoading) {
-            // Empty state: brief hint instead of a blank screen.
+            // Empty state: Boomi greets the user instead of a blank screen.
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "Ask Boom anything.\nConnected to $serverUrl",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    BoomiAvatar(size = 72.dp)
+                    Spacer(Modifier.size(16.dp))
+                    Text(
+                        text = "Ask Boom anything.\nConnected to $serverUrl",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         } else {
             LazyColumn(
@@ -180,6 +190,11 @@ private fun MessageBubble(message: ChatMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start,
     ) {
+        // Boomi's avatar leads every bot message.
+        if (!message.isUser) {
+            BoomiAvatar(size = 36.dp, status = message.status)
+            Spacer(Modifier.width(8.dp))
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = 300.dp)
@@ -229,7 +244,11 @@ private fun TypingIndicatorBubble() {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Boomi pulses while thinking.
+        BoomiAvatar(size = 36.dp, status = BoomiStatus.THINKING)
+        Spacer(Modifier.width(8.dp))
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(16.dp))

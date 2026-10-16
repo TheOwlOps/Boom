@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { PanelRight, SendHorizonal, RotateCcw, MessageCircle, Copy, Check, Bot, KeyRound, X } from "lucide-react";
+import { PanelRight, SendHorizonal, RotateCcw, Copy, Check, KeyRound, X } from "lucide-react";
 import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "../lib/api";
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
+import { BoomiAvatar } from "./BoomiAvatar";
 import { ThinkingDots } from "./ThinkingDots";
 import "../styles/effects.css";
 
@@ -73,18 +74,8 @@ const typingRowStyle: CSSProperties = {
   justifyContent: "flex-start",
   padding: "6px 0",
 };
-const typingAvatarStyle: CSSProperties = {
-  width: 28,
-  height: 28,
-  borderRadius: 999,
-  background: "var(--accent)",
-  flexShrink: 0,
-  marginTop: 2,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
 const typingBodyStyle: CSSProperties = { maxWidth: "85%", padding: "10px 4px" };
+// (BoomiAvatar replaces the old typing-avatar placeholder div.)
 
 export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -436,7 +427,9 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
       <div className="chat-messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite">
         {messages.length === 0 && !sending && (
           <div className="empty-state">
-            <MessageCircle size={28} className="empty-icon" />
+            {/* Boomi mascot as the big illustration for a fresh conversation. */}
+            <BoomiAvatar size={112} alt="Boomi mascot" />
+            <p className="boomi-greeting">Hi, I'm Boomi 🦉</p>
             <p>No messages yet — say hello</p>
           </div>
         )}
@@ -476,8 +469,9 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings }: Props) {
                 // Typing placeholder: plain text word reveal; full markdown
                 // renders via MessageBubble once the reveal finishes.
                 <div className="msg-appear" style={typingRowStyle}>
-                  <div aria-hidden="true" style={typingAvatarStyle}>
-                    <Bot size={16} color="#fff" />
+                  {/* Boomi mascot pulses while the reply is being revealed. */}
+                  <div style={{ flexShrink: 0, marginTop: 2 }}>
+                    <BoomiAvatar size={28} status="thinking" alt="Boomi is typing" />
                   </div>
                   <div style={typingBodyStyle}>
                     <TypingText text={msg.text} wordsShown={revealedWords} />

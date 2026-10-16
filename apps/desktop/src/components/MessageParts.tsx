@@ -9,8 +9,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, Check, CheckCircle2, Copy, Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import type { ChatMessage } from '../lib/types';
+import { BoomiAvatar } from './BoomiAvatar';
 
 const MONO = "'JetBrains Mono', monospace";
 const BODY = "'Work Sans', sans-serif";
@@ -87,8 +88,8 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="msg-appear" style={{ display: 'flex', gap: 10, justifyContent: isUser ? 'flex-end' : 'flex-start', padding: '6px 0' }}>
       {!isUser && (
-        <div aria-hidden style={{ width: 28, height: 28, borderRadius: 999, background: 'var(--accent)', flexShrink: 0, marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Bot size={16} color="#fff" />
+        <div aria-hidden style={{ flexShrink: 0, marginTop: 2 }}>
+          <BoomiAvatar size={28} alt="Boomi" />
         </div>
       )}
       <div style={{

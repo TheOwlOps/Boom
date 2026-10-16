@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -130,7 +131,7 @@ fun SetupWizard(
     }
 }
 
-/** Step 0: title, short description, single CTA. */
+/** Step 0: Boomi illustration, title, short description, single CTA. */
 @Composable
 private fun WelcomeStep(onNext: () -> Unit) {
     Column(
@@ -138,7 +139,16 @@ private fun WelcomeStep(onNext: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // Boomi, the Boom mascot, introduces the wizard.
+        BoomiAvatar(size = 96.dp)
+        Spacer(Modifier.height(16.dp))
         Text("Boom", style = MaterialTheme.typography.displayMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Meet Boomi",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(12.dp))
         Text(
             "Your AI agent harness — chat, tools, memory and automations, " +
