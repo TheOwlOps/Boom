@@ -1,6 +1,7 @@
 // BoomiAvatar.tsx — the Boomi owl mascot as a reusable avatar.
 // Static webp + animated mp4s live in `apps/desktop/public/`; Tauri/Vite
 // serves `public/` at the root, hence the absolute srcs.
+import { useState } from "react";
 import "./BoomiAvatar.css";
 
 export type BoomiStatus = "idle" | "thinking" | "error" | "success" | "happy" | "talking" | "waving" | "sleeping";
@@ -46,6 +47,23 @@ export function BoomiAvatar({
   const cls = `boomi-avatar boomi-status-${status}${className ? ` ${className}` : ""}`;
   const style = { width: size, height: size };
 
+  // Monogram fallback when the asset (video or image) fails to load —
+  // renders a monochrome disc with the first initial instead of a broken icon.
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    const initial = (alt.trim().charAt(0) || "B").toUpperCase();
+    return (
+      <div
+        className={`avatar-fallback${className ? ` ${className}` : ""}`}
+        style={{ ...style, fontSize: Math.max(12, Math.round(size * 0.45)) }}
+        aria-label={alt}
+        role="img"
+      >
+        {initial}
+      </div>
+    );
+  }
+
   // Animated video for lively states (like Muse's live avatar).
   // Thinking cycles randomly through 5 variants for variety.
   // Falls back to static image for error or when animated=false.
@@ -72,6 +90,7 @@ export function BoomiAvatar({
         className={cls}
         style={{ ...style, objectFit: "cover", borderRadius: "50%" }}
         aria-label={alt}
+        onError={() => setFailed(true)}
       />
     );
   }
@@ -85,6 +104,7 @@ export function BoomiAvatar({
       draggable={false}
       className={cls}
       style={style}
+      onError={() => setFailed(true)}
     />
   );
 }

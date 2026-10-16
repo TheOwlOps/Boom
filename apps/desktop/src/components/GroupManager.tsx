@@ -307,7 +307,7 @@ function PolicyModal({ group, onClose, onSaved }: {
     accent: string,
   ) => (
     <div>
-      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-neutral-500">
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
         {label}
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -365,7 +365,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             <h3 className="text-sm font-semibold text-neutral-100">
               {channelEmoji(group.channel)} {group.name}
             </h3>
-            <p className="mt-0.5 font-mono text-xs text-neutral-500">
+            <p className="mt-0.5 font-mono text-xs text-neutral-400">
               {group.channel} · {group.group_id}
             </p>
           </div>
@@ -396,7 +396,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             setNewDenied,
             "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
           )}
-          <p className="text-xs leading-relaxed text-neutral-500">
+          <p className="text-xs leading-relaxed text-neutral-400">
             Denied commands always win. When an allow-list is non-empty, only
             listed commands are permitted. require_approval is left unchanged.
           </p>
@@ -545,6 +545,7 @@ export default function GroupManager() {
           type="button"
           onClick={load}
           title="Refresh"
+          aria-label="Refresh groups"
           className="cursor-pointer rounded-md border border-neutral-700 bg-neutral-900 p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
         >
           <RefreshCw size={14} />
@@ -561,7 +562,7 @@ export default function GroupManager() {
       )}
 
       {loadError && groups.length > 0 && (
-        <div className="rounded-md border border-neutral-800 px-3 py-2 text-xs text-neutral-500">
+        <div className="rounded-md border border-neutral-800 px-3 py-2 text-xs text-neutral-400">
           Showing cached data — refresh failed: {loadError}
         </div>
       )}
@@ -600,10 +601,10 @@ export default function GroupManager() {
                     </span>
                     <StatusBadge muted={g.muted} />
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-xs text-neutral-500">
+                  <div className="mt-0.5 truncate font-mono text-xs text-neutral-400">
                     {g.channel} · {g.group_id}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-500">
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-400">
                     <span title="Members">{formatCount(g.member_count)} members</span>
                     <span title="Messages">{formatCount(g.message_count)} messages</span>
                     {g.policy.denied_commands.length > 0 && (

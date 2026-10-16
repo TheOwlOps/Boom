@@ -1,0 +1,182 @@
+/* ============================================================
+ * Boom Desktop — micro-interactions
+ *
+ * Small, additive interaction polish for the iMessage-style UI:
+ * press feedback, hover transitions, message send entrance,
+ * smooth list scrolling.
+ *
+ * Monochrome only: neutral design tokens (--surface, --surface-2,
+ * --border, --text, --muted) plus black/white. No colors.
+ * Boomi mascot animations are untouched.
+ *
+ * Import LAST in main.tsx so these additive overrides win over
+ * the base component styles. Where cascade order cannot be
+ * guaranteed (component-level stylesheets), selectors are
+ * written with slightly higher specificity instead of relying
+ * on source order.
+ * ============================================================ */
+
+/* ---------- 1. Message send animation ---------- */
+
+@keyframes im-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* New user bubble: 200ms slide+fade on mount. Runs layered under
+   the row-level .msg-appear entrance for a soft iMessage pop. */
+.im-bubble-user {
+  animation: im-msg-in 200ms ease-out both;
+}
+
+/* ---------- 2. Button press feedback ---------- */
+
+/* Generic pressable utility: 120ms ease-out, scale(0.97) on :active. */
+.mi-press {
+  transition: transform 120ms ease-out;
+}
+
+.mi-press:active {
+  transform: scale(0.97);
+}
+
+/* Press feedback for Tailwind-styled buttons (e.g. marketplace
+   actions): keeps the color transitions smooth while adding the
+   120ms press scale. Unlayered so it wins over Tailwind v3's
+   layered `transition-colors` utility without removing it. */
+.mi-press-btn {
+  transition:
+    transform 120ms ease-out,
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.mi-press-btn:active {
+  transform: scale(0.97);
+}
+
+/* ---------- 3. Icon buttons: hover + press ---------- */
+
+.icon-btn {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 120ms ease-out;
+}
+
+.icon-btn:active {
+  transform: scale(0.97);
+}
+
+/* ---------- 4. Sidebar teammate rows ---------- */
+
+/* NOTE: .teammate-item also carries .stagger-item, whose
+   fill-forwards entrance animation pins `transform`, so a hover
+   translate here would be dead code — background fade only. */
+button.teammate-item {
+  transition: background-color 160ms ease;
+}
+
+/* Collapsed rail items have no entrance animation; press scale
+   is safe here. */
+button.teammate-rail-item {
+  transition:
+    background-color 150ms ease,
+    transform 120ms ease-out;
+}
+
+button.teammate-rail-item:active {
+  transform: scale(0.94);
+}
+
+/* ---------- 5. Message hover action buttons ---------- */
+
+.msg-action-btn {
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms ease-out;
+}
+
+.msg-action-btn:active {
+  transform: scale(0.97);
+}
+
+/* ---------- 6. iMessage send button ---------- */
+
+/* Standardize on the 120ms ease-out / scale(0.97) press spec.
+   Higher specificity than imessage.css so this holds regardless
+   of stylesheet order. */
+.im-composer .im-send {
+  transition:
+    opacity 150ms ease,
+    transform 120ms ease-out;
+}
+
+.im-composer .im-send:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ---------- 7. Marketplace cards ---------- */
+
+.mi-market-card {
+  transition:
+    transform 180ms ease-out,
+    border-color 180ms ease,
+    box-shadow 180ms ease-out;
+}
+
+.mi-market-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- 8. Smooth scrolling: chat message list ---------- */
+
+.chat-messages {
+  scroll-behavior: smooth;
+}
+
+/* ---------- 9. Typing dots ---------- */
+
+/* Existing `typing-dot-bounce` (styles/effects.css) is already
+   smooth: 1.2s ease-in-out loop, staggered 0.15s per dot.
+   No refinement needed — left untouched. */
+
+/* ---------- 10. Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .im-bubble-user,
+  .mi-press,
+  .mi-press-btn,
+  .mi-market-card,
+  .icon-btn,
+  button.teammate-item,
+  button.teammate-rail-item,
+  .msg-action-btn,
+  .im-composer .im-send {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .mi-market-card:hover,
+  .icon-btn:active,
+  .mi-press:active,
+  .mi-press-btn:active,
+  button.teammate-rail-item:active,
+  .msg-action-btn:active,
+  .im-composer .im-send:active:not(:disabled) {
+    transform: none;
+  }
+
+  .chat-messages {
+    scroll-behavior: auto;
+  }
+}

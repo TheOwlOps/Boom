@@ -83,7 +83,7 @@ export default function StatusBar() {
       <span>Uptime: <strong className="text-neutral-100">{uptime}</strong></span>
       {health && (
         <>
-          <span className="ml-auto truncate text-xs text-neutral-500">
+          <span className="ml-auto truncate text-xs text-neutral-400">
             v{health.version} · {health.model}
           </span>
         </>

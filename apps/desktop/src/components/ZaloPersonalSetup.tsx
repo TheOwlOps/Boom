@@ -254,7 +254,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
                   )}
                 </button>
               </div>
-              <p className="mt-1.5 text-xs text-neutral-500">
+              <p className="mt-1.5 text-xs text-neutral-400">
                 Credentials are sent only to the local backend and are never
                 stored by this app.
               </p>

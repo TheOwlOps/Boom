@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Unplug } from "lucide-react";
+
 import { API_BASE } from "../lib/api";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { EmptyState } from "./EmptyState";
-import { Skeleton } from "./Skeleton";
+import { SkeletonText } from "./Skeleton";
+import { BoomiEmptyState } from "./BoomiEmptyState";
 
 /** One tool as returned by GET /api/tools. */
 interface ToolDef {
@@ -150,7 +151,7 @@ export default function ToolManager() {
       />
       {showChannels && (
         <section className="mb-5">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
             Channels
           </h3>
           <div className="rounded-lg border border-neutral-800 px-2 py-1">
@@ -159,25 +160,23 @@ export default function ToolManager() {
         </section>
       )}
       {tools === null ? (
-        <Skeleton lines={6} label="Loading tools" />
+        <SkeletonText lines={6} label="Loading tools" />
       ) : loadError !== null ? (
-        <EmptyState
-          icon={Unplug}
+        <BoomiEmptyState
+          animation="error"
           title="Could not load tools"
-          hint={`The backend did not return a tool list (${loadError}). No tools are shown rather than a stale catalog.`}
-          action={{
-            label: "Retry",
-            onClick: () => {
-              setTools(null);
-              setRetryTick((t) => t + 1);
-            },
+          description={`The backend did not return a tool list (${loadError}). No tools are shown rather than a stale catalog.`}
+          actionLabel="Retry"
+          onAction={() => {
+            setTools(null);
+            setRetryTick((t) => t + 1);
           }}
         />
       ) : groups.length === 0 ? (
-        <EmptyState
-          icon={Unplug}
+        <BoomiEmptyState
+          animation="idle"
           title={q === "" ? "No tools registered" : "No tools match your search"}
-          hint={
+          description={
             q === ""
               ? "The backend returned an empty tool list. Check that the gateway is running the expected build."
               : undefined
@@ -186,7 +185,7 @@ export default function ToolManager() {
       ) : (
         groups.map(([group, list]) => (
           <section key={group} className="mb-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
               {group} ({list.length})
             </h3>
             <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">

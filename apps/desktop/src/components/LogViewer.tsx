@@ -295,7 +295,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
               }`}
             >
               {f}
-              {f !== "ALL" && <span className="ml-1 text-neutral-500">{levelCounts[f]}</span>}
+              {f !== "ALL" && <span className="ml-1 text-neutral-400">{levelCounts[f]}</span>}
             </button>
           ))}
         </div>
@@ -351,7 +351,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
       <div ref={boxRef} className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-xs leading-5" aria-label="Gateway logs">
         {loading ? (
           <div className="flex h-full items-center justify-center">
-            <span className="animate-pulse text-neutral-500">// loading logs…</span>
+            <span className="animate-pulse text-neutral-400">// loading logs…</span>
           </div>
         ) : error && entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3">
@@ -373,7 +373,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
             <div key={e.key} className="flex gap-2 whitespace-pre-wrap break-words rounded px-1 py-px hover:bg-neutral-800/60">
               <span className="shrink-0 select-none text-neutral-600">{formatTime(e.timestamp)}</span>
               <span className={`shrink-0 select-none rounded border px-1 leading-5 ${LEVEL_STYLES[e.level]}`}>{e.level}</span>
-              <span className="shrink-0 select-none text-neutral-500">[{e.module}]</span>
+              <span className="shrink-0 select-none text-neutral-400">[{e.module}]</span>
               <span className="min-w-0 text-neutral-300">{e.message}</span>
             </div>
           ))
@@ -381,7 +381,7 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
       </div>
 
       {/* Footer: count + load more */}
-      <div className="flex items-center gap-3 border-t border-neutral-800 px-3 py-2 font-mono text-xs text-neutral-500">
+      <div className="flex items-center gap-3 border-t border-neutral-800 px-3 py-2 font-mono text-xs text-neutral-400">
         <span>
           {filtered.length} / {entries.length} entries
           {paused && <span className="ml-2 text-zinc-500">(polling paused)</span>}

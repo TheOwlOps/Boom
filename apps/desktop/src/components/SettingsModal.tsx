@@ -34,6 +34,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ActivityFeed } from "./ActivityFeed";
+import { ShortcutHint } from "./ShortcutHint";
 import BotManager from "./BotManager";
 import DagViewer from "./DagViewer";
 import GroupManager from "./GroupManager";
@@ -166,6 +167,19 @@ export function SettingsModal({ open, onClose, initialSection = "general" }: Set
               </p>
             )}
           </nav>
+          {/* Keyboard shortcut hints — subtle, bottom of sidebar. */}
+          <div className="border-t border-[var(--border)] p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-[var(--muted)]">
+                Command palette
+              </span>
+              <ShortcutHint keys={["⌘", "K"]} />
+            </div>
+            <div className="mt-1.5 flex items-center justify-between">
+              <span className="text-[11px] text-[var(--muted)]">Settings</span>
+              <ShortcutHint keys={["⌘", ","]} />
+            </div>
+          </div>
         </aside>
 
         {/* Main content */}

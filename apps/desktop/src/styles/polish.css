@@ -1,0 +1,149 @@
+/* ------------------------------------------------------------------
+ * polish.css — fine-detail polish for the Boom desktop UI.
+ *
+ * Strictly monochrome (black / white / grays), resolved through the
+ * existing theme vars (--bg, --text, --muted, --border, --accent),
+ * so it tracks both [data-theme="dark"] and [data-theme="light"].
+ *
+ * Sections:
+ *   1. Scrollbars   (theme-aware refinement over effects.css §8)
+ *   2. Text selection
+ *   3. Tooltip base (rendered by components/Tooltip.tsx)
+ *   4. Avatar fallback (BoomiAvatar error state)
+ *
+ * Imported by components/ChatView.tsx after effects.css so the
+ * scrollbar rules below win the cascade.
+ * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------
+ * 1. SCROLLBARS — thin, monochrome, theme-aware.
+ *
+ * effects.css §8 already sets a global thin scrollbar, but hardcodes
+ * dark-theme thumb colors. These rules redeclare the same properties
+ * with theme vars so the thumb reads correctly on both themes.
+ * ------------------------------------------------------------------ */
+
+* {
+  scrollbar-width: thin;                              /* Firefox */
+  scrollbar-color: var(--muted) transparent;          /* Firefox */
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;                      /* slim the visible thumb */
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 80%, transparent);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------------
+ * 2. TEXT SELECTION — monochrome, uses the accent var.
+ * ------------------------------------------------------------------ */
+
+::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* ------------------------------------------------------------------
+ * 3. TOOLTIP base — rendered by components/Tooltip.tsx.
+ *
+ * Pure CSS: .tip-bubble shows on hover / keyboard focus. The wrapper
+ * (.tip-wrap) must stay inline so it never disturbs surrounding
+ * layout (header icon buttons, sidebar rows, ...).
+ * ------------------------------------------------------------------ */
+
+.tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tip-bubble {
+  position: absolute;
+  z-index: 60;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 260px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 500;
+  background: var(--accent);
+  color: var(--bg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+/* Position variants (anchored to .tip-wrap) */
+.tip-top .tip-bubble    { bottom: calc(100% + 6px); left: 50%; transform-origin: bottom center; }
+.tip-bottom .tip-bubble { top: calc(100% + 6px); left: 50%; transform-origin: top center; }
+.tip-left .tip-bubble   { right: calc(100% + 6px); top: 50%; transform-origin: right center; }
+.tip-right .tip-bubble  { left: calc(100% + 6px); top: 50%; transform-origin: left center; }
+
+/* Horizontal centering for top/bottom; vertical for left/right. */
+.tip-top .tip-bubble,
+.tip-bottom .tip-bubble { transform: translateX(-50%) scale(0.95); }
+.tip-left .tip-bubble,
+.tip-right .tip-bubble  { transform: translateY(-50%) scale(0.95); }
+
+/* Show on hover or keyboard focus (accessible). */
+.tip-wrap:hover .tip-bubble,
+.tip-wrap:focus-visible .tip-bubble,
+.tip-wrap:focus-within .tip-bubble {
+  opacity: 1;
+  transition-delay: 350ms;  /* don't flash while sweeping past */
+}
+
+.tip-top:hover .tip-bubble,
+.tip-top:focus-visible .tip-bubble,
+.tip-top:focus-within .tip-bubble,
+.tip-bottom:hover .tip-bubble,
+.tip-bottom:focus-visible .tip-bubble,
+.tip-bottom:focus-within .tip-bubble { transform: translateX(-50%) scale(1); }
+
+.tip-left:hover .tip-bubble,
+.tip-left:focus-visible .tip-bubble,
+.tip-left:focus-within .tip-bubble,
+.tip-right:hover .tip-bubble,
+.tip-right:focus-visible .tip-bubble,
+.tip-right:focus-within .tip-bubble { transform: translateY(-50%) scale(1); }
+
+/* ------------------------------------------------------------------
+ * 4. AVATAR FALLBACK — BoomiAvatar error state (monogram disc).
+ * ------------------------------------------------------------------ */
+
+.avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-display, system-ui, sans-serif);
+  font-weight: 700;
+  user-select: none;
+}
+
+/* Respect reduced motion for the tooltip fade too. */
+@media (prefers-reduced-motion: reduce) {
+  .tip-bubble { transition: none; }
+}

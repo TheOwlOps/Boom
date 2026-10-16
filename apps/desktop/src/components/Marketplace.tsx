@@ -20,6 +20,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { SkeletonCard } from "./Skeleton";
+import { BoomiEmptyState } from "./BoomiEmptyState";
 
 /* ------------------------------------------------------------------ types */
 
@@ -61,6 +63,11 @@ export interface MarketplaceProps {
   categories: string[];
   /** Bot entries for the Bots tab. */
   bots?: BotSummary[];
+  /**
+   * True while the parent is fetching the catalog — renders a skeleton
+   * card grid instead of the catalog. Defaults to false.
+   */
+  loading?: boolean;
 }
 
 type Tab = "plugins" | "bots";
@@ -83,7 +90,7 @@ function PluginCard(props: {
 }) {
   const { item, added, onAdd } = props;
   return (
-    <div className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
+    <div className="mi-market-card flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
       <div className="text-4xl leading-none" aria-hidden="true">
         {item.icon}
       </div>
@@ -98,7 +105,7 @@ function PluginCard(props: {
         className={
           added
             ? "shrink-0 rounded-lg bg-zinc-600/15 px-4 py-2 text-sm font-medium text-zinc-400"
-            : "shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
+            : "mi-press-btn shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
         }
       >
         {added ? "Added ✓" : "Add"}
@@ -114,7 +121,7 @@ function BotCard(props: {
 }) {
   const { bot, onUse } = props;
   return (
-    <div className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
+    <div className="mi-market-card flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 transition-colors hover:border-[var(--muted)]">
       <div className="text-4xl leading-none" aria-hidden="true">
         {bot.icon}
       </div>
@@ -125,7 +132,7 @@ function BotCard(props: {
       <button
         type="button"
         onClick={() => onUse?.(bot.id)}
-        className="shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
+        className="mi-press-btn shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
       >
         Use
       </button>
@@ -168,7 +175,7 @@ function Section(props: {
  * Marketplace modal. Rendered (and state active) only while `open` is true.
  */
 export function Marketplace(props: MarketplaceProps) {
-  const { open, onClose, onAdd, onUseBot, installedIds, items, categories, bots } = props;
+  const { open, onClose, onAdd, onUseBot, installedIds, items, categories, bots, loading = false } = props;
 
   const [tab, setTab] = useState<Tab>("plugins");
   const [query, setQuery] = useState("");
@@ -363,7 +370,15 @@ export function Marketplace(props: MarketplaceProps) {
 
         {/* --- content --------------------------------------------------- */}
         <div className="flex-1 space-y-8 overflow-y-auto px-6 py-6">
-          {tab === "plugins" ? (
+          {loading ? (
+            <div role="status" aria-busy="true" aria-label="Loading marketplace catalog">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2" aria-hidden="true">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            </div>
+          ) : tab === "plugins" ? (
             <>
               {showFeatured && featuredItems.length > 0 && (
                 <Section title="Featured">
@@ -396,9 +411,19 @@ export function Marketplace(props: MarketplaceProps) {
                 </Section>
               ))}
               {filteredPlugins.length === 0 && (
-                <p className="py-12 text-center text-sm text-neutral-500">
-                  No plugins found. Try a different search or category.
-                </p>
+                <BoomiEmptyState
+                  animation="idle"
+                  title={
+                    chip !== CHIP_ALL || normalized.length > 0
+                      ? "No plugins found"
+                      : "The catalog is empty"
+                  }
+                  description={
+                    chip !== CHIP_ALL || normalized.length > 0
+                      ? "Try a different search or category."
+                      : "No plugins have been published yet. Check back later."
+                  }
+                />
               )}
             </>
           ) : (
@@ -410,9 +435,11 @@ export function Marketplace(props: MarketplaceProps) {
                   ))}
                 </div>
               ) : (
-                <p className="py-12 text-center text-sm text-neutral-500">
-                  No bots found. Try a different search.
-                </p>
+                <BoomiEmptyState
+                  animation="idle"
+                  title="No bots found"
+                  description="Try a different search."
+                />
               )}
             </>
           )}

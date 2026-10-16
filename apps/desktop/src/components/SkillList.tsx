@@ -93,7 +93,7 @@ export default function SkillList() {
   return (
     <div>
       {!usingApi && (
-        <p className="mb-3 text-xs text-neutral-500">
+        <p className="mb-3 text-xs text-neutral-400">
           No /api/skills yet — showing static data scanned from the repo ({FALLBACK_SKILLS.length} skills).
         </p>
       )}

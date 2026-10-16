@@ -42,7 +42,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
         {/* ---- Progress header ---- */}
         <div className="mb-6">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-widest text-neutral-500">
+            <span className="text-xs font-medium uppercase tracking-widest text-neutral-400">
               Step {step + 1} of 2
             </span>
             <span className="text-xs font-medium text-zinc-300">

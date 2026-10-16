@@ -91,14 +91,11 @@ const mdComponents: Components = {
   },
 };
 
-/** HH:MM in the user's locale; empty string when ts is missing/invalid. */
+import { formatFullTime, formatSmartTime } from "../lib/formatTime";
+
+/** Backwards-compatible alias kept for the removed local formatter. */
 function formatTime(ts: number): string {
-  if (!Number.isFinite(ts) || ts <= 0) return '';
-  try {
-    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '';
-  }
+  return formatSmartTime(ts);
 }
 
 /**
@@ -122,7 +119,15 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             ? <div className="im-user-text">{message.text}</div>
             : <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{message.text}</ReactMarkdown>}
         </div>
-        {ts && <div className="im-ts" aria-label={`Sent at ${ts}`}>{ts}</div>}
+        {ts && (
+          <div
+            className="im-ts"
+            title={formatFullTime(message.ts)}
+            aria-label={`Sent at ${formatFullTime(message.ts)}`}
+          >
+            {ts}
+          </div>
+        )}
       </div>
     </div>
   );

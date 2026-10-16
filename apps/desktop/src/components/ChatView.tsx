@@ -4,7 +4,9 @@ import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
 import { BoomiAvatar } from "./BoomiAvatar";
+import { BoomiEmptyState } from "./BoomiEmptyState";
 import { ThinkingDots } from "./ThinkingDots";
+import { Skeleton, SkeletonAvatar } from "./Skeleton";
 import "../styles/effects.css";
 import "../styles/imessage.css";
 
@@ -18,6 +20,13 @@ const TYPEWRITER_MS_PER_WORD = 60;
 const NEAR_BOTTOM_PX = 80;
 const MAX_INPUT_PX = 200; // composer auto-resize cap
 const COPY_FEEDBACK_MS = 1500;
+
+/**
+ * Skeleton bubble widths for the history-loading state: alternating
+ * bot/user rows with varied widths so the placeholder reads like a
+ * real conversation.
+ */
+const HISTORY_SKELETON_WIDTHS = ["52%", "34%", "61%", "28%", "47%"];
 
 /** Bot-switching surface exposed to parents (e.g. the sidebar) via onBotApi. */
 export interface BotApi {
@@ -48,6 +57,12 @@ type Props = {
    * dropdown this component used to have.
    */
   onBotApi?: (api: BotApi) => void;
+  /**
+   * True while the session's message history is loading — renders
+   * skeleton message bubbles instead of the empty state. Defaults to
+   * false; no history fetch exists yet (see the sessionId effect).
+   */
+  loadingHistory?: boolean;
 };
 
 function uid(): string {
@@ -85,7 +100,7 @@ function TypingText({ text, wordsShown }: { text: string; wordsShown: number }) 
   );
 }
 
-export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi }: Props) {
+export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, loadingHistory = false }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -405,14 +420,38 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi }:
         </div>
       </header>
 
-      <div className="chat-messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite">
-        {messages.length === 0 && !sending && (
-          <div className="empty-state">
-            {/* Boomi mascot waves hello on a fresh conversation. */}
-            <BoomiAvatar size={112} status="waving" alt="Boomi mascot" />
-            <p className="boomi-greeting">Hi, I'm Boomi 🦉</p>
-            <p>No messages yet — say hello</p>
+      <div className="chat-messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
+        {/* History loading: skeleton iMessage bubbles with alternating
+            widths, mimicking the .im-row/.im-col layout of real messages. */}
+        {loadingHistory && messages.length === 0 && (
+          <div role="status" aria-busy="true" aria-label="Loading conversation history">
+            {HISTORY_SKELETON_WIDTHS.map((w, i) => {
+              const user = i % 2 === 1;
+              return (
+                <div
+                  key={i}
+                  className={`im-row ${user ? "im-row-user" : "im-row-bot"}`}
+                  aria-hidden="true"
+                >
+                  {!user && <SkeletonAvatar size={32} />}
+                  <Skeleton
+                    width={w}
+                    height={i % 3 === 2 ? 78 : 56}
+                    radius={20}
+                  />
+                </div>
+              );
+            })}
           </div>
+        )}
+
+        {messages.length === 0 && !sending && !loadingHistory && (
+          <BoomiEmptyState
+            animation="waving"
+            size={112}
+            title="Hi, I'm Boomi"
+            description="No messages yet — say hello to start a conversation."
+          />
         )}
 
         {messages.map((msg) => {
@@ -496,7 +535,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi }:
               type="button"
               className="provider-prompt-dismiss"
               onClick={() => setNoProvider(false)}
-              aria-label="Dismiss"
+              aria-label="Dismiss notification"
             >
               <X size={14} />
             </button>

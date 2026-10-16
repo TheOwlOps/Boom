@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { Bot as BotIcon, PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
 import type { Bot } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
+import { Skeleton, SkeletonAvatar } from "./Skeleton";
+import { BoomiEmptyState } from "./BoomiEmptyState";
 import "./Sidebar.css";
 
 export interface SidebarProps {
@@ -44,7 +46,8 @@ function TeammateRow({
       className={`teammate-item stagger-item${active ? " active" : ""}`}
       onClick={() => onSelect(bot.id)}
       title={`${bot.name} — ${online ? "Online" : "Offline"}`}
-      aria-current={active ? "true" : undefined}
+      role="option"
+      aria-selected={active}
     >
       <span className="teammate-avatar-wrap">
         <BoomiAvatar size={40} status={online ? "idle" : "sleeping"} alt={bot.name} />
@@ -90,7 +93,7 @@ export default function Sidebar({
 
   if (collapsed) {
     return (
-      <aside className="sidebar sidebar-collapsed" aria-label="Sidebar collapsed">
+      <aside className="sidebar sidebar-collapsed" role="navigation" aria-label="Sidebar collapsed">
         <button className="icon-btn" onClick={onToggle} title="Expand sidebar" aria-label="Expand sidebar">
           <PanelLeftOpen size={18} />
         </button>
@@ -105,6 +108,7 @@ export default function Sidebar({
               className={`teammate-rail-item${b.id === activeBotId ? " active" : ""}`}
               onClick={() => onSelectBot(b.id)}
               title={`${b.name} — ${b.is_active ? "Online" : "Offline"}`}
+              aria-label={b.name}
             >
               <BoomiAvatar
                 size={36}
@@ -121,7 +125,7 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="sidebar" aria-label="Teammates">
+    <aside className="sidebar" role="navigation" aria-label="Teammates">
       <div className="sidebar-header">
         <Logo collapsed={collapsed} />
         <div className="sidebar-header-actions">
@@ -145,25 +149,53 @@ export default function Sidebar({
         />
       </div>
 
-      <nav className="teammate-list" aria-label="Teammates" aria-busy={loadingBots}>
+      <nav className="teammate-list" role="listbox" aria-label="Teammates" aria-busy={loadingBots}>
         {loadingBots && (
-          <div className="skeleton-stack" aria-hidden="true">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton skeleton-row" />
+          <div
+            className="sk-stack"
+            style={{ padding: "4px 2px" }}
+            role="status"
+            aria-label="Loading teammates"
+          >
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div
+                key={i}
+                className="sk-row"
+                style={{ padding: "8px 12px" }}
+                aria-hidden="true"
+              >
+                <SkeletonAvatar size={40} />
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  <Skeleton width="55%" height={13} />
+                  <Skeleton width="85%" height={11} />
+                </div>
+              </div>
             ))}
           </div>
         )}
 
         {!loadingBots && filtered.length === 0 && (
-          <div className="empty-state">
-            <BotIcon size={24} aria-hidden="true" />
-            <p>{query.trim() ? "No matching teammates" : "No teammates yet"}</p>
-            {query.trim() ? null : (
-              <button className="btn-ghost" onClick={onNewChat}>
-                Start chatting
-              </button>
-            )}
-          </div>
+          <BoomiEmptyState
+            animation="sleeping"
+            size={48}
+            className="py-6"
+            title={query.trim() ? "No matching teammates" : "No teammates yet"}
+            description={
+              query.trim()
+                ? undefined
+                : "Your teammates will appear here. Say hello to Boomi to get started."
+            }
+            actionLabel={query.trim() ? undefined : "Start chatting"}
+            onAction={query.trim() ? undefined : onNewChat}
+          />
         )}
 
         {!loadingBots &&

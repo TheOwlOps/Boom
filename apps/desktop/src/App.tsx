@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Menu, Settings, Store } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import { ChatView, type BotApi } from "./components/ChatView";
@@ -11,8 +11,14 @@ import Marketplace, {
   type MarketplaceItem,
 } from "./components/Marketplace";
 import { Toast } from "./components/Toast";
+import { Tooltip } from "./components/Tooltip";
 import BackendStatus from "./components/BackendStatus";
 import WelcomeGate from "./components/WelcomeGate";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import CommandPalette, {
+  OPEN_COMMAND_PALETTE_EVENT,
+  type CommandAction,
+} from "./components/CommandPalette";
 import type { Bot } from "./lib/types";
 import {
   getMarketplace,
@@ -77,9 +83,11 @@ function usePersistedState<T>(
 function Header({
   onOpenSettings,
   onOpenMarketplace,
+  onOpenCommandPalette,
 }: {
   onOpenSettings(): void;
   onOpenMarketplace(): void;
+  onOpenCommandPalette(): void;
 }) {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3">
@@ -104,24 +112,39 @@ function Header({
       {/* Right — backend status dot + icon actions. */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <BackendStatus compact />
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          title="Settings"
-          aria-label="Open settings"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
-        >
-          <Settings className="h-[18px] w-[18px]" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenMarketplace}
-          title="Marketplace"
-          aria-label="Open marketplace"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
-        >
-          <Store className="h-[18px] w-[18px]" aria-hidden="true" />
-        </button>
+        {/* Command palette hint chip — opens the palette on click. */}
+        <Tooltip label="Command palette (⌘K)">
+          <button
+            type="button"
+            onClick={onOpenCommandPalette}
+            aria-label="Open command palette"
+            className="flex h-9 items-center justify-center rounded-full px-2 text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+          >
+            <kbd className="border border-[var(--border)] rounded bg-[var(--surface)] px-1.5 py-0.5 font-[inherit] text-[11px] font-medium leading-none">
+              ⌘K
+            </kbd>
+          </button>
+        </Tooltip>
+        <Tooltip label="Settings">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label="Open settings"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+          >
+            <Settings className="h-[18px] w-[18px]" aria-hidden="true" />
+          </button>
+        </Tooltip>
+        <Tooltip label="Marketplace">
+          <button
+            type="button"
+            onClick={onOpenMarketplace}
+            aria-label="Open marketplace"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
+          >
+            <Store className="h-[18px] w-[18px]" aria-hidden="true" />
+          </button>
+        </Tooltip>
       </div>
     </header>
   );
@@ -140,6 +163,15 @@ function noop(): void {
 }
 
 export default function App() {
+  // Global shortcuts: Cmd/Ctrl+K → command palette, Cmd/Ctrl+, → settings
+  // (dispatches window CustomEvents; App listens for the settings one).
+  useKeyboardShortcuts();
+  useEffect(() => {
+    const openSettings = () => setSettingsOpen(true);
+    window.addEventListener("boom:open-settings", openSettings);
+    return () => window.removeEventListener("boom:open-settings", openSettings);
+  }, []);
+
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState(
     LS_SIDEBAR_COLLAPSED,
@@ -253,6 +285,49 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Command palette actions: static app commands + one entry per bot from
+  // the mirrored ChatView roster (botApiRef owns the actual switch call).
+  const commandActions = useMemo<CommandAction[]>(
+    () => [
+      {
+        id: "new-chat",
+        label: "New chat",
+        keywords: "create session conversation start",
+        run: () => {
+          setActiveSession(null);
+          setMobileNavOpen(false);
+        },
+      },
+      {
+        id: "open-settings",
+        label: "Open settings",
+        keywords: "preferences configuration options",
+        run: () => setSettingsOpen(true),
+      },
+      {
+        id: "open-marketplace",
+        label: "Open marketplace",
+        keywords: "plugins bots store install",
+        run: () => openMarketplace(),
+      },
+      {
+        id: "toggle-sidebar",
+        label: "Toggle sidebar",
+        keywords: "collapse expand navigation panel",
+        run: () => setSidebarCollapsed((v) => !v),
+      },
+      ...bots.map((bot) => ({
+        id: `switch-bot-${bot.id}`,
+        label: `Switch to ${bot.name}`,
+        keywords: `bot assistant switch ${bot.name} ${bot.id}`,
+        run: () => {
+          void botApiRef.current?.switchBot(bot.id);
+        },
+      })),
+    ],
+    [bots],
+  );
+
   const sidebarProps = {
     collapsed: sidebarCollapsed,
     onToggle: () => setSidebarCollapsed((v) => !v),
@@ -271,6 +346,9 @@ export default function App() {
 
   return (
     <WelcomeGate>
+    <a href="#boom-main" className="skip-link">
+      Skip to content
+    </a>
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       {/* Update banner — Tauri desktop only (renders null in the browser). */}
       <UpdateChecker />
@@ -284,10 +362,13 @@ export default function App() {
       </div>
 
       {/* Center column — slim header, thin status bar, chat view */}
-      <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
+      <main id="boom-main" className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
         <Header
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenMarketplace={openMarketplace}
+          onOpenCommandPalette={() =>
+            window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))
+          }
         />
         {/* Thin status strip under the header. The backend health dot now
             lives in the header (right side); StatusBar keeps its own
@@ -312,7 +393,7 @@ export default function App() {
 
       {/* Sidebar as overlay drawer on <768px */}
       {mobileNavOpen && (
-        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-label="Sessions">
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Sessions">
           <div
             className="fade-in absolute inset-0 bg-black/60"
             onClick={() => setMobileNavOpen(false)}
@@ -361,6 +442,9 @@ export default function App() {
       {toast !== null && (
         <Toast key={toast.id} message={toast.message} type={toast.type} />
       )}
+
+      {/* Command palette (Cmd/Ctrl+K). Self-contained open state. */}
+      <CommandPalette actions={commandActions} />
     </div>
     </WelcomeGate>
   );

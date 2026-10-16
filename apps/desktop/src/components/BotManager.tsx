@@ -19,10 +19,10 @@
  * as lib/api.ts); malformed shapes throw instead of rendering garbage.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot as BotIcon, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG } from "../data/toolCatalog";
-import { EmptyState } from "./EmptyState";
+import { BoomiEmptyState } from "./BoomiEmptyState";
 
 /* ------------------------------------------------------------------ types */
 
@@ -314,7 +314,7 @@ function BotFormModal({
           <div className="mb-1 flex items-center justify-between">
             <label className="text-xs text-neutral-400">
               Allowed tools{" "}
-              <span className="text-neutral-600">
+              <span className="text-neutral-400">
                 ({allowedTools.length === 0 ? "All tools" : `${allowedTools.length} selected`})
               </span>
             </label>
@@ -338,7 +338,7 @@ function BotFormModal({
           </div>
           <div className="max-h-48 overflow-y-auto rounded border border-neutral-800">
             {filteredTools.length === 0 ? (
-              <p className="px-3 py-2 text-sm italic text-neutral-600">No tools match.</p>
+              <p className="px-3 py-2 text-sm italic text-neutral-400">No tools match.</p>
             ) : (
               <ul className="divide-y divide-neutral-800">
                 {filteredTools.map((t) => (
@@ -351,14 +351,14 @@ function BotFormModal({
                         className="h-4 w-4 accent-zinc-500"
                       />
                       <code className="font-mono text-sm text-zinc-300">{t.name}</code>
-                      <span className="flex-1 truncate text-xs text-neutral-500">{t.description}</span>
+                      <span className="flex-1 truncate text-xs text-neutral-400">{t.description}</span>
                     </label>
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <p className="mt-1 text-xs text-neutral-600">
+          <p className="mt-1 text-xs text-neutral-400">
             Leave everything unchecked to grant the bot access to all tools.
           </p>
         </div>
@@ -371,7 +371,7 @@ function BotFormModal({
             placeholder="telegram, discord"
             className={inputCls}
           />
-          <p className="mt-1 text-xs text-neutral-600">Comma-separated channel names, e.g. telegram, discord.</p>
+          <p className="mt-1 text-xs text-neutral-400">Comma-separated channel names, e.g. telegram, discord.</p>
         </div>
 
         <div className="flex justify-end gap-2">
@@ -606,14 +606,15 @@ export default function BotManager() {
           ))}
         </div>
       ) : bots.length === 0 ? (
-        <EmptyState
-          icon={BotIcon}
+        <BoomiEmptyState
+          animation="sleeping"
           title="No bots yet"
-          hint="Create your first custom bot — give it a name, a personality, and the tools it may use."
-          action={{ label: "＋ New Bot", onClick: () => setCreating(true) }}
+          description="Create your first custom bot — give it a name, a personality, and the tools it may use."
+          actionLabel="＋ New Bot"
+          onAction={() => setCreating(true)}
         />
       ) : filtered.length === 0 ? (
-        <p className="py-8 text-center text-sm italic text-neutral-600">No bots match “{query}”.</p>
+        <p className="py-8 text-center text-sm italic text-neutral-400">No bots match “{query}”.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((bot) => (
