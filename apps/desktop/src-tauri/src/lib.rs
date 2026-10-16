@@ -1,67 +1,58 @@
-
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
-use std::env;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, RunEvent, State};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use tauri::{Manager, RunEvent, State};
 
 // ---------------------------------------------------------------------------
-// Backend sidecar
+// Backend: boom-core in-process server
 //
-// The backend (Python FastAPI gateway) ships as a PyInstaller-built sidecar
-// binary named `boom-backend`. In production the Tauri bundler copies
-// `gateway/binaries/boom-backend-{target-triple}` (declared via
-// `bundle.externalBin` in tauri.conf.json) next to the app executable with
-// the triple suffix stripped, so at runtime it is addressed by the bare
-// name `boom-backend` through `tauri_plugin_shell::ShellExt::sidecar`.
+// The backend is the Rust `boom-core` crate (pure-Rust port of the Python
+// agent gateway), served in-process via `boom_core::server::spawn_server` in
+// a background tokio task. There is no sidecar binary and no Python process
+// anymore: the server lives and dies with the app, so the whole
+// spawn/wait/kill/reap/port-adoption machinery of the old sidecar design is
+// gone — only port-adoption (an *external* backend already listening) and
+// squat detection survive, because the port is still shared with the outside
+// world.
 //
-// When the sidecar binary is absent (dev mode), we fall back to spawning
-// `python3 gateway/api.py` exactly like the pre-sidecar implementation, so
-// `tauri dev` keeps working without a PyInstaller build.
+// `gateway/api.py` is untouched in the repo: Python remains the backend for
+// mobile. Only the desktop bundle drops it (no more `externalBin`,
+// no more PyInstaller step for desktop).
 // ---------------------------------------------------------------------------
 
-/// Port the backend API listens on.
-/// The backend reads the port from the `BOOM_API_PORT` env var (default
-/// 18080); it does not accept CLI flags.
-const BACKEND_PORT: u16 = 18080;
+/// Port the backend API listens on, resolved from `BOOM_API_PORT` (default
+/// 18080) — mirrors `boom_core::server::resolve_port`.
+fn backend_port() -> u16 {
+    boom_core::server::resolve_port()
+}
 
-/// Logical sidecar name declared in `tauri.conf.json` `bundle.externalBin`
-/// (`../../gateway/binaries/boom-backend`). The bundler strips the
-/// `-{target-triple}` suffix when copying the binary next to the app
-/// executable, hence the bare name here (no triple, no directory).
-const SIDECAR_NAME: &str = "boom-backend";
-
-/// Handle to the running backend process: either the bundled sidecar binary
-/// or the `python3` dev fallback.
+/// Handle to the running backend: either the in-process boom-core server, or
+/// a backend this app instance did not start but found already listening.
 enum BackendChild {
-    /// Sidecar spawned through the Tauri shell plugin. `alive` flips to
-    /// false when the background event drain observes process termination
-    /// (`CommandChild` exposes no non-blocking liveness poll).
-    Sidecar { child: CommandChild, alive: Arc<AtomicBool> },
-    /// Dev fallback spawned directly with `std::process::Command`.
-    Python(Child),
-    /// A healthy Boom backend already listening on `BACKEND_PORT` that this
-    /// app instance did not spawn (e.g. left over from a crashed session, or
+    /// In-process Rust core server (boom-core), running as a background
+    /// tokio task inside this process. Dropping the handle (via
+    /// `ServerHandle::shutdown`) stops the server and releases the port.
+    RustCore {
+        handle: boom_core::server::ServerHandle,
+    },
+    /// A healthy Boom backend already listening on the backend port that this
+    /// app instance did not start (e.g. left over from a crashed session, or
     /// started manually). Tracked so `start_backend` stays a no-op, but never
-    /// killed by us on shutdown.
+    /// shut down by us.
     External,
 }
 
-/// Bounded ring buffer of the backend's most recent stderr lines.
+/// Bounded ring buffer of the backend's most recent log lines.
 ///
-/// Shared with the sidecar event drain (and the python fallback's stderr
-/// drain thread) so a failed startup can report *why* it failed instead of a
-/// bare "did not start".
+/// boom-core logs to stderr, which is invisible in a GUI app, so the Tauri
+/// side records the server lifecycle events (bind, startup failure,
+/// shutdown) here. A failed startup can then report *why* it failed instead
+/// of a bare "did not start". The server's own request log remains available
+/// at runtime via `GET /api/logs`.
 #[derive(Clone, Default)]
 struct StderrBuffer(Arc<Mutex<VecDeque<String>>>);
 
@@ -86,27 +77,27 @@ impl StderrBuffer {
             Ok(queue) if !queue.is_empty() => {
                 queue.iter().cloned().collect::<Vec<_>>().join("\n")
             }
-            _ => "(no stderr captured)".to_string(),
+            _ => "(no backend log captured)".to_string(),
         }
     }
 }
 
 /// Address of the backend HTTP API.
-fn backend_addr() -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], BACKEND_PORT))
+fn backend_addr(port: u16) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], port))
 }
 
 /// True if *something* is already listening on the backend port.
-fn tcp_port_open() -> bool {
-    TcpStream::connect_timeout(&backend_addr(), Duration::from_millis(300)).is_ok()
+fn tcp_port_open(port: u16) -> bool {
+    TcpStream::connect_timeout(&backend_addr(port), Duration::from_millis(300)).is_ok()
 }
 
 /// True if the listener on the backend port answers like a Boom backend
 /// (`GET /api/health` -> 200 with a `"status"` field). Used to distinguish
-/// "our backend is already up (possibly from another instance)" from "some
-/// unrelated process squats on the port".
-fn backend_health_ok() -> bool {
-    let mut stream = match TcpStream::connect_timeout(&backend_addr(), Duration::from_millis(500))
+/// "a Boom backend is already up (possibly from another instance)" from
+/// "some unrelated process squats on the port".
+fn backend_health_ok(port: u16) -> bool {
+    let mut stream = match TcpStream::connect_timeout(&backend_addr(port), Duration::from_millis(500))
     {
         Ok(s) => s,
         Err(_) => return false,
@@ -133,240 +124,61 @@ fn backend_health_ok() -> bool {
         && text.contains("\"status\"")
 }
 
-/// How long to wait for a freshly spawned backend to accept connections
-/// before giving up. Slow first-run PyInstaller extraction can take a few
-/// seconds on old disks; a dead-on-arrival binary is usually detected much
-/// faster via the `alive` flag.
+/// How long to wait for the freshly started in-process server to answer
+/// `/api/health` before giving up. The bind already succeeded at this point,
+/// so this only guards against a server task that dies instantly.
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Wait until the freshly spawned backend accepts connections on
-/// `BACKEND_PORT`, or fail fast if the child dies meanwhile.
+/// Wait until the in-process server answers `/api/health`, or fail fast if
+/// its background task dies meanwhile.
 ///
-/// Returning `Ok` means the port is open; returning `Err` means the process
-/// exited during startup (the error carries its recent stderr). If the
-/// timeout expires while the child is still alive, we assume a slow startup
-/// and return `Ok` anyway — failing here would leave a healthy-but-slow
-/// backend running untracked, and `get_backend_status` polling converges on
-/// the truth regardless.
-fn wait_for_backend_ready(child: &mut BackendChild, stderr: &StderrBuffer) -> Result<(), String> {
+/// If the timeout expires while the task is still alive, we assume a slow
+/// startup and return `Ok` anyway — `get_backend_status` polling converges
+/// on the truth regardless.
+fn wait_for_backend_ready(
+    child: &mut BackendChild,
+    stderr: &StderrBuffer,
+    port: u16,
+) -> Result<(), String> {
     let deadline = Instant::now() + BACKEND_STARTUP_TIMEOUT;
     while Instant::now() < deadline {
         if !backend_child_is_alive(child) {
             return Err(format!(
-                "backend process exited during startup; recent stderr:\n{}",
+                "backend server task exited during startup; recent log:\n{}",
                 stderr.tail()
             ));
         }
-        if tcp_port_open() {
+        if backend_health_ok(port) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
     }
     log::warn!(
-        "[backend] backend still not listening on port {} after {:?}; assuming slow startup",
-        BACKEND_PORT,
+        "[backend] backend still not answering /api/health on port {} after {:?}; assuming slow startup",
+        port,
         BACKEND_STARTUP_TIMEOUT
     );
     Ok(())
 }
 
-/// Tauri-managed state holding the backend process handle.
+/// Tauri-managed state holding the backend handle.
 /// `None` means the backend is not running (or has already exited).
 struct BackendProcess(Mutex<Option<BackendChild>>);
 
-/// Resolve a usable Python interpreter.
+/// Start the in-process boom-core server if it is not already running.
+/// Safe to call more than once: a live server is reused, a dead one is
+/// replaced.
 ///
-/// The `BOOM_PYTHON` environment variable wins when set (explicit user
-/// intent), otherwise probes `python3` then `python` via `--version`.
-/// Only used for the dev fallback when the sidecar binary is absent.
-fn resolve_python_binary() -> Option<String> {
-    if let Ok(custom) = env::var("BOOM_PYTHON") {
-        if !custom.trim().is_empty() {
-            return Some(custom);
-        }
-    }
-    for name in ["python3", "python"] {
-        let probe = Command::new(name)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        match probe {
-            Ok(status) if status.success() => return Some(name.to_string()),
-            _ => continue,
-        }
-    }
-    match env::var("BOOM_PYTHON") {
-        Ok(custom) if !custom.trim().is_empty() => Some(custom),
-        _ => None,
-    }
-}
-
-/// Locate `gateway/api.py` on disk (dev fallback only).
-///
-/// 1. Bundled layout: walk up from the running executable looking for
-///    `<dir>/gateway/api.py` (covers packaged app bundles).
-/// 2. Dev layout: probe the current directory and a few levels up, so running
-///    from `apps/desktop` (i.e. `apps/desktop/../..` == repo root) also resolves.
-fn resolve_gateway_script() -> Option<PathBuf> {
-    if let Ok(exe) = env::current_exe() {
-        let mut dir = exe.parent().map(Path::to_path_buf);
-        for _ in 0..8 {
-            let parent = match dir {
-                Some(d) => d,
-                None => break,
-            };
-            let candidate = parent.join("gateway").join("api.py");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-            dir = parent.parent().map(Path::to_path_buf);
-        }
-    }
-    if let Ok(cwd) = env::current_dir() {
-        for rel in ["", "../..", "../../..", "../../../.."] {
-            let candidate = cwd.join(rel).join("gateway").join("api.py");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Spawn the `boom-backend` sidecar binary via the Tauri shell plugin.
-///
-/// The backend reads its port from `BOOM_API_PORT`; no CLI args are passed.
-/// `set_process_group(true)` makes `kill()` terminate the whole process
-/// group, which matters because a PyInstaller onefile binary extracts and
-/// re-spawns itself as a child process.
-///
-/// A background task drains the plugin's (capacity-1) event channel for the
-/// life of the process: it forwards stdout/stderr to the log, records stderr
-/// in `stderr` for startup-failure diagnostics, and flips the `alive` flag
-/// when the process terminates.
-fn spawn_sidecar(app: &AppHandle, stderr: &StderrBuffer) -> Result<BackendChild, String> {
-    let (mut rx, child) = app
-        .shell()
-        .sidecar(SIDECAR_NAME)
-        .map_err(|e| format!("sidecar '{}' is not available: {}", SIDECAR_NAME, e))?
-        .env("BOOM_API_PORT", BACKEND_PORT.to_string())
-        .set_process_group(true)
-        .spawn()
-        .map_err(|e| format!("failed to spawn sidecar '{}': {}", SIDECAR_NAME, e))?;
-
-    let alive = Arc::new(AtomicBool::new(true));
-    let alive_watcher = Arc::clone(&alive);
-    let stderr_capture = stderr.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(line) => {
-                    log::debug!("[backend] {}", String::from_utf8_lossy(&line).trim_end());
-                }
-                CommandEvent::Stderr(line) => {
-                    let text = String::from_utf8_lossy(&line);
-                    log::warn!("[backend] {}", text.trim_end());
-                    stderr_capture.push(&text);
-                }
-                CommandEvent::Error(err) => {
-                    log::error!("[backend] sidecar event error: {}", err);
-                }
-                CommandEvent::Terminated(payload) => {
-                    let msg = format!(
-                        "process terminated: code={:?} signal={:?}",
-                        payload.code, payload.signal
-                    );
-                    log::warn!("[backend] sidecar {}", msg);
-                    stderr_capture.push(&msg);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        // Channel closed without an explicit Terminated event (e.g. the
-        // process vanished): the backend is gone either way.
-        alive_watcher.store(false, Ordering::SeqCst);
-    });
-
-    log::info!(
-        "[backend] sidecar '{}' started successfully (pid {}) on port {}",
-        SIDECAR_NAME,
-        child.pid(),
-        BACKEND_PORT
-    );
-    Ok(BackendChild::Sidecar { child, alive })
-}
-
-/// Dev fallback: spawn `python3 gateway/api.py` directly, as the
-/// pre-sidecar implementation did. Used when the sidecar binary is absent.
-fn spawn_python_fallback(stderr: &StderrBuffer) -> Result<Child, String> {
-    let python = resolve_python_binary().ok_or_else(|| {
-        "no usable Python interpreter found (tried $BOOM_PYTHON, python3, python)".to_string()
-    })?;
-    let script = resolve_gateway_script().ok_or_else(|| {
-        "could not locate gateway/api.py relative to the executable or current directory"
-            .to_string()
-    })?;
-
-    // Detached stdio: the child must not inherit the GUI process pipes.
-    // stderr is piped (not nulled) so startup failures can be diagnosed; a
-    // background thread drains it so the pipe never blocks the child.
-    // Note: the port travels via BOOM_API_PORT only — gateway/api.py has no
-    // argparse and ignores argv, so no --port flag is passed.
-    let mut child = Command::new(&python)
-        .arg(&script)
-        .env("BOOM_API_PORT", BACKEND_PORT.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            format!(
-                "failed to spawn backend ({} {}): {}",
-                python,
-                script.display(),
-                e
-            )
-        })?;
-
-    if let Some(pipe) = child.stderr.take() {
-        let capture = stderr.clone();
-        thread::spawn(move || {
-            for line in BufReader::new(pipe).lines() {
-                match line {
-                    Ok(text) => capture.push(&text),
-                    Err(_) => break,
-                }
-            }
-        });
-    }
-
-    log::info!(
-        "[backend] python fallback backend started successfully ({} {}, pid {}) on port {}",
-        python,
-        script.display(),
-        child.id(),
-        BACKEND_PORT
-    );
-    Ok(child)
-}
-
-/// Spawn the backend if it is not already running.
-/// Safe to call more than once: a live child is reused, a dead one is
-/// replaced. Sidecar first, `python3` dev fallback second.
-///
-/// Before spawning, the backend port is probed: if a healthy Boom backend is
+/// Before starting, the backend port is probed: if a healthy Boom backend is
 /// already listening (e.g. left over from a crashed session or started
-/// manually), it is adopted as `External` instead of spawning a second copy
-/// that would die on "address already in use". If the port is squatted by an
-/// unrelated process, a clear error is returned instead of a cryptic crash.
+/// manually), it is adopted as `External` instead of failing on "address
+/// already in use". If the port is squatted by an unrelated process, a clear
+/// error is returned instead of a cryptic crash.
 fn spawn_backend_process(
-    app: &AppHandle,
     state: &State<BackendProcess>,
     stderr_state: &State<StderrBuffer>,
 ) -> Result<(), String> {
+    let port = backend_port();
     let mut guard = match state.0.lock() {
         Ok(g) => g,
         Err(e) => return Err(format!("backend state lock poisoned: {}", e)),
@@ -375,76 +187,70 @@ fn spawn_backend_process(
         if backend_child_is_alive(child) {
             return Ok(()); // already running
         }
-        // Stale handle: drop it so a fresh backend is spawned below.
+        // Stale handle: drop it so a fresh server is started below.
         *guard = None;
     }
 
-    if tcp_port_open() {
-        if backend_health_ok() {
+    if tcp_port_open(port) {
+        if backend_health_ok(port) {
             log::info!(
                 "[backend] port {} already serves a Boom backend (external process); adopting",
-                BACKEND_PORT
+                port
             );
             *guard = Some(BackendChild::External);
             return Ok(());
         }
         return Err(format!(
             "port {} is already in use by another process (not a Boom backend); \
-             stop that process or point the backend at a free port via BOOM_API_PORT",
-            BACKEND_PORT
+             stop that process or set BOOM_API_PORT to a free port",
+            port
         ));
     }
 
     let stderr = stderr_state.inner().clone();
-    match spawn_sidecar(app, &stderr) {
-        Ok(mut child) => {
-            // Verify the sidecar actually came up: spawn success alone does
-            // not prove the binary runs (it may segfault on missing libs).
-            wait_for_backend_ready(&mut child, &stderr)?;
-            *guard = Some(child);
-            Ok(())
+    // `spawn_server` binds synchronously (from the caller's perspective via
+    // block_on): `Ok` means the port is held and the server task is running,
+    // `Err` carries the bind failure. Called on a blocking thread (Tauri
+    // runs sync commands off the async runtime; the setup hook runs on the
+    // main thread), so block_on cannot deadlock here.
+    let app_state = boom_core::server::AppState::with_defaults();
+    let mut child = match tauri::async_runtime::block_on(boom_core::server::spawn_server(
+        port, app_state,
+    )) {
+        Ok(handle) => {
+            let msg = format!("boom-core server started in-process on 127.0.0.1:{}", port);
+            log::info!("[backend] {}", msg);
+            stderr.push(&msg);
+            BackendChild::RustCore { handle }
         }
-        Err(sidecar_err) => {
-            // Sidecar failed: log the exact error loudly (this must never be
-            // silent) and try the python3 dev fallback.
-            let sidecar_msg = format!(
-                "[backend] sidecar spawn failed: {}; trying python3 fallback",
-                sidecar_err
-            );
-            log::warn!("{}", sidecar_msg);
-            eprintln!("{}", sidecar_msg);
-            let child = spawn_python_fallback(&stderr).map_err(|python_err| {
-                // Both the bundled sidecar AND the python3 fallback failed.
-                // TODO(backend-startup): once tauri-plugin-dialog is added to
-                // Cargo.toml, show a native error dialog with this message so
-                // the user knows the backend is down and how to fix it.
-                let both = format!(
-                    "backend failed to start — sidecar error: {}; python3 fallback error: {}",
-                    sidecar_err, python_err
-                );
-                log::error!("[backend] {}", both);
-                eprintln!("[backend] {}", both);
-                both
-            })?;
-            let mut wrapped = BackendChild::Python(child);
-            // Same readiness guarantee as the sidecar path: a python process
-            // that dies instantly (e.g. "address already in use" from a
-            // just-started squatter) must surface as an error, not a lie.
-            if let Err(ready_err) = wait_for_backend_ready(&mut wrapped, &stderr) {
-                if let BackendChild::Python(mut proc) = wrapped {
-                    // Best effort: don't leave a half-started child behind.
-                    let _ = proc.kill();
-                    let _ = proc.wait();
-                }
-                return Err(ready_err);
-            }
-            *guard = Some(wrapped);
-            Ok(())
+        Err(e) => {
+            // The bind failed (most likely "address already in use" from a
+            // process that grabbed the port between our probe and the bind,
+            // or a permission issue). Loud, with the exact reason.
+            // TODO(backend-startup): once tauri-plugin-dialog is added to
+            // Cargo.toml, show a native error dialog with this message so
+            // the user knows the backend is down and how to fix it.
+            let msg = format!("failed to start boom-core server: {}", e);
+            log::error!("[backend] {}", msg);
+            eprintln!("[backend] {}", msg);
+            stderr.push(&msg);
+            return Err(msg);
         }
+    };
+    // Same readiness guarantee as before: a server task that dies instantly
+    // must surface as an error, not a lie.
+    if let Err(ready_err) = wait_for_backend_ready(&mut child, &stderr, port) {
+        // Best effort: don't leave a half-started server behind.
+        if let BackendChild::RustCore { handle } = child {
+            handle.shutdown();
+        }
+        return Err(ready_err);
     }
+    *guard = Some(child);
+    Ok(())
 }
 
-/// Kill the backend child process if one is tracked. Idempotent.
+/// Stop the in-process backend server if one is tracked. Idempotent.
 fn stop_backend_process(state: &State<BackendProcess>) {
     let mut guard = match state.0.lock() {
         Ok(g) => g,
@@ -455,50 +261,35 @@ fn stop_backend_process(state: &State<BackendProcess>) {
     };
     if let Some(child) = guard.take() {
         match child {
-            // `CommandChild::kill` consumes the handle, kills the whole
-            // process group (PyInstaller wrapper + extracted child) and
-            // reaps the process so it does not linger as a zombie. It is
-            // tolerant of an already-exited child.
-            BackendChild::Sidecar { child, .. } => {
-                if let Err(e) = child.kill() {
-                    eprintln!("[backend] failed to kill sidecar: {}", e);
-                }
-            }
-            BackendChild::Python(mut proc) => {
-                if let Err(e) = proc.kill() {
-                    eprintln!("[backend] failed to kill backend process: {}", e);
-                }
-                // Reap the child so it does not linger as a zombie.
-                if let Err(e) = proc.wait() {
-                    eprintln!("[backend] failed to reap backend process: {}", e);
-                }
+            // `ServerHandle::shutdown` signals graceful shutdown; dropping
+            // the handle aborts the task if it lingers, releasing the port.
+            BackendChild::RustCore { handle } => {
+                log::info!("[backend] shutting down in-process boom-core server");
+                handle.shutdown();
             }
             // Adopted backends are not ours: leave them running.
             BackendChild::External => {
                 log::info!(
-                    "[backend] external backend on port {} left running (not spawned by this app)",
-                    BACKEND_PORT
+                    "[backend] external backend on port {} left running (not started by this app)",
+                    backend_port()
                 );
             }
         }
     }
 }
 
-/// True if the tracked backend child is still alive.
+/// True if the tracked backend is still alive.
 fn backend_child_is_alive(child: &mut BackendChild) -> bool {
     match child {
-        BackendChild::Sidecar { alive, .. } => alive.load(Ordering::SeqCst),
-        // `try_wait` reaps the child when it has exited; a reaped `Ok(Some)`
-        // means the backend is gone.
-        BackendChild::Python(proc) => matches!(proc.try_wait(), Ok(None)),
+        BackendChild::RustCore { handle } => handle.is_alive(),
         // An adopted backend is "alive" while something on the port still
         // answers like a Boom backend.
-        BackendChild::External => backend_health_ok(),
+        BackendChild::External => backend_health_ok(backend_port()),
     }
 }
 
-/// True if a tracked backend child is still alive.
-/// Cleans up the handle when the child has already exited.
+/// True if a tracked backend is still alive.
+/// Cleans up the handle when the server has already exited.
 fn backend_is_running(state: &State<BackendProcess>) -> bool {
     let mut guard = match state.0.lock() {
         Ok(g) => g,
@@ -512,9 +303,8 @@ fn backend_is_running(state: &State<BackendProcess>) -> bool {
         None => false,
     };
     if !running {
-        // Drop any stale handle. A dead sidecar needs no reaping (the
-        // plugin's waiter thread already reaped it); a dead python child
-        // was reaped by `try_wait` above.
+        // Drop any stale handle. A dead server task needs no reaping (its
+        // JoinHandle is dropped with the ServerHandle).
         *guard = None;
     }
     running
@@ -528,19 +318,15 @@ fn backend_is_running(state: &State<BackendProcess>) -> bool {
 #[tauri::command]
 fn get_backend_status(state: State<BackendProcess>) -> String {
     let running = backend_is_running(&state);
-    serde_json::json!({ "running": running, "port": BACKEND_PORT }).to_string()
+    serde_json::json!({ "running": running, "port": backend_port() }).to_string()
 }
 
 /// Manually start the backend (no-op if already running).
 /// Returns a human-readable success/error message.
 #[tauri::command]
-fn start_backend(
-    app: AppHandle,
-    state: State<BackendProcess>,
-    stderr: State<StderrBuffer>,
-) -> String {
-    match spawn_backend_process(&app, &state, &stderr) {
-        Ok(()) => format!("backend started on port {}", BACKEND_PORT),
+fn start_backend(state: State<BackendProcess>, stderr: State<StderrBuffer>) -> String {
+    match spawn_backend_process(&state, &stderr) {
+        Ok(()) => format!("backend started on port {}", backend_port()),
         Err(e) => {
             eprintln!("[backend] start_backend failed: {}", e);
             format!("failed to start backend: {}", e)
@@ -548,7 +334,7 @@ fn start_backend(
     }
 }
 
-/// Return the backend's recent stderr output for diagnostics.
+/// Return the backend's recent log output for diagnostics.
 /// Used by the UI to show *why* the backend failed to start.
 #[tauri::command]
 fn get_backend_error(stderr: State<StderrBuffer>) -> String {
@@ -647,9 +433,9 @@ fn list_toolsets() -> Vec<&'static str> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        // Shell plugin: spawns the `boom-backend` sidecar binary (with a
-        // `python3 gateway/api.py` dev fallback when the sidecar is absent).
-        .plugin(tauri_plugin_shell::init())
+        // NOTE: tauri-plugin-shell was removed — the backend is now the
+        // in-process boom-core server (see above), so there is no sidecar
+        // binary left to spawn.
         // Auto-update plugin: Phase 1 wiring. Update checks are triggered
         // manually via the JS API (`@tauri-apps/plugin-updater`); the native
         // updater endpoint format is TBD and will land in a later phase.
@@ -667,29 +453,26 @@ pub fn run() {
                     .level(log::LevelFilter::Info)
                     .build(),
             )?;
-            // Track the backend child process in Tauri state.
+            // Track the backend server in Tauri state.
             app.manage(BackendProcess(Mutex::new(None)));
             app.manage(StderrBuffer::default());
-            // Auto-start the backend on launch: the sidecar binary is spawned
-            // immediately here inside the setup hook (no user action
-            // required), falling back to the python3 dev fallback when the
-            // sidecar is absent. Best effort: a failure is logged loudly but
+            // Auto-start the backend on launch: the in-process boom-core
+            // server is bound immediately here inside the setup hook (no user
+            // action required). Best effort: a failure is logged loudly but
             // must not prevent the app window from opening.
             log::info!(
-                "[backend] auto-start: spawning backend on port {}",
-                BACKEND_PORT
+                "[backend] auto-start: starting in-process boom-core server on port {}",
+                backend_port()
             );
-            let app_handle = app.handle().clone();
             let state: State<BackendProcess> = app.state();
             let stderr: State<StderrBuffer> = app.state();
-            match spawn_backend_process(&app_handle, &state, &stderr) {
+            match spawn_backend_process(&state, &stderr) {
                 Ok(()) => {
-                    log::info!("[backend] auto-start succeeded on port {}", BACKEND_PORT)
+                    log::info!("[backend] auto-start succeeded on port {}", backend_port())
                 }
                 Err(e) => {
-                    // Both the sidecar and the python3 fallback failed (the
-                    // detailed error was already logged by
-                    // spawn_backend_process). The app still opens so the user
+                    // The error was already logged loudly by
+                    // spawn_backend_process. The app still opens so the user
                     // can retry via the `start_backend` command.
                     // TODO(backend-startup): surface this to the user with a
                     // native error dialog via tauri-plugin-dialog (not yet a
@@ -700,7 +483,8 @@ pub fn run() {
             }
             Ok(())
         })
-        // Kill the backend when the user closes the window.
+        // Shut down the in-process backend server when the user closes the
+        // window, releasing the port.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let state: State<BackendProcess> = window.state();
@@ -718,7 +502,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // Also kill the backend on full app exit (e.g. Cmd+Q / tray quit),
+    // Also stop the backend on full app exit (e.g. Cmd+Q / tray quit),
     // covering paths where no window CloseRequested fires.
     app.run(|app_handle, event| {
         if let RunEvent::Exit = event {

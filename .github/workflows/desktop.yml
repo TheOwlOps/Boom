@@ -58,37 +58,8 @@ jobs:
       - name: Install frontend deps
         run: npm install --no-audit --no-fund
 
-      # Python 3.12 is required to run PyInstaller for the backend sidecar.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # Build the Python backend into a standalone sidecar binary that Tauri
-      # bundles (expected at gateway/binaries/boom-backend-<target-triple>).
-      # Runs from the repo root (job defaults work in apps/desktop), with bash on
-      # all runners so the build script works on Windows too.
-      - name: Build Python backend
-        working-directory: ${{ github.workspace }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$RUNNER_OS" in
-            Linux)   BACKEND_OS=linux ;;
-            Windows) BACKEND_OS=windows ;;
-            macOS)   BACKEND_OS=macos ;;
-            *) echo "error: unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
-          esac
-          pip install pyinstaller
-          bash scripts/build-backend.sh "$BACKEND_OS" "${{ matrix.target }}"
-          BIN="gateway/binaries/boom-backend-${{ matrix.target }}"
-          if [ "$BACKEND_OS" = "windows" ]; then BIN="${BIN}.exe"; fi
-          if [ ! -f "$BIN" ]; then
-            echo "error: backend binary not found at $BIN" >&2
-            ls -la gateway/binaries/ || true
-            exit 1
-          fi
-          echo "Backend sidecar binary ready: $BIN"
+      # Desktop backend is now pure Rust (crates/boom-core), built in-process
+      # by Tauri. No Python/PyInstaller sidecar needed.
 
       - name: Build Tauri
         run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}

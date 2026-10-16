@@ -12,10 +12,12 @@
 //!
 //! The [`server`] module is backend-agnostic: behaviour is injected through
 //! the traits in [`server::state`]. Sibling modules provide real
-//! implementations; [`server::defaults`] ships honest no-op defaults.
+//! implementations; [`server::defaults`] ships honest no-op defaults. The
+//! [`wiring`] module adapts the real subsystems to the server's seams.
 
 pub mod harness;
 pub mod providers;
 pub mod server;
 pub mod storage;
 pub mod tools;
+pub mod wiring;

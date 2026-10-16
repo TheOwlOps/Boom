@@ -31,7 +31,14 @@ pub use state::{
     ZaloPersonal, ACTIVITY_FRESH_SEC, CHAT_STRATEGIES, KNOWN_CHANNELS, LOG_MAX, MAX_BODY_BYTES,
 };
 
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use axum::{
     body::Bytes,
@@ -259,4 +266,85 @@ pub fn resolve_port() -> u16 {
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(18080)
+}
+
+// ---------------------------------------------------------------------------
+// In-process embedding (Tauri desktop)
+//
+// The desktop shell embeds boom-core directly instead of spawning a
+// `boom-backend` sidecar binary or a `python3 gateway/api.py` process.
+// ---------------------------------------------------------------------------
+
+/// Handle to a boom-core server running as a background tokio task inside the
+/// host process.
+///
+/// Dropping the handle signals graceful shutdown and aborts the task, so the
+/// port is released even if [`ServerHandle::shutdown`] was never called
+/// (e.g. the host exited through an unusual path).
+pub struct ServerHandle {
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+    alive: Arc<AtomicBool>,
+}
+
+impl ServerHandle {
+    /// True while the background serving task has not exited.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    /// Ask the server to stop gracefully and release the port.
+    /// Fire-and-forget: returns immediately; the task winds down in the
+    /// background. The `Drop` impl aborts the task if it lingers.
+    pub fn shutdown(mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        self.task.abort();
+    }
+}
+
+/// Bind `127.0.0.1:port` and serve the v1 API in a background tokio task.
+///
+/// Unlike [`serve`], the bind happens *before* returning: `Ok` means the port
+/// is held and the server is accepting connections; `Err` carries the bind
+/// failure (e.g. "address already in use") so the embedder can report it.
+///
+/// Must be called from within a Tokio runtime (e.g. via
+/// `tauri::async_runtime::block_on` from a sync context).
+pub async fn spawn_server(port: u16, state: AppState) -> Result<ServerHandle, String> {
+    let app = router(state);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("failed to bind {addr}: {e}"))?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let alive = Arc::new(AtomicBool::new(true));
+    let alive_task = Arc::clone(&alive);
+    let task = tokio::spawn(async move {
+        eprintln!("[boom-core] Boom core API listening on http://127.0.0.1:{port}");
+        let result = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("[boom-core] server error: {e}");
+        }
+        eprintln!("[boom-core] server on port {port} stopped");
+        alive_task.store(false, Ordering::SeqCst);
+    });
+    Ok(ServerHandle {
+        shutdown_tx: Some(shutdown_tx),
+        task,
+        alive,
+    })
 }

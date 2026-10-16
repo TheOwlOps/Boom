@@ -19,6 +19,10 @@ crate-type = ["rlib"]
 tauri-build = { version = "2.7.3" }
 
 [dependencies]
+# In-process Rust backend (replaces the Python/PyInstaller sidecar):
+# boom-core serves the same /api/* surface as gateway/api.py from inside the
+# Tauri process via boom_core::server::spawn_server.
+boom-core = { path = "../../../crates/boom-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
@@ -35,9 +39,8 @@ tauri-plugin-log = "2"
 # Kept as-is until Tauri upstream migrates the plugin to a non-yanked zip.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
-# Shell plugin: used to spawn the `boom-backend` PyInstaller binary as a
-# Tauri sidecar (with a python3 dev fallback when the sidecar is absent).
-tauri-plugin-shell = "2"
+# NOTE: tauri-plugin-shell was removed with the Python sidecar (2026-10-16):
+# the backend is now boom-core in-process, so nothing spawns a sidecar.
 # Pure Rust backend (replaces Python/PyInstaller): axum HTTP server serving
 # the same /api/* surface as gateway/api.py, spawned in-process by Tauri.
 axum = "0.8"
