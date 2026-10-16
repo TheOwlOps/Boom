@@ -96,15 +96,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Bundle output lives under the Tauri project dir, not the repo root:
-      # `defaults.run.working-directory` only affects `run:` steps, while
-      # action inputs (like this `path`) resolve from `github.workspace`.
       - name: Upload artifacts
         id: upload
         uses: actions/upload-artifact@v4
         with:
           name: boom-desktop-${{ matrix.target }}
           path: |
-            apps/web/src-tauri/target/${{ matrix.target }}/release/bundle/
+            target/${{ matrix.target }}/release/bundle/
           retention-days: 30
 
       # SignPath opt-in gate. GitHub forbids the `secrets` context in step
