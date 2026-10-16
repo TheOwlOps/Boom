@@ -1,19 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Bell,
+  CheckCircle2,
+  Download,
   Info,
+  Loader2,
   Moon,
   Palette,
   Plug,
+  RotateCw,
   Sun,
   Type,
   Volume2,
   type LucideIcon,
 } from "lucide-react";
+import { relaunch } from "@tauri-apps/plugin-process";
+import type {
+  DownloadEvent,
+  Update,
+} from "@tauri-apps/plugin-updater";
 // Provider list is owned by another worker; this page embeds it in the
 // Providers section. The module is expected to export a named
 // `ProviderSettings` React component.
 import { ProviderSettings } from "./ProviderSettings";
+import { useManualUpdateCheck } from "./UpdateChecker";
+import { getAppVersion, isTauriEnvironment } from "../lib/appVersion";
 import packageJson from "../../package.json";
 
 /* ------------------------------------------------------------------ */
@@ -138,7 +150,6 @@ function applyFontSize(size: FontSize): void {
   );
 }
 
-const APP_VERSION: string = packageJson.version;
 const GITHUB_REPO_URL = "https://github.com/TheOwlOps/Boom";
 
 /* ------------------------------------------------------------------ */
@@ -189,6 +200,184 @@ function SettingRow({
       </div>
       <div className="shrink-0">{control}</div>
     </div>
+  );
+}
+
+/** Update check lifecycle state shown in the About section. */
+type UpdateCheckState =
+  | { kind: "idle" }
+  | { kind: "uptodate" }
+  | { kind: "available"; version: string }
+  | { kind: "downloading"; version: string; progress: number | null }
+  | { kind: "installed"; version: string }
+  | { kind: "error"; message: string };
+
+/**
+ * Manual update check row for the About section (Tauri desktop only).
+ *
+ * Reuses `useManualUpdateCheck()` from the update banner module so both
+ * surfaces run the same check. On "Check for updates": the row shows a
+ * spinner, then either "You're on the latest version", or the new version
+ * with an "Update now" button that downloads + installs in place and
+ * offers a restart. The pending `Update` handle is released when the
+ * check is re-run, on unmount, or after install — it holds a backend
+ * resource and must not leak.
+ */
+function UpdateCheckRow() {
+  const { checking, checkNow } = useManualUpdateCheck();
+  const [state, setState] = useState<UpdateCheckState>({ kind: "idle" });
+  const pendingUpdate = useRef<Update | null>(null);
+
+  const releasePending = useCallback(() => {
+    const pending = pendingUpdate.current;
+    pendingUpdate.current = null;
+    if (pending) {
+      // Best effort: the updater backend resource must not leak.
+      void pending.close().catch(() => undefined);
+    }
+  }, []);
+
+  // Release the pending update handle if the row unmounts mid-check.
+  useEffect(() => releasePending, [releasePending]);
+
+  const handleCheck = useCallback(async () => {
+    if (checking) return;
+    releasePending();
+    const found = await checkNow();
+    if (found) {
+      pendingUpdate.current = found;
+      setState({ kind: "available", version: found.version });
+    } else {
+      setState({ kind: "uptodate" });
+    }
+  }, [checking, checkNow, releasePending]);
+
+  const handleInstall = useCallback(async () => {
+    const pending = pendingUpdate.current;
+    if (!pending || state.kind !== "available") return;
+    let downloadedBytes = 0;
+    let totalBytes: number | null = null;
+    setState({ kind: "downloading", version: pending.version, progress: 0 });
+    try {
+      await pending.downloadAndInstall((event: DownloadEvent) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength ?? null;
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          setState({
+            kind: "downloading",
+            version: pending.version,
+            progress:
+              totalBytes !== null && totalBytes > 0
+                ? Math.min(
+                    99,
+                    Math.round((downloadedBytes / totalBytes) * 100),
+                  )
+                : null,
+          });
+        }
+      });
+      setState({ kind: "installed", version: pending.version });
+      releasePending();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? `Update failed: ${err.message}`
+            : "Update failed for an unknown reason.",
+      });
+      releasePending();
+    }
+  }, [state.kind, releasePending]);
+
+  const handleRelaunch = useCallback(async () => {
+    try {
+      await relaunch();
+    } catch (err) {
+      setState({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? `Restart failed (${err.message}). Please restart Boom manually.`
+            : "Restart failed. Please restart Boom manually.",
+      });
+    }
+  }, []);
+
+  const description =
+    state.kind === "uptodate"
+      ? "You're on the latest version."
+      : state.kind === "available"
+        ? `Version ${state.version} is ready to install.`
+        : state.kind === "downloading"
+          ? state.progress === null
+            ? "Downloading update…"
+            : `Downloading update… ${state.progress}%`
+          : state.kind === "installed"
+            ? `Version ${state.version} installed — restart to apply it.`
+            : state.kind === "error"
+              ? state.message
+              : "Check for a newer desktop release on GitHub.";
+
+  const control =
+    state.kind === "uptodate" ? (
+      <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+        <CheckCircle2 size={14} aria-hidden="true" />
+        Up to date
+      </span>
+    ) : state.kind === "available" ? (
+      <button
+        type="button"
+        onClick={() => void handleInstall()}
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-950/50"
+      >
+        <Download size={13} aria-hidden="true" />
+        Update to v{state.version}
+      </button>
+    ) : state.kind === "downloading" ? (
+      <span className="flex items-center gap-1.5 text-xs font-medium text-indigo-300">
+        <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+        Installing…
+      </span>
+    ) : state.kind === "installed" ? (
+      <button
+        type="button"
+        onClick={() => void handleRelaunch()}
+        className="btn-hover flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-950/50"
+      >
+        <RotateCw size={13} aria-hidden="true" />
+        Restart now
+      </button>
+    ) : (
+      <button
+        type="button"
+        onClick={() => void handleCheck()}
+        disabled={checking}
+        className="btn-hover flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {checking ? (
+          <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+        ) : state.kind === "error" ? (
+          <AlertTriangle size={13} aria-hidden="true" />
+        ) : (
+          <RotateCw size={13} aria-hidden="true" />
+        )}
+        {checking
+          ? "Checking…"
+          : state.kind === "error"
+            ? "Retry"
+            : "Check for updates"}
+      </button>
+    );
+
+  return (
+    <SettingRow
+      icon={<RotateCw size={16} />}
+      label="Updates"
+      description={description}
+      control={control}
+    />
   );
 }
 
@@ -291,6 +480,14 @@ export default function SettingsPage() {
     isBoolean,
   );
   const [sound, setSound] = useStoredSetting(LS_SOUND, true, isBoolean);
+
+  // Current app version resolved once: Tauri native metadata in the
+  // desktop shell, otherwise the build-time / package.json fallback.
+  // Starts on the package version so the About row paints immediately.
+  const [appVersion, setAppVersion] = useState<string>(packageJson.version);
+  useEffect(() => {
+    void getAppVersion().then(setAppVersion);
+  }, []);
 
   // Apply appearance settings immediately — on mount and on every change.
   useEffect(() => {
@@ -411,13 +608,15 @@ export default function SettingsPage() {
               <SettingRow
                 icon={<Info size={16} />}
                 label="Version"
-                description="Web UI version read from package.json."
+                description="Current app version (native shell metadata in the desktop app)."
                 control={
                   <span className="rounded-md bg-[var(--surface-2)] px-2.5 py-1 font-mono text-xs text-[var(--text)]">
-                    v{APP_VERSION}
+                    v{appVersion}
                   </span>
                 }
               />
+              {/* Update checks need the Tauri updater plugin — desktop only. */}
+              {isTauriEnvironment() && <UpdateCheckRow />}
               <SettingRow
                 icon={<Plug size={16} />}
                 label="Source code"

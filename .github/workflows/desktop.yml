@@ -4,6 +4,11 @@ on:
   push:
     tags: ["desktop-v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.2.0, without the 'v' prefix)"
+        required: true
+        type: string
 
 jobs:
   build:
@@ -65,3 +70,102 @@ jobs:
           path: |
             target/${{ matrix.target }}/release/bundle/
           retention-days: 30
+
+  # Publish installers + Tauri updater v2 `latest.json` to a GitHub release.
+  # Runs after all 4 build jobs succeed. Idempotent: if the release already
+  # exists, assets are re-uploaded with --clobber instead of failing.
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            # Tag trigger: desktop-v<version> -> strip the "desktop-v" prefix.
+            RAW_VERSION="${GITHUB_REF_NAME#desktop-v}"
+          fi
+          VERSION="${RAW_VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "error: resolved version '$VERSION' does not look like X.Y.Z" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: boom-desktop-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Locate installers and signature files
+        id: files
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(find dist -maxdepth 1 -name '*.AppImage' ! -name '*.sig' | head -1)"
+          MSI="$(find dist -maxdepth 1 -name '*.msi' | head -1)"
+          DMG_X64="$(find dist -maxdepth 1 -name '*_x64.dmg' | head -1)"
+          DMG_AARCH64="$(find dist -maxdepth 1 -name '*_aarch64.dmg' | head -1)"
+          for f in APPIMAGE MSI DMG_X64 DMG_AARCH64; do
+            if [ -z "${!f}" ]; then
+              echo "error: installer not found for $f" >&2
+              ls dist/
+              exit 1
+            fi
+          done
+          echo "appimage_file=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
+          echo "msi_file=$(basename "$MSI")" >> "$GITHUB_OUTPUT"
+          echo "dmg_x64_file=$(basename "$DMG_X64")" >> "$GITHUB_OUTPUT"
+          echo "dmg_aarch64_file=$(basename "$DMG_AARCH64")" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if missing (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; assets will be re-uploaded with --clobber."
+          else
+            gh release create "$TAG" \
+              --title "Boom Desktop v${{ steps.version.outputs.version }}" \
+              --target "$GITHUB_SHA" \
+              --generate-notes
+          fi
+
+      - name: Generate latest.json
+        env:
+          APPIMAGE_FILE: ${{ steps.files.outputs.appimage_file }}
+          MSI_FILE: ${{ steps.files.outputs.msi_file }}
+          DMG_X64_FILE: ${{ steps.files.outputs.dmg_x64_file }}
+          DMG_AARCH64_FILE: ${{ steps.files.outputs.dmg_aarch64_file }}
+          SIG_DIR: dist
+        run: |
+          set -euo pipefail
+          gh release view "${{ steps.version.outputs.tag }}" --json body -q .body > /tmp/release-notes.md
+          bash scripts/generate-latest-json.sh \
+            "${{ steps.version.outputs.version }}" \
+            /tmp/release-notes.md \
+            -o latest.json
+          python3 -c "import json; d=json.load(open('latest.json')); assert len(d['platforms'])==4; print('latest.json valid:', d['version'])"
+
+      - name: Upload installers, signatures and latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          # Installer files plus any .sig files tauri build produced.
+          ASSETS=(dist/*.AppImage dist/*.msi dist/*.dmg dist/*.sig latest.json)
+          ls -la "${ASSETS[@]}"
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          echo "Uploaded ${#ASSETS[@]} assets to $TAG"
+          echo "Updater endpoint: https://github.com/TheOwlOps/Boom/releases/download/$TAG/latest.json"

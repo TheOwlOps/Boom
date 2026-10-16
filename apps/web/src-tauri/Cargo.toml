@@ -29,5 +29,9 @@ tauri-plugin-log = "2"
 # breaks version resolution. `rustls-tls` is kept so update checks over HTTPS
 # work via the JS API; bundle extraction (the `zip` feature) stays off until
 # a non-yanked zip release is available, and will be re-enabled in a later phase.
+# Phase 2 re-check (2026-10-16): zip itself is healthy again (9.0.3, not yanked),
+# but tauri-plugin-updater 2.14.0 (latest 2.x) still pins `zip = "^4"` and every
+# zip 4.x release is yanked, so enabling default features still fails resolution.
+# Kept as-is until Tauri upstream migrates the plugin to a non-yanked zip.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
