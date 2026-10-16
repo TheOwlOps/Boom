@@ -1,0 +1,4 @@
+# Copy this file to local.properties and set your Android SDK path.
+# On CI the SDK is provided via the ANDROID_HOME / ANDROID_SDK_ROOT env vars,
+# so this file is only needed for local command-line builds.
+# sdk.dir=/path/to/Android/Sdk

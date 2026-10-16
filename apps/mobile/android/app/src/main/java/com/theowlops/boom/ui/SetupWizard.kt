@@ -87,11 +87,13 @@ fun SetupWizard(
         ) {
             if (step > STEP_WELCOME) {
                 IconButton(onClick = { step-- }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                 }
             }
             LinearProgressIndicator(
-                progress = { (step + 1) / TOTAL_STEPS.toFloat() },
+                // Float overload: present in every material3 version (the
+                // lambda overload only exists on newer releases).
+                progress = (step + 1) / TOTAL_STEPS.toFloat(),
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = if (step > STEP_WELCOME) 8.dp else 0.dp),
@@ -230,7 +232,7 @@ private fun ServerStep(
             is ConnCheck.Checking -> Text("Testing…", style = MaterialTheme.typography.bodyMedium)
             is ConnCheck.Done -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (c.ok) Icons.Default.CheckCircle else Icons.Default.Error,
+                    imageVector = if (c.ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
                     contentDescription = null,
                     tint = if (c.ok) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.error,

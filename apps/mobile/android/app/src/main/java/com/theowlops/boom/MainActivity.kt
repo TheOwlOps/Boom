@@ -24,9 +24,8 @@ class MainActivity : ComponentActivity() {
         settingsRepository = SettingsRepository(applicationContext)
 
         setContent {
-            val serverUrl by settingsRepository.serverUrl.collectAsStateWithLifecycle(
-                initialValue = DEFAULT_SERVER_URL,
-            )
+            val serverUrl by settingsRepository.serverUrl
+                .collectAsStateWithLifecycle(initialValue = DEFAULT_SERVER_URL)
             val api = remember(serverUrl) { BoomApiClient.create(serverUrl) }
 
             CompositionLocalProvider(

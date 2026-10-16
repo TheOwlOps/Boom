@@ -34,9 +34,11 @@ private const val APP_VERSION = "0.1.0"
 
 /**
  * Post-setup settings: view/edit the server URL, see the current provider,
- * about info, and a reset action that re-runs the setup wizard via
- * [onReshowWizard] (defaults to a no-op so bare [SettingsScreen] calls keep
- * compiling until the wizard is wired in).
+ * about info, and a reset action that clears the setup flag — [BoomApp]
+ * observes the flag and shows the setup wizard again automatically.
+ *
+ * [onReshowWizard] is an optional hook for callers that host the wizard
+ * themselves; it defaults to a no-op.
  */
 @Composable
 fun SettingsScreen(

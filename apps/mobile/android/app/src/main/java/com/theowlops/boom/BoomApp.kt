@@ -51,59 +51,57 @@ private enum class Destination(
  * App root: dark Material3 theme + simple state-based navigation between the
  * chat and settings destinations. Dependencies arrive via CompositionLocals
  * provided by [MainActivity].
+ *
+ * On first launch ([SettingsRepository.setupComplete] is false) the setup
+ * wizard is shown instead of the navigation; once it persists the flag, the
+ * flow below flips and the main UI appears automatically.
  */
 @Composable
 fun BoomApp() {
     val api = LocalBoomApi.current
     val repository = LocalSettingsRepository.current
     var current by remember { mutableStateOf(Destination.CHAT.route) }
-    var forceWizard by remember { mutableStateOf(false) }
-    val setupComplete by repository.setupComplete.collectAsStateWithLifecycle(
-        initialValue = false,
-    )
+    val setupComplete by repository.setupComplete.collectAsStateWithLifecycle(initialValue = false)
 
     BoomTheme {
-        if (!setupComplete || forceWizard) {
+        if (!setupComplete) {
             SetupWizard(
-                onComplete = { forceWizard = false },
-                apiFactory = { url -> BoomApiClient.create(url) },
+                onComplete = { /* setupComplete flow flips -> main UI shows */ },
+                apiFactory = BoomApiClient::create,
                 repo = repository,
             )
-            return@BoomTheme
-        }
-
-        Scaffold(
-            bottomBar = {
-                NavigationBar {
-                    Destination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = current == destination.route,
-                            onClick = { current = destination.route },
-                            icon = {
-                                Icon(
-                                    imageVector = destination.icon,
-                                    contentDescription = destination.label,
-                                )
-                            },
-                            label = { Text(destination.label) },
-                        )
+        } else {
+            Scaffold(
+                bottomBar = {
+                    NavigationBar {
+                        Destination.entries.forEach { destination ->
+                            NavigationBarItem(
+                                selected = current == destination.route,
+                                onClick = { current = destination.route },
+                                icon = {
+                                    Icon(
+                                        imageVector = destination.icon,
+                                        contentDescription = destination.label,
+                                    )
+                                },
+                                label = { Text(destination.label) },
+                            )
+                        }
                     }
-                }
-            },
-        ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
-                when (current) {
-                    Destination.CHAT.route -> {
-                        val serverUrl by repository.serverUrl.collectAsStateWithLifecycle(
-                            initialValue = DEFAULT_SERVER_URL,
-                        )
-                        ChatScreen(api = api, serverUrl = serverUrl)
-                    }
-                    Destination.SETTINGS.route -> {
-                        SettingsScreen(
-                            repository = repository,
-                            onReshowWizard = { forceWizard = true },
-                        )
+                },
+            ) { innerPadding ->
+                Box(modifier = Modifier.padding(innerPadding)) {
+                    when (current) {
+                        Destination.CHAT.route -> {
+                            val serverUrl by repository.serverUrl
+                                .collectAsStateWithLifecycle(initialValue = DEFAULT_SERVER_URL)
+                            ChatScreen(api = api, serverUrl = serverUrl)
+                        }
+                        Destination.SETTINGS.route -> {
+                            // Resetting setup flips setupComplete -> the wizard
+                            // shows again automatically; no callback needed.
+                            SettingsScreen(repository = repository)
+                        }
                     }
                 }
             }
