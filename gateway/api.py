@@ -54,6 +54,150 @@ def api_log(msg: str):
     })
     if len(_LOG_BUFFER) > _LOG_MAX:
         del _LOG_BUFFER[:-_LOG_MAX]
+
+
+_ACTIVITY_FRESH_SEC = 30  # newest event within this window counts as "current"
+
+
+def _activity_root():
+    from pathlib import Path
+    return Path(__file__).resolve().parent.parent
+
+
+def _parse_ts_iso(ts):
+    """Parse an ISO-8601 timestamp to epoch seconds; None on failure."""
+    import datetime
+    try:
+        return datetime.datetime.fromisoformat(str(ts)).timestamp()
+    except Exception:
+        return None
+
+
+def _build_activity_payload():
+    """Build the /api/activity payload from real data only. Never invents events."""
+    import datetime
+    import glob
+    import json
+    import sqlite3
+    import time
+
+    activities = []
+
+    # source 1: trajectory exports
+    try:
+        files = sorted(
+            glob.glob(str(_activity_root() / "trajectories" / "trajectory_*.json")),
+            reverse=True,
+        )
+        if files:
+            data = json.loads(open(files[0], encoding="utf-8").read())
+            steps = data.get("steps") or []
+            for s in steps[-20:]:
+                tool = s.get("action_tool")
+                thought = (s.get("thought") or "").strip()
+                if tool:
+                    act_type = "tool_call"
+                    msg = f"called tool: {tool}"
+                else:
+                    act_type = "thinking"
+                    msg = thought[:120] or "thinking"
+                ts_epoch = float(s.get("timestamp") or 0)
+                activities.append({
+                    "id": f"traj-{data.get('session_id', '?')}-{s.get('step_id', 0)}",
+                    "timestamp": datetime.datetime.fromtimestamp(ts_epoch).isoformat()
+                    if ts_epoch else datetime.datetime.now().isoformat(timespec="seconds"),
+                    "type": act_type,
+                    "message": msg,
+                    "detail": json.dumps(
+                        {"thought": thought[:500], "args": s.get("action_args"),
+                         "observation": (s.get("observation") or "")[:500]},
+                        ensure_ascii=False,
+                    ),
+                })
+    except Exception:
+        pass
+
+    # source 2: audit log tail (read-only)
+    if not activities:
+        db = _activity_root() / "memories" / "audit.db"
+        try:
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "SELECT id, ts, actor, action, target, channel, details_json, result"
+                " FROM audit_events ORDER BY ts DESC, id DESC LIMIT 20"
+            )
+            rows = cur.fetchall()
+            conn.close()
+            for r in reversed(rows):
+                action = (r["action"] or "").lower()
+                result = (r["result"] or "ok").lower()
+                if result == "error":
+                    act_type = "error"
+                elif "tool" in action:
+                    act_type = "tool_call"
+                else:
+                    act_type = "done"
+                activities.append({
+                    "id": str(r["id"]),
+                    "timestamp": str(r["ts"]),
+                    "type": act_type,
+                    "message": f"{r['action']} ({r['actor']})",
+                    "detail": r["details_json"],
+                })
+        except Exception:
+            pass
+
+    # source 3: in-memory gateway log buffer keyword match
+    if not activities:
+        try:
+            keywords = ("tool_call", "thinking", "tool", "error", "fail")
+            matches = [
+                e for e in _LOG_BUFFER
+                if any(k in str(e.get("msg", "")).lower() for k in keywords)
+            ]
+            for e in matches[-20:]:
+                msg = str(e.get("msg", ""))
+                low = msg.lower()
+                if "error" in low or "fail" in low:
+                    act_type = "error"
+                elif "tool" in low:
+                    act_type = "tool_call"
+                else:
+                    act_type = "thinking"
+                activities.append({
+                    "id": f"log-{e.get('ts', '')}",
+                    "timestamp": str(e.get("ts", "")),
+                    "type": act_type,
+                    "message": msg[:160],
+                    "detail": msg,
+                })
+        except Exception:
+            pass
+
+    current = {"type": "idle", "message": "idle"}
+    now = time.time()
+    if activities:
+        newest = activities[-1]
+        started = _parse_ts_iso(newest["timestamp"])
+        if started and (now - started) <= _ACTIVITY_FRESH_SEC:
+            current = {
+                "type": newest["type"],
+                "message": newest["message"],
+                "started_at": newest["timestamp"],
+            }
+    return {"activities": activities, "current": current}
+
+
+_GROUPS_DB = Path(__file__).resolve().parent.parent / "data" / "groups.db"
+
+
+def _groups_manager():
+    """Builds a business.groups.GroupManager. Import is lazy on purpose:
+    importing this module must never import agent code (see module docstring).
+    """
+    from agent.src.business.groups import GroupManager
+    return GroupManager(db_path=_GROUPS_DB)
 DEFAULT_PORT = 18080
 MAX_BODY_BYTES = 1024 * 1024  # 1 MB Content-Length cap
 ALLOWED_ORIGINS = ("http://localhost:5173", "http://localhost:1420", "http://127.0.0.1:5173")  # Vite, Tauri
@@ -267,12 +411,38 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
         elif path == "/api/logs":
-            try:
-                limit = int(urlparse(self.path).query.split("limit=")[-1].split("&")[0]) if "limit=" in self.path else 50
-            except (ValueError, IndexError):
-                limit = 50
+            from urllib.parse import parse_qs
+
+            qs = parse_qs(urlparse(self.path).query)
+
+            def _as_int(values, default):
+                try:
+                    return int(values[0])
+                except (ValueError, TypeError, IndexError):
+                    return default
+
+            limit = _as_int(qs.get("limit"), 50)
+            offset = _as_int(qs.get("offset"), 0)
             limit = max(1, min(limit, _LOG_MAX))
-            self._send_json(200, {"logs": _LOG_BUFFER[-limit:]})
+            offset = max(0, offset)
+
+            total = len(_LOG_BUFFER)
+            end = max(0, total - offset)
+            start = max(0, end - limit)
+            self._send_json(
+                200,
+                {
+                    "logs": _LOG_BUFFER[start:end],
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+        elif path == "/api/activity":
+            try:
+                self._send_json(200, _build_activity_payload())
+            except Exception as e:
+                self._send_json(500, {"error": f"/api/activity failed: {e}"})
         elif path == "/api/sessions":
             # ReActLoop's SQLite session store exposes load_session but no
             # listing API — honest empty state, never invented sessions.
@@ -322,6 +492,8 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 api_log(f"/api/skills error: {e}")
             self._send_json(200, {"skills": skills, "count": len(skills)})
+        elif path == "/api/groups":
+            self._handle_groups_list()
         else:
             self._error(404, "not found")
 
@@ -331,6 +503,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._handle_chat()
         elif path == "/api/tools/run":
             self._handle_tool_run()
+        elif path == "/api/groups/mute":
+            self._handle_groups_mute()
+        elif path == "/api/groups/policy":
+            self._handle_groups_policy()
         else:
             self._error(404, "not found")
 
@@ -376,6 +552,79 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             api_log(f"tool_run: {tool_name} error: {e}")
             return self._send_json(200, {"ok": False, "error": str(e)[:500]})
+
+    def _handle_groups_list(self):
+        """GET /api/groups — list all registered groups with stats + policy."""
+        try:
+            mgr = _groups_manager()
+            groups = mgr.list_groups()
+        except Exception as e:
+            api_log(f"/api/groups error: {e}")
+            return self._send_json(200, {"groups": [], "count": 0})
+        self._send_json(200, {"groups": groups, "count": len(groups)})
+
+    def _handle_groups_mute(self):
+        """POST /api/groups/mute — {channel, group_id, muted: bool}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        channel = data.get("channel")
+        group_id = data.get("group_id")
+        muted = data.get("muted")
+        if not isinstance(channel, str) or not channel.strip():
+            return self._error(400, "channel is required")
+        if not isinstance(group_id, str) or not group_id.strip():
+            return self._error(400, "group_id is required")
+        if not isinstance(muted, bool):
+            return self._error(400, "muted must be a boolean")
+        channel, group_id = channel.strip(), group_id.strip()
+        try:
+            mgr = _groups_manager()
+            group = mgr.get_group_stats(channel, group_id)
+            if group is None:
+                return self._error(404, f"group not registered: {channel}/{group_id}")
+            settings = group.get("settings")
+            if not isinstance(settings, dict):
+                settings = {}
+            settings["muted"] = muted
+            with mgr._lock, mgr._connect() as conn:
+                conn.execute(
+                    "UPDATE groups SET settings_json = ? WHERE channel = ? AND group_id = ?",
+                    (json.dumps(settings), channel, group_id),
+                )
+        except Exception as e:
+            api_log(f"/api/groups/mute error: {e}")
+            return self._error(500, "failed to update mute state")
+        self._send_json(200, {"ok": True, "channel": channel,
+                              "group_id": group_id, "muted": muted})
+
+    def _handle_groups_policy(self):
+        """POST /api/groups/policy — {channel, group_id, policy: {...}}."""
+        data, err = self._read_json_body()
+        if err:
+            status, payload = err
+            return self._send_json(status, payload)
+        channel = data.get("channel")
+        group_id = data.get("group_id")
+        policy = data.get("policy")
+        if not isinstance(channel, str) or not channel.strip():
+            return self._error(400, "channel is required")
+        if not isinstance(group_id, str) or not group_id.strip():
+            return self._error(400, "group_id is required")
+        if not isinstance(policy, dict):
+            return self._error(400, "policy must be an object")
+        try:
+            mgr = _groups_manager()
+            result = mgr.set_group_policy(channel.strip(), group_id.strip(), policy)
+        except Exception as e:
+            api_log(f"/api/groups/policy error: {e}")
+            return self._error(500, "failed to save policy")
+        if isinstance(result, dict) and result.get("error"):
+            msg = str(result["error"])
+            status = 404 if "not registered" in msg else 400
+            return self._error(status, msg)
+        self._send_json(200, {"ok": True, "policy": result.get("policy", policy)})
 
     def _handle_chat(self):
         data, err = self._read_json_body()

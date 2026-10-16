@@ -1,5 +1,16 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { Menu, PanelRightClose, Radio, Workflow, X, Wrench, Sparkles, TerminalSquare } from "lucide-react";
+import {
+  Activity,
+  Menu,
+  MessageSquare,
+  Radio,
+  ScrollText,
+  Sparkles,
+  Users,
+  Workflow,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import DagViewer from "./components/DagViewer";
@@ -8,23 +19,65 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import StatusBar from "./components/StatusBar";
 import ToolManager from "./components/ToolManager";
 import SkillList from "./components/SkillList";
-import TerminalLog from "./components/TerminalLog";
+// Dashboard views built by sibling workers — default-exported React components.
+import GroupManager from "./components/GroupManager";
+import LogViewer from "./components/LogViewer";
+import { ActivityFeed } from "./components/ActivityFeed";
 
-type PanelTab = "dag" | "channels" | "tools" | "skills" | "logs";
+/**
+ * Top-level dashboard views rendered in the center column.
+ *
+ * NOTE: the old right-panel "logs" tab rendered TerminalLog. That view is
+ * superseded here: "logs" now renders LogViewer. TerminalLog.tsx is left
+ * untouched on disk but is no longer referenced by App.
+ */
+type MainTab =
+  | "chat"
+  | "groups"
+  | "logs"
+  | "activity"
+  | "dag"
+  | "channels"
+  | "tools"
+  | "skills";
+
+const MAIN_TABS: readonly MainTab[] = [
+  "chat",
+  "groups",
+  "logs",
+  "activity",
+  "dag",
+  "channels",
+  "tools",
+  "skills",
+];
+
+function isMainTab(value: unknown): value is MainTab {
+  return (
+    typeof value === "string" &&
+    (MAIN_TABS as readonly string[]).includes(value)
+  );
+}
 
 const LS_SIDEBAR_COLLAPSED = "boom.sidebarCollapsed";
-const LS_PANEL_OPEN = "boom.panelOpen";
-const LS_PANEL_TAB = "boom.panelTab";
+const LS_MAIN_TAB = "boom.mainTab";
 
-/** useState mirrored to localStorage; falls back to `initial` when unavailable. */
+/**
+ * useState mirrored to localStorage. `validate` rejects stale/foreign values
+ * (e.g. from an older tab id set) so the app falls back to `initial`.
+ */
 function usePersistedState<T>(
   key: string,
   initial: T,
+  validate?: (value: unknown) => value is T,
 ): [T, Dispatch<SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(key);
-      return raw === null ? initial : (JSON.parse(raw) as T);
+      if (raw === null) return initial;
+      const parsed: unknown = JSON.parse(raw);
+      if (validate && !validate(parsed)) return initial;
+      return parsed as T;
     } catch {
       return initial;
     }
@@ -39,69 +92,83 @@ function usePersistedState<T>(
   return [value, setValue];
 }
 
-const TABS: Array<{ id: PanelTab; label: string; icon: typeof Workflow }> = [
-  { id: "dag", label: "DAG", icon: Workflow },
-  { id: "channels", label: "Channels", icon: Radio },
-  { id: "tools", label: "Tools", icon: Wrench },
-  { id: "skills", label: "Skills", icon: Sparkles },
-  { id: "logs", label: "Logs", icon: TerminalSquare },
+type NavGroup = "primary" | "ops";
+
+const TABS: Array<{
+  id: MainTab;
+  label: string;
+  icon: LucideIcon;
+  group: NavGroup;
+}> = [
+  { id: "chat", label: "Chat", icon: MessageSquare, group: "primary" },
+  { id: "groups", label: "Groups", icon: Users, group: "primary" },
+  { id: "logs", label: "Logs", icon: ScrollText, group: "primary" },
+  { id: "activity", label: "Activity", icon: Activity, group: "primary" },
+  { id: "dag", label: "DAG", icon: Workflow, group: "ops" },
+  { id: "channels", label: "Channels", icon: Radio, group: "ops" },
+  { id: "tools", label: "Tools", icon: Wrench, group: "ops" },
+  { id: "skills", label: "Skills", icon: Sparkles, group: "ops" },
 ];
 
-/** Right-panel body shared by the desktop column and the <1024px drawer. */
-function RightPanel({
+/**
+ * Main navigation bar rendered under the StatusBar. Horizontally scrollable
+ * on narrow screens so every tab stays reachable on mobile.
+ */
+function MainNav({
   tab,
   onTab,
-  onClose,
 }: {
-  tab: PanelTab;
-  onTab(t: PanelTab): void;
-  onClose(): void;
+  tab: MainTab;
+  onTab(t: MainTab): void;
 }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 pt-2">
-        {TABS.map(({ id, label, icon: TabIcon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onTab(id)}
-            aria-pressed={tab === id}
-            className={`relative flex items-center gap-1.5 rounded-t-lg px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors ${
-              tab === id
-                ? "text-[var(--text)]"
-                : "text-[var(--muted)] hover:text-[var(--text)]"
-            }`}
-          >
-            <TabIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            {label}
-            {tab === id && (
-              <span
-                className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-[var(--accent)]"
-                aria-hidden="true"
-              />
-            )}
-          </button>
-        ))}
-        <span className="flex-1" />
-        <button
-          type="button"
-          onClick={onClose}
-          title="Close panel"
-          aria-label="Close panel"
-          className="btn-hover mb-1 rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "dag" && <DagViewer />}
-        {tab === "channels" && <ChannelMonitor />}
-        {tab === "tools" && <ToolManager />}
-        {tab === "skills" && <SkillList />}
-        {tab === "logs" && <TerminalLog />}
-      </div>
-    </div>
+  const renderButton = ({ id, label, icon: TabIcon }: (typeof TABS)[number]) => (
+    <button
+      key={id}
+      type="button"
+      role="tab"
+      aria-selected={tab === id}
+      onClick={() => onTab(id)}
+      className={`relative flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors ${
+        tab === id
+          ? "text-[var(--text)]"
+          : "text-[var(--muted)] hover:text-[var(--text)]"
+      }`}
+    >
+      <TabIcon className="h-3.5 w-3.5" aria-hidden="true" />
+      {label}
+      {tab === id && (
+        <span
+          className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-[var(--accent)]"
+          aria-hidden="true"
+        />
+      )}
+    </button>
   );
+
+  return (
+    <nav
+      aria-label="Main navigation"
+      role="tablist"
+      className="flex items-center gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg)] px-2 pt-2"
+    >
+      {TABS.filter((t) => t.group === "primary").map(renderButton)}
+      <span
+        className="mx-1 h-5 w-px shrink-0 bg-[var(--border)]"
+        aria-hidden="true"
+      />
+      {TABS.filter((t) => t.group === "ops").map(renderButton)}
+    </nav>
+  );
+}
+
+/**
+ * The old 320px inspector panel was merged into the main navigation — all
+ * eight views now render in the center column. ChatView still declares a
+ * required onTogglePanel prop (owned by another worker), so a no-op is
+ * passed until that toggle button is removed or repurposed there.
+ */
+function noop(): void {
+  /* intentionally empty — see comment above */
 }
 
 export default function App() {
@@ -110,18 +177,20 @@ export default function App() {
     LS_SIDEBAR_COLLAPSED,
     false,
   );
-  const [panelOpen, setPanelOpen] = usePersistedState(LS_PANEL_OPEN, true);
-  const [panelTab, setPanelTab] = usePersistedState<PanelTab>(LS_PANEL_TAB, "dag");
+  const [mainTab, setMainTab] = usePersistedState<MainTab>(
+    LS_MAIN_TAB,
+    "chat",
+    isMainTab,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  const togglePanel = () => setPanelOpen((v) => !v);
   const closeOverlays = () => {
     setMobileNavOpen(false);
     setSettingsOpen(false);
   };
 
-  // Escape closes any overlay (settings, mobile nav, mobile panel drawer).
+  // Escape closes any overlay (settings, mobile sidebar drawer).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeOverlays();
@@ -145,6 +214,8 @@ export default function App() {
     onOpenSettings: () => setSettingsOpen(true),
   };
 
+  const activeLabel = TABS.find((t) => t.id === mainTab)?.label ?? mainTab;
+
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       {/* Left column — desktop sidebar (260px, 68px when collapsed) */}
@@ -156,43 +227,29 @@ export default function App() {
         <Sidebar {...sidebarProps} />
       </div>
 
-      {/* Center column — chat */}
+      {/* Center column — status bar, main nav, active view */}
       <main className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
         <StatusBar />
-        <ChatView sessionId={activeSession} onTogglePanel={togglePanel} />
-      </main>
-
-      {/* Right column — desktop inspector (320px), hidden <1024px */}
-      {panelOpen && (
-        <aside
-          className="panel-slide-in hidden w-[320px] shrink-0 border-l border-[var(--border)] bg-[var(--surface)] lg:block"
-          aria-label="Inspector panel"
+        <MainNav tab={mainTab} onTab={setMainTab} />
+        {/* Independent scroll region: each view scrolls here (ChatView
+            manages its own inner scroll via .chat-messages). */}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          role="tabpanel"
+          aria-label={`${activeLabel} view`}
         >
-          <RightPanel
-            tab={panelTab}
-            onTab={setPanelTab}
-            onClose={() => setPanelOpen(false)}
-          />
-        </aside>
-      )}
-
-      {/* Right panel as overlay drawer on <1024px */}
-      {panelOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-label="Inspector panel">
-          <div
-            className="fade-in absolute inset-0 bg-black/60"
-            onClick={() => setPanelOpen(false)}
-            aria-hidden="true"
-          />
-          <aside className="panel-slide-in absolute inset-y-0 right-0 w-[320px] max-w-[85vw] border-l border-[var(--border)] bg-[var(--surface)]">
-            <RightPanel
-              tab={panelTab}
-              onTab={setPanelTab}
-              onClose={() => setPanelOpen(false)}
-            />
-          </aside>
+          {mainTab === "chat" && (
+            <ChatView sessionId={activeSession} onTogglePanel={noop} />
+          )}
+          {mainTab === "groups" && <GroupManager />}
+          {mainTab === "logs" && <LogViewer />}
+          {mainTab === "activity" && <ActivityFeed />}
+          {mainTab === "dag" && <DagViewer />}
+          {mainTab === "channels" && <ChannelMonitor />}
+          {mainTab === "tools" && <ToolManager />}
+          {mainTab === "skills" && <SkillList />}
         </div>
-      )}
+      </main>
 
       {/* Sidebar as overlay drawer on <768px */}
       {mobileNavOpen && (
@@ -222,19 +279,6 @@ export default function App() {
           className="btn-hover fixed bottom-5 left-5 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-[var(--accent)] text-white shadow-lg md:hidden"
         >
           <Menu className="h-5 w-5" aria-hidden="true" />
-        </button>
-      )}
-
-      {/* Mobile panel trigger (<1024px) — mirrors ChatView's desktop toggle */}
-      {!panelOpen && (
-        <button
-          type="button"
-          onClick={() => setPanelOpen(true)}
-          title="Open inspector panel"
-          aria-label="Open inspector panel"
-          className="btn-hover fixed bottom-5 right-5 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)] shadow-lg lg:hidden"
-        >
-          <PanelRightClose className="h-5 w-5" aria-hidden="true" />
         </button>
       )}
 
