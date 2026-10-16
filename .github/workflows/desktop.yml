@@ -96,11 +96,57 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: boom-desktop-${{ matrix.target }}
           path: |
             target/${{ matrix.target }}/release/bundle/
+          retention-days: 30
+
+      # SignPath opt-in gate. GitHub forbids the `secrets` context in step
+      # `if:` conditions (the whole run fails workflow validation), so token
+      # presence is probed once here and consumed via step outputs below.
+      # Runs only on the Windows matrix leg; skipped everywhere else.
+      - name: Check SignPath configuration
+        id: signpath
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "${SIGNPATH_API_TOKEN:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Authenticode-sign the Windows installer via SignPath (free code signing
+      # for open source). Skipped silently unless the SIGNPATH_* secrets are
+      # configured, so builds without signing keep working exactly as before.
+      # SignPath only accepts an already-uploaded GitHub artifact, so this
+      # step runs AFTER the upload above; the signed files land in signed/
+      # and are re-uploaded in the next step.
+      - name: Sign Windows installer (SignPath)
+        if: steps.signpath.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/
+
+      # Re-upload the signed installer under a "-signed" artifact name so the
+      # release job can pick it up and prefer it over the unsigned build.
+      - name: Upload signed artifacts
+        if: steps.signpath.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-desktop-${{ matrix.target }}-signed
+          path: signed/
           retention-days: 30
 
   # Publish installers + Tauri updater v2 `latest.json` to a GitHub release.
@@ -144,7 +190,14 @@ jobs:
         run: |
           set -euo pipefail
           APPIMAGE="$(find dist -name '*.AppImage' ! -name '*.sig' | head -1)"
-          MSI="$(find dist -name '*.msi' | head -1)"
+          # Prefer the SignPath-signed MSI (downloaded to the dist/ root) over
+          # the unsigned build output (dist/msi/). When SignPath is not
+          # configured there is no signed artifact, so this falls back to the
+          # unsigned MSI and behaves exactly as before.
+          MSI="$(find dist -maxdepth 2 -name '*.msi' -not -path '*/msi/*' | head -1)"
+          if [ -z "$MSI" ]; then
+            MSI="$(find dist -name '*.msi' | head -1)"
+          fi
           DMG_X64="$(find dist -name '*_x64.dmg' | head -1)"
           DMG_AARCH64="$(find dist -name '*_aarch64.dmg' | head -1)"
           for f in APPIMAGE MSI DMG_X64 DMG_AARCH64; do
@@ -190,7 +243,17 @@ jobs:
             -o latest.json
           python3 -c "import json; d=json.load(open('latest.json')); assert len(d['platforms'])==4; print('latest.json valid:', d['version'])"
 
-      - name: Upload installers, signatures and latest.json
+      # Checksums for every release asset, so users can verify installer
+      # integrity (the app is not code-signed yet).
+      - name: Generate SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          # latest.json is generated at the repo root; copy it under dist/
+          # so the checksum file covers every asset attached to the release.
+          cp latest.json dist/latest.json
+          bash scripts/generate-checksums.sh dist/
+
+      - name: Upload installers, signatures, latest.json and checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -204,7 +267,17 @@ jobs:
           for f in dist/**/*.AppImage dist/**/*.msi dist/**/*.dmg dist/**/*.sig; do
             cp "$f" dist/flat/ 2>/dev/null || true
           done
-          ASSETS=(dist/flat/* latest.json)
+          # If SignPath signing ran, both the signed MSI (dist/<name>.msi) and
+          # the unsigned one (dist/msi/<name>.msi) were flattened above and the
+          # unsigned copy may have won the filename collision. Overwrite
+          # explicitly so the release always ships the signed installer.
+          # No-op when signing is disabled (no signed MSI at dist/ root).
+          SIGNED_MSI="$(find dist -maxdepth 1 -name '*.msi' | head -1)"
+          if [ -n "$SIGNED_MSI" ]; then
+            cp -f "$SIGNED_MSI" "dist/flat/$(basename "$SIGNED_MSI")"
+            echo "Shipping SignPath-signed MSI: $(basename "$SIGNED_MSI")"
+          fi
+          ASSETS=(dist/flat/* latest.json dist/SHA256SUMS.txt)
           ls -la "${ASSETS[@]}"
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
           echo "Uploaded ${#ASSETS[@]} assets to $TAG"

@@ -90,6 +90,24 @@ everything; `./stop.sh` stops it. Ports can be overridden with
 | Web UI | Dashboard, served by `vite preview` | 5173 |
 | Gateway | Multi-channel daemon (Telegram, Discord, …) | 8788 (ingress) |
 
+## 🛡️ Windows SmartScreen
+
+Boom's Windows installers (`.msi`) are currently **unsigned**, so Windows SmartScreen
+may show a blue warning — *"Windows protected your PC"* — with the publisher listed as
+**Unknown publisher**.
+
+This warning appears only because the installer has no code-signing certificate; it is
+**not** a malware report. Boom is open source: every line of code is public, and anyone
+can inspect or build it themselves.
+
+**How to install anyway:**
+
+1. When the blue SmartScreen dialog appears, click **"More info"**.
+2. Click **"Run anyway"** to continue the installation.
+
+See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for why the warning appears, how to
+verify your download with SHA256 checksums, and the roadmap to signed installers.
+
 ## 📖 Documentation
 
 | Doc | Description |
