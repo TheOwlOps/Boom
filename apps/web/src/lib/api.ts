@@ -18,11 +18,14 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 /** Chat (SSE) needs a longer budget — the model streams for a while. */
 const CHAT_TIMEOUT_MS = 120_000;
 
+import { isTauriEnvironment } from "./appVersion";
+
 /**
- * True when the UI runs inside the Tauri desktop shell. Tauri v1 injects
- * `window.__TAURI__`; it is absent in plain web browsers and dev servers.
+ * True when the UI runs inside the Tauri desktop shell. Uses the shared
+ * `isTauriEnvironment()` helper (checks `window.__TAURI_INTERNALS__` for
+ * Tauri v2); it is absent in plain web browsers and dev servers.
  */
-const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+const isTauri = isTauriEnvironment();
 
 /**
  * Base message for every backend-outage failure. It tells the user exactly
