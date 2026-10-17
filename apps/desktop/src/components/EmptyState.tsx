@@ -33,7 +33,7 @@ export function EmptyState({ icon: Icon, title, hint, action }: EmptyStateProps)
         <button
           type="button"
           onClick={action.onClick}
-          className="btn-hover mt-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)]"
+          className="btn-hover mt-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--bg)] transition-colors hover:bg-[var(--accent-hover)]"
         >
           {action.label}
         </button>

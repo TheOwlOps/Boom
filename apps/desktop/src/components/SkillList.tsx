@@ -54,11 +54,11 @@ function ReadmeModal({ skill, onClose }: { skill: Skill; onClose(): void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg bg-neutral-900 p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-3 font-mono text-sm font-semibold text-neutral-100">SKILL.md — {skill.name}</h3>
-        <pre className="flex-1 overflow-auto rounded bg-neutral-950 p-3 font-mono text-xs text-neutral-300">{content}</pre>
+      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-3 font-mono text-sm font-semibold text-[var(--text)]">SKILL.md — {skill.name}</h3>
+        <pre className="flex-1 overflow-auto rounded bg-[var(--bg)] p-3 font-mono text-xs text-[var(--text)]">{content}</pre>
         <div className="mt-3 flex justify-end">
-          <button onClick={onClose} className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300">
+          <button onClick={onClose} className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)]">
             Close
           </button>
         </div>
@@ -93,23 +93,23 @@ export default function SkillList() {
   return (
     <div>
       {!usingApi && (
-        <p className="mb-3 text-xs text-neutral-400">
+        <p className="mb-3 text-xs text-[var(--muted)]">
           No /api/skills yet — showing static data scanned from the repo ({FALLBACK_SKILLS.length} skills).
         </p>
       )}
       <ul className="grid gap-3 sm:grid-cols-2">
         {skills.map((s) => (
-          <li key={s.name} className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+          <li key={s.name} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
             <div className="mb-1 flex items-center justify-between">
-              <code className="font-mono text-sm font-semibold text-zinc-300">{s.name}</code>
+              <code className="font-mono text-sm font-semibold text-[var(--text)]">{s.name}</code>
               <button
                 onClick={() => setViewing(s)}
-                className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+                className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
               >
                 View SKILL.md
               </button>
             </div>
-            <p className="text-sm text-neutral-400">{s.description}</p>
+            <p className="text-sm text-[var(--muted)]">{s.description}</p>
           </li>
         ))}
       </ul>

@@ -23,6 +23,7 @@ import { Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG } from "../data/toolCatalog";
 import { BoomiEmptyState } from "./BoomiEmptyState";
+import { BotAvatar } from "./BotAvatar";
 
 /* ------------------------------------------------------------------ types */
 
@@ -237,7 +238,7 @@ function BotFormModal({
   };
 
   const inputCls =
-    "w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-zinc-500 focus:outline-none";
+    "w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none";
 
   return (
     <div
@@ -248,25 +249,25 @@ function BotFormModal({
       aria-label={initial ? `Edit bot ${initial.name}` : "New bot"}
     >
       <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-neutral-900 p-5"
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-[var(--surface)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-semibold text-neutral-100">{initial ? "Edit Bot" : "New Bot"}</h3>
-          <button onClick={onClose} aria-label="Close" className="text-neutral-500 hover:text-neutral-300">
+          <h3 className="font-semibold text-[var(--text)]">{initial ? "Edit Bot" : "New Bot"}</h3>
+          <button onClick={onClose} aria-label="Close" className="text-[var(--muted)] hover:text-[var(--text)]">
             <X size={18} />
           </button>
         </div>
 
         {formError && (
-          <p className="mb-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-sm text-zinc-300">
+          <p className="mb-3 rounded border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-sm text-[var(--text)]">
             {formError}
           </p>
         )}
 
         <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs text-neutral-400">Name *</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Name *</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -275,7 +276,7 @@ function BotFormModal({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-neutral-400">Avatar emoji</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Avatar emoji</label>
             <input
               value={avatarEmoji}
               onChange={(e) => setAvatarEmoji(e.target.value)}
@@ -286,7 +287,7 @@ function BotFormModal({
         </div>
 
         <div className="mb-3">
-          <label className="mb-1 block text-xs text-neutral-400">Description</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Description</label>
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -296,7 +297,7 @@ function BotFormModal({
         </div>
 
         <div className="mb-3">
-          <label className="mb-1 block text-xs text-neutral-400">System prompt</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">System prompt</label>
           <textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
@@ -312,23 +313,23 @@ function BotFormModal({
 
         <div className="mb-3">
           <div className="mb-1 flex items-center justify-between">
-            <label className="text-xs text-neutral-400">
+            <label className="text-xs text-[var(--muted)]">
               Allowed tools{" "}
-              <span className="text-neutral-400">
+              <span className="text-[var(--muted)]">
                 ({allowedTools.length === 0 ? "All tools" : `${allowedTools.length} selected`})
               </span>
             </label>
             {allowedTools.length > 0 && (
               <button
                 onClick={() => setAllowedTools([])}
-                className="text-xs text-zinc-400 hover:text-zinc-300"
+                className="text-xs text-[var(--muted)] hover:text-[var(--text)]"
               >
                 Reset to all
               </button>
             )}
           </div>
           <div className="relative mb-2">
-            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-600" />
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
             <input
               value={toolFilter}
               onChange={(e) => setToolFilter(e.target.value)}
@@ -336,49 +337,49 @@ function BotFormModal({
               className={`${inputCls} pl-8`}
             />
           </div>
-          <div className="max-h-48 overflow-y-auto rounded border border-neutral-800">
+          <div className="max-h-48 overflow-y-auto rounded border border-[var(--border)]">
             {filteredTools.length === 0 ? (
-              <p className="px-3 py-2 text-sm italic text-neutral-400">No tools match.</p>
+              <p className="px-3 py-2 text-sm italic text-[var(--muted)]">No tools match.</p>
             ) : (
-              <ul className="divide-y divide-neutral-800">
+              <ul className="divide-y divide-[var(--border)]">
                 {filteredTools.map((t) => (
                   <li key={t.name}>
-                    <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 hover:bg-neutral-800/50">
+                    <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 hover:bg-[color-mix(in_srgb,var(--surface-2)_50%,transparent)]">
                       <input
                         type="checkbox"
                         checked={allowedTools.includes(t.name)}
                         onChange={() => toggleTool(t.name)}
-                        className="h-4 w-4 accent-zinc-500"
+                        className="h-4 w-4 accent-[var(--muted)]"
                       />
-                      <code className="font-mono text-sm text-zinc-300">{t.name}</code>
-                      <span className="flex-1 truncate text-xs text-neutral-400">{t.description}</span>
+                      <code className="font-mono text-sm text-[var(--text)]">{t.name}</code>
+                      <span className="flex-1 truncate text-xs text-[var(--muted)]">{t.description}</span>
                     </label>
                   </li>
                 ))}
               </ul>
             )}
           </div>
-          <p className="mt-1 text-xs text-neutral-400">
+          <p className="mt-1 text-xs text-[var(--muted)]">
             Leave everything unchecked to grant the bot access to all tools.
           </p>
         </div>
 
         <div className="mb-4">
-          <label className="mb-1 block text-xs text-neutral-400">Channel bindings (optional)</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Channel bindings (optional)</label>
           <input
             value={channelInput}
             onChange={(e) => setChannelInput(e.target.value)}
             placeholder="telegram, discord"
             className={inputCls}
           />
-          <p className="mt-1 text-xs text-neutral-400">Comma-separated channel names, e.g. telegram, discord.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Comma-separated channel names, e.g. telegram, discord.</p>
         </div>
 
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
             disabled={saving}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+            className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
           >
             Cancel
           </button>
@@ -429,14 +430,14 @@ function DeleteConfirmModal({
       aria-modal="true"
       aria-label={`Delete bot ${bot.name}`}
     >
-      <div className="w-full max-w-sm rounded-lg bg-neutral-900 p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-2 font-semibold text-neutral-100">Delete bot?</h3>
-        <p className="mb-3 text-sm text-neutral-400">
-          Delete <span className="font-medium text-neutral-200">{bot.name}</span>? This cannot be
+      <div className="w-full max-w-sm rounded-lg bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-2 font-semibold text-[var(--text)]">Delete bot?</h3>
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          Delete <span className="font-medium text-[var(--text)]">{bot.name}</span>? This cannot be
           undone.
         </p>
         {deleteError && (
-          <p className="mb-3 rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-sm text-zinc-300">
+          <p className="mb-3 rounded border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-sm text-[var(--text)]">
             {deleteError}
           </p>
         )}
@@ -444,14 +445,14 @@ function DeleteConfirmModal({
           <button
             onClick={onClose}
             disabled={deleting}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+            className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={() => void confirm()}
             disabled={deleting}
-            className="rounded bg-zinc-600 px-3 py-1.5 text-sm text-white hover:bg-zinc-500 disabled:opacity-50"
+            className="rounded bg-[var(--muted)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[color-mix(in_srgb,var(--muted)_70%,var(--text))] disabled:opacity-50"
           >
             {deleting ? "Deleting…" : "Delete"}
           </button>
@@ -465,13 +466,13 @@ function DeleteConfirmModal({
 
 function BotCardSkeleton() {
   return (
-    <div className="animate-pulse rounded-lg border border-neutral-800 bg-neutral-900 p-4">
-      <div className="mb-3 h-12 w-12 rounded-full bg-neutral-800" />
-      <div className="mb-2 h-4 w-2/3 rounded bg-neutral-800" />
-      <div className="mb-3 h-3 w-full rounded bg-neutral-800" />
+    <div className="animate-pulse rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="mb-3 h-12 w-12 rounded-full bg-[var(--surface-2)]" />
+      <div className="mb-2 h-4 w-2/3 rounded bg-[var(--surface-2)]" />
+      <div className="mb-3 h-3 w-full rounded bg-[var(--surface-2)]" />
       <div className="flex gap-2">
-        <div className="h-7 w-16 rounded bg-neutral-800" />
-        <div className="h-7 w-16 rounded bg-neutral-800" />
+        <div className="h-7 w-16 rounded bg-[var(--surface-2)]" />
+        <div className="h-7 w-16 rounded bg-[var(--surface-2)]" />
       </div>
     </div>
   );
@@ -554,19 +555,19 @@ export default function BotManager() {
         <div className="relative flex-1">
           <Search
             size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-600"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
           />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search bots…"
-            className="w-full rounded border border-neutral-700 bg-neutral-950 py-2 pl-8 pr-8 text-sm text-neutral-200 placeholder:text-neutral-600"
+            className="w-full rounded border border-[var(--border)] bg-[var(--bg)] py-2 pl-8 pr-8 text-sm text-[var(--text)] placeholder:text-[var(--muted)]"
           />
           {query && (
             <button
               onClick={() => setQuery("")}
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-600 hover:text-neutral-300"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--text)]"
             >
               <X size={14} />
             </button>
@@ -575,7 +576,7 @@ export default function BotManager() {
         <button
           onClick={() => void load()}
           aria-label="Reload bots"
-          className="rounded border border-neutral-700 px-2.5 py-2 text-neutral-300 hover:bg-neutral-800"
+          className="rounded border border-[var(--border)] px-2.5 py-2 text-[var(--text)] hover:bg-[var(--surface-2)]"
         >
           <RefreshCw size={14} />
         </button>
@@ -588,11 +589,11 @@ export default function BotManager() {
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/50 px-3 py-2">
-          <p className="text-sm text-zinc-300">{error}</p>
+        <div className="mb-4 flex items-center justify-between rounded border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2">
+          <p className="text-sm text-[var(--text)]">{error}</p>
           <button
             onClick={() => void load()}
-            className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-900/50"
+            className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface)_50%,transparent)]"
           >
             Retry
           </button>
@@ -614,36 +615,40 @@ export default function BotManager() {
           onAction={() => setCreating(true)}
         />
       ) : filtered.length === 0 ? (
-        <p className="py-8 text-center text-sm italic text-neutral-400">No bots match “{query}”.</p>
+        <p className="py-8 text-center text-sm italic text-[var(--muted)]">No bots match “{query}”.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((bot) => (
             <article
               key={bot.id}
-              className={`flex flex-col rounded-lg border bg-neutral-900 p-4 ${
-                bot.is_active ? "border-zinc-700" : "border-neutral-800"
+              className={`flex flex-col rounded-lg border bg-[var(--surface)] p-4 ${
+                bot.is_active ? "border-[var(--border)]" : "border-[var(--border)]"
               }`}
             >
               <div className="mb-2 flex items-start justify-between">
-                <span className="text-4xl" role="img" aria-label={bot.name}>
-                  {bot.avatar_emoji || "🤖"}
-                </span>
+                <BotAvatar
+                  botId={bot.id}
+                  name={bot.name}
+                  emoji={bot.avatar_emoji}
+                  size={44}
+                  status={bot.is_active ? "online" : "offline"}
+                />
                 {bot.is_active && (
-                  <span className="rounded-full bg-zinc-600/20 px-2 py-0.5 text-xs font-medium text-zinc-300">
+                  <span className="rounded-full bg-[color-mix(in_srgb,var(--muted)_20%,transparent)] px-2 py-0.5 text-xs font-medium text-[var(--text)]">
                     Active
                   </span>
                 )}
               </div>
-              <h3 className="mb-1 font-semibold text-neutral-100">{bot.name}</h3>
-              <p className="mb-3 flex-1 text-sm text-neutral-400">
-                {bot.description || <span className="italic text-neutral-600">No description.</span>}
+              <h3 className="mb-1 font-semibold text-[var(--text)]">{bot.name}</h3>
+              <p className="mb-3 flex-1 text-sm text-[var(--muted)]">
+                {bot.description || <span className="italic text-[var(--muted)]">No description.</span>}
               </p>
               <div className="mb-3 flex flex-wrap gap-1.5">
-                <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                <span className="rounded bg-[var(--surface-2)] px-2 py-0.5 text-xs text-[var(--text)]">
                   {toolsLabel(bot)}
                 </span>
                 {bot.channel_bindings.map((c) => (
-                  <span key={c} className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                  <span key={c} className="rounded bg-[var(--surface-2)] px-2 py-0.5 text-xs text-[var(--text)]">
                     #{c}
                   </span>
                 ))}
@@ -653,7 +658,7 @@ export default function BotManager() {
                   <button
                     onClick={() => void handleSetActive(bot)}
                     disabled={activatingId !== null}
-                    className="flex-1 rounded border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-950/50 disabled:opacity-50"
+                    className="flex-1 rounded border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] disabled:opacity-50"
                   >
                     {activatingId === bot.id ? "Activating…" : "Set Active"}
                   </button>
@@ -661,14 +666,14 @@ export default function BotManager() {
                 <button
                   onClick={() => setEditing(bot)}
                   aria-label={`Edit ${bot.name}`}
-                  className="flex-1 rounded border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200 hover:bg-neutral-800"
+                  className="flex-1 rounded border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
                 >
                   <Pencil size={12} className="mr-1 inline" /> Edit
                 </button>
                 <button
                   onClick={() => setDeleting(bot)}
                   aria-label={`Delete ${bot.name}`}
-                  className="rounded border border-neutral-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-950/50"
+                  className="rounded border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--muted)] hover:bg-[color-mix(in_srgb,var(--bg)_50%,transparent)]"
                 >
                   <Trash2 size={12} />
                 </button>

@@ -695,7 +695,7 @@
 
 /* Darker code blocks with mono font (CodeBlock renders its own <pre>). */
 .msg-markdown pre {
-  background: #0d0d0d;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;

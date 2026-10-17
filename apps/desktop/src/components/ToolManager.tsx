@@ -56,24 +56,24 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-lg bg-neutral-900 p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-1 font-semibold text-neutral-100">Run: {tool.name}</h3>
-        <p className="mb-3 text-sm text-neutral-400">{tool.description}</p>
-        <label className="mb-1 block text-xs text-neutral-400">Args (JSON)</label>
+      <div className="w-full max-w-lg rounded-lg bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-1 font-semibold text-[var(--text)]">Run: {tool.name}</h3>
+        <p className="mb-3 text-sm text-[var(--muted)]">{tool.description}</p>
+        <label className="mb-1 block text-xs text-[var(--muted)]">Args (JSON)</label>
         <textarea
           value={args}
           onChange={(e) => setArgs(e.target.value)}
           rows={5}
           spellCheck={false}
-          className="mb-3 w-full rounded border border-neutral-700 bg-neutral-950 p-2 font-mono text-sm text-neutral-200"
+          className="mb-3 w-full rounded border border-[var(--border)] bg-[var(--bg)] p-2 font-mono text-sm text-[var(--text)]"
         />
         {result !== null && (
-          <pre className="mb-3 max-h-48 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+          <pre className="mb-3 max-h-48 overflow-auto rounded bg-[var(--bg)] p-2 font-mono text-xs text-[var(--text)]">
             {result}
           </pre>
         )}
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300">
+          <button onClick={onClose} className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)]">
             Close
           </button>
           <button
@@ -147,14 +147,14 @@ export default function ToolManager() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search tools by name…"
-        className="mb-4 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600"
+        className="mb-4 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)]"
       />
       {showChannels && (
         <section className="mb-5">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
             Channels
           </h3>
-          <div className="rounded-lg border border-neutral-800 px-2 py-1">
+          <div className="rounded-lg border border-[var(--border)] px-2 py-1">
             <ChannelMonitor />
           </div>
         </section>
@@ -185,17 +185,17 @@ export default function ToolManager() {
       ) : (
         groups.map(([group, list]) => (
           <section key={group} className="mb-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
               {group} ({list.length})
             </h3>
-            <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+            <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
               {list.map((t) => (
                 <li key={t.name} className="flex items-center gap-3 px-3 py-2">
-                  <code className="font-mono text-sm text-zinc-300">{t.name}</code>
-                  <span className="flex-1 text-sm text-neutral-400">{t.description}</span>
+                  <code className="font-mono text-sm text-[var(--text)]">{t.name}</code>
+                  <span className="flex-1 text-sm text-[var(--muted)]">{t.description}</span>
                   <button
                     onClick={() => setActive(t)}
-                    className="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+                    className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
                   >
                     Run
                   </button>

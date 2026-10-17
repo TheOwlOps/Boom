@@ -104,7 +104,7 @@ function PluginCard(props: {
         onClick={() => onAdd(item)}
         className={
           added
-            ? "shrink-0 rounded-lg bg-zinc-600/15 px-4 py-2 text-sm font-medium text-zinc-400"
+            ? "shrink-0 rounded-lg bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] px-4 py-2 text-sm font-medium text-[var(--muted)]"
             : "mi-press-btn shrink-0 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--accent-hover)]"
         }
       >
@@ -151,7 +151,7 @@ function Section(props: {
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-300">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--text)]">
           {props.title}
         </h3>
         {props.onViewAll && (
@@ -290,7 +290,7 @@ export function Marketplace(props: MarketplaceProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Marketplace"
-        className="marketplace-dialog flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-neutral-900/95 text-[var(--text)] shadow-2xl"
+        className="marketplace-dialog flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_95%,transparent)] text-[var(--text)] shadow-2xl"
       >
         {/* --- header --------------------------------------------------- */}
         <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
@@ -300,7 +300,7 @@ export function Marketplace(props: MarketplaceProps) {
             <div
               role="tablist"
               aria-label="Marketplace tabs"
-              className="flex rounded-lg border border-[var(--border)] bg-neutral-900 p-1"
+              className="flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1"
             >
               {(["plugins", "bots"] as Tab[]).map((t) => (
                 <button
@@ -311,8 +311,8 @@ export function Marketplace(props: MarketplaceProps) {
                   onClick={() => setTab(t)}
                   className={
                     tab === t
-                      ? "rounded-md bg-neutral-700 px-4 py-1.5 text-sm font-medium text-[var(--text)]"
-                      : "rounded-md px-4 py-1.5 text-sm font-medium text-[var(--muted)] transition-colors hover:text-neutral-200"
+                      ? "rounded-md bg-[var(--surface-2)] px-4 py-1.5 text-sm font-medium text-[var(--text)]"
+                      : "rounded-md px-4 py-1.5 text-sm font-medium text-[var(--muted)] transition-colors hover:text-[var(--text)]"
                   }
                 >
                   {t === "plugins" ? "Plugins" : "Bots"}
@@ -324,7 +324,7 @@ export function Marketplace(props: MarketplaceProps) {
               type="button"
               onClick={onClose}
               aria-label="Close marketplace"
-              className="rounded-lg p-2 text-[var(--muted)] transition-colors hover:bg-neutral-800 hover:text-[var(--text)]"
+              className="rounded-lg p-2 text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
             >
               <X size={20} />
             </button>
@@ -336,7 +336,7 @@ export function Marketplace(props: MarketplaceProps) {
           <div className="relative">
             <Search
               size={18}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"
             />
             <input
               type="text"
@@ -344,7 +344,7 @@ export function Marketplace(props: MarketplaceProps) {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="w-full rounded-lg border border-[var(--border)] bg-neutral-900 py-2.5 pl-10 pr-4 text-sm text-[var(--text)] placeholder:text-neutral-500 focus:border-neutral-600 focus:outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] py-2.5 pl-10 pr-4 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none"
             />
           </div>
           {tab === "plugins" && (
@@ -358,7 +358,7 @@ export function Marketplace(props: MarketplaceProps) {
                   className={
                     chip === c
                       ? "rounded-full bg-[var(--surface-2)] px-4 py-1.5 text-sm font-medium text-[var(--text)]"
-                      : "rounded-full border border-[var(--border)] bg-neutral-900 px-4 py-1.5 text-sm text-[var(--muted)] transition-colors hover:border-[var(--muted)] hover:text-neutral-200"
+                      : "rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-1.5 text-sm text-[var(--muted)] transition-colors hover:border-[var(--muted)] hover:text-[var(--text)]"
                   }
                 >
                   {c}

@@ -8,7 +8,7 @@
  * `isBackendUnreachableError()` and render a fallback instead of crashing.
  */
 import type {
-  Bot, BotDraft, ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
+  Bot, BotDraft, ChannelState, ChannelStatus, ChatReply, ChatRequest, ChatStatus, DagNode, DagNodeStatus, Health, Session,
 } from './types';
 import type { MarketplaceItem } from '../data/marketplace';
 
@@ -139,13 +139,74 @@ function parseSessions(v: unknown): Session[] {
   });
 }
 
+/**
+ * Normalize a raw backend channel state to a ChannelState. Accepts the new
+ * contract's `status` string ("connected" | "disconnected" | "not-configured" |
+ * "unsupported", separators may be `-` or `_`, case-insensitive) and falls
+ * back to the legacy `connected` boolean. Anything unrecognized becomes
+ * 'unknown' — never throws, so one bad entry can't blank the whole list.
+ */
+function parseChannelState(v: unknown): ChannelState {
+  if (typeof v === 'string') {
+    switch (v.trim().toLowerCase().replace(/[_ ]/g, '-')) {
+      case 'connected': return 'connected';
+      case 'disconnected': return 'disconnected';
+      case 'not-configured': case 'notconfigured': case 'unconfigured': return 'not-configured';
+      case 'unsupported': return 'unsupported';
+    }
+  }
+  if (typeof v === 'boolean') return v ? 'connected' : 'disconnected';
+  return 'unknown';
+}
+
+/**
+ * Strip placeholder/dead-text the old backend used to leak through `detail`
+ * (e.g. "gateway daemon not wired"). Those strings must never reach the UI —
+ * the UI renders its own honest state labels instead.
+ */
+const PLACEHOLDER_DETAILS = [/gateway daemon not wired/i];
+function cleanChannelDetail(detail: string | null): string | null {
+  if (detail === null) return null;
+  const trimmed = detail.trim();
+  if (trimmed === '' || PLACEHOLDER_DETAILS.some((re) => re.test(trimmed))) return null;
+  return trimmed;
+}
+
+function parseChannelEntry(c: unknown): ChannelStatus {
+  if (!isRecord(c)) throw new Error('malformed response: channel entry');
+  const name = reqString(c.name ?? c.id, 'channel.name');
+  const id = typeof c.id === 'string' && c.id.trim() !== '' ? c.id : name;
+  const state = 'status' in c ? parseChannelState(c.status) : parseChannelState(c.connected);
+  return {
+    id,
+    name,
+    state,
+    detail: cleanChannelDetail(nullableString(c.detail ?? null, 'channel.detail')),
+    // Legacy compat: mirror the old boolean so older consumers keep working.
+    connected: state === 'connected' || (typeof c.connected === 'boolean' ? c.connected : false),
+  };
+}
+
+/**
+ * Parse GET /api/channels (new contract) and GET /api/channels/status
+ * (legacy contract): { channels: [...] }.
+ */
 function parseChannels(v: unknown): ChannelStatus[] {
-  if (!isRecord(v) || !Array.isArray(v.channels)) throw new Error('malformed response: /api/channels/status');
-  return v.channels.map((c: unknown) => {
-    if (!isRecord(c)) throw new Error('malformed response: channel entry');
-    if (typeof c.connected !== 'boolean') throw new Error('malformed response: channel.connected must be a boolean');
-    return { name: reqString(c.name, 'channel.name'), connected: c.connected, detail: nullableString(c.detail, 'channel.detail') };
-  });
+  if (!isRecord(v) || !Array.isArray(v.channels)) throw new Error('malformed response: /api/channels');
+  return v.channels.map(parseChannelEntry);
+}
+
+/** Result of POST /api/channels/:id/test. */
+export interface ChannelTestResult {
+  ok: boolean;
+  message: string | null;
+}
+
+function parseChannelTestResult(v: unknown): ChannelTestResult {
+  if (!isRecord(v)) throw new Error('malformed response: /api/channels/:id/test');
+  const ok = typeof v.ok === 'boolean' ? v.ok : typeof v.success === 'boolean' ? v.success : true;
+  const raw = typeof v.message === 'string' ? v.message : typeof v.detail === 'string' ? v.detail : null;
+  return { ok, message: cleanChannelDetail(raw) };
 }
 
 function parseDagStatus(v: unknown): DagNodeStatus {
@@ -182,7 +243,44 @@ function parseChatReply(v: unknown): ChatReply {
 
 export function getHealth(): Promise<Health> { return getJson('/api/health', parseHealth); }
 export function listSessions(): Promise<Session[]> { return getJson('/api/sessions', parseSessions); }
-export function getChannels(): Promise<ChannelStatus[]> { return getJson('/api/channels/status', parseChannels); }
+/**
+ * Fetch the channel list. Tries the new contract (GET /api/channels) first
+ * and falls back to the legacy GET /api/channels/status during the backend
+ * transition — both are parsed by the same tolerant parser.
+ */
+export async function getChannels(): Promise<ChannelStatus[]> {
+  try {
+    return await getJson('/api/channels', parseChannels);
+  } catch (firstErr) {
+    try {
+      return await getJson('/api/channels/status', parseChannels);
+    } catch {
+      throw firstErr; // surface the new-contract error when both fail
+    }
+  }
+}
+
+/**
+ * Save credentials and connect a channel.
+ * Backend contract: POST /api/channels/:id/connect, body { token? }.
+ * Non-2xx responses throw BackendUnreachableError carrying the server's
+ * real `{"error"}` message — callers should display it verbatim.
+ */
+export function connectChannel(id: string, token?: string): Promise<void> {
+  const payload: Record<string, string> = {};
+  if (token !== undefined && token.trim() !== '') payload.token = token.trim();
+  return sendJson('POST', `/api/channels/${encodeURIComponent(id)}/connect`, () => undefined, payload);
+}
+
+/** Disconnect a channel: POST /api/channels/:id/disconnect. */
+export function disconnectChannel(id: string): Promise<void> {
+  return sendJson('POST', `/api/channels/${encodeURIComponent(id)}/disconnect`, () => undefined);
+}
+
+/** Send a test message through a channel: POST /api/channels/:id/test. */
+export function testChannel(id: string): Promise<ChannelTestResult> {
+  return sendJson('POST', `/api/channels/${encodeURIComponent(id)}/test`, parseChannelTestResult);
+}
 export function getDag(): Promise<DagNode[]> { return getJson('/api/dag/status', parseDag); }
 
 /* ---------------- Custom bots (Grok-style) -------------------------------- */

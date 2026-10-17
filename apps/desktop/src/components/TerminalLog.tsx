@@ -82,15 +82,15 @@ export default function TerminalLog({ logs = [], pollIntervalMs = DEFAULT_POLL_M
   return (
     <div
       ref={boxRef}
-      className="h-80 overflow-y-auto rounded-lg border border-neutral-800 bg-black p-3 font-mono text-xs leading-5"
+      className="h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 font-mono text-xs leading-5"
       aria-label="Terminal log"
     >
       {lines.length === 0 ? (
-        <span className="text-neutral-600">// no logs yet — waiting for /api/logs or the logs prop</span>
+        <span className="text-[var(--muted)]">// no logs yet — waiting for /api/logs or the logs prop</span>
       ) : (
         lines.map((line, i) => (
-          <div key={i} className="whitespace-pre-wrap break-words text-neutral-300">
-            <span className="mr-2 select-none text-neutral-700">{String(i + 1).padStart(4, " ")}</span>
+          <div key={i} className="whitespace-pre-wrap break-words text-[var(--text)]">
+            <span className="mr-2 select-none text-[var(--muted)]">{String(i + 1).padStart(4, " ")}</span>
             {line}
           </div>
         ))

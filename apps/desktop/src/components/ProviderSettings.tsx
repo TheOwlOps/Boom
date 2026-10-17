@@ -90,7 +90,7 @@ function StatusPill({ state, message }: { state: ConnState; message: string | nu
   if (state === "idle") return null;
   if (state === "testing") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1 text-xs text-[var(--text)]">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Testing…
       </span>
@@ -102,8 +102,8 @@ function StatusPill({ state, message }: { state: ConnState; message: string | nu
       title={message ?? undefined}
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
         ok
-          ? "border-zinc-800 bg-zinc-950 text-zinc-300"
-          : "border-zinc-800 bg-zinc-950 text-zinc-300"
+          ? "border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
+          : "border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
       }`}
     >
       {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
@@ -210,23 +210,23 @@ function ProviderCard({
   }
 
   const inputCls =
-    "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-neutral-500 focus:outline-none";
+    "w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none";
   const labelCls =
-    "mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-400";
+    "mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]";
 
   return (
-    <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Plug className="h-4 w-4 text-neutral-400" />
-          <h3 className="text-sm font-semibold text-neutral-100">{meta.name}</h3>
+          <Plug className="h-4 w-4 text-[var(--muted)]" />
+          <h3 className="text-sm font-semibold text-[var(--text)]">{meta.name}</h3>
           {active && (
-            <span className="rounded-full border border-zinc-800 bg-zinc-950 px-2 py-0.5 text-[11px] font-medium text-zinc-300">
+            <span className="rounded-full border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
               Active
             </span>
           )}
           {meta.has_key && !active && (
-            <span className="rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">
+            <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
               Key saved
             </span>
           )}
@@ -240,7 +240,7 @@ function ProviderCard({
             API key
           </label>
           <div className="relative">
-            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
             <input
               id={`${meta.id}-key`}
               type={card.showKey ? "text" : "password"}
@@ -254,7 +254,7 @@ function ProviderCard({
             <button
               type="button"
               onClick={() => set({ showKey: !card.showKey })}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 hover:text-neutral-300"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
               aria-label={card.showKey ? "Hide API key" : "Show API key"}
             >
               {card.showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -336,14 +336,14 @@ function ProviderCard({
       {card.connMessage && card.conn !== "idle" && (
         <p
           className={`mb-3 text-xs ${
-            card.conn === "ok" ? "text-zinc-400" : "text-zinc-400"
+            card.conn === "ok" ? "text-[var(--muted)]" : "text-[var(--muted)]"
           }`}
         >
           {card.connMessage}
         </p>
       )}
       {card.error && (
-        <p className="mb-3 rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-xs text-zinc-300">
+        <p className="mb-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text)]">
           {card.error}
         </p>
       )}
@@ -353,7 +353,7 @@ function ProviderCard({
           type="button"
           onClick={handleSave}
           disabled={card.saving}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm font-medium text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
         >
           {card.saving ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -367,7 +367,7 @@ function ProviderCard({
           onClick={handleTest}
           disabled={card.conn === "testing" || card.saving}
           title="Saves the current values first, then tests the connection"
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm font-medium text-neutral-100 hover:bg-neutral-700 disabled:opacity-50"
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
         >
           {card.conn === "testing" || card.saving ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -444,14 +444,14 @@ export function ProviderSettings() {
 
   if (loadError) {
     return (
-      <div className="rounded-xl border border-zinc-900 bg-zinc-950 p-4 text-sm text-zinc-300">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 text-sm text-[var(--text)]">
         Failed to load providers: {loadError}
       </div>
     );
   }
   if (metas === null) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-400">
+      <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]">
         <Loader2 className="h-4 w-4 animate-spin" />
         Loading providers…
       </div>

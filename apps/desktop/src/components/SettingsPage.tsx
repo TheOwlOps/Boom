@@ -324,7 +324,7 @@ function UpdateCheckRow() {
 
   const control =
     state.kind === "uptodate" ? (
-      <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
         <CheckCircle2 size={14} aria-hidden="true" />
         Up to date
       </span>
@@ -338,7 +338,7 @@ function UpdateCheckRow() {
         Update to v{state.version}
       </button>
     ) : state.kind === "downloading" ? (
-      <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
         <Loader2 size={14} className="animate-spin" aria-hidden="true" />
         Installing…
       </span>
@@ -414,7 +414,7 @@ function SegmentedControl<T extends string>({
           onClick={() => onChange(optionValue)}
           className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
             value === optionValue
-              ? "bg-[var(--accent)] text-white"
+              ? "bg-[var(--accent)] text-[var(--bg)]"
               : "text-[var(--muted)] hover:text-[var(--text)]"
           }`}
         >

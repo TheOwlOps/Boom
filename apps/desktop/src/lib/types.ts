@@ -56,10 +56,30 @@ export interface Session {
   updated_at: string | null;
 }
 
+/**
+ * Channel connection state from the backend (`GET /api/channels`).
+ * - connected:     the channel adapter is authenticated and live
+ * - disconnected:  adapter exists but is not connected right now
+ * - not-configured: adapter exists but has no credentials configured
+ * - unsupported:   the channel is known but not implemented in this build
+ * - unknown:       backend did not report a state (defensive fallback)
+ */
+export type ChannelState =
+  | 'connected'
+  | 'disconnected'
+  | 'not-configured'
+  | 'unsupported'
+  | 'unknown';
+
 export interface ChannelStatus {
+  /** Stable identifier, used in /api/channels/:id/* URLs. Falls back to `name` when the backend omits it. */
+  id: string;
   name: string;
-  connected: boolean;
+  /** New contract state; derived from the legacy `connected` boolean when absent. */
+  state: ChannelState;
   detail: string | null;
+  /** Legacy field from the old /api/channels/status contract — kept for compatibility. */
+  connected: boolean;
 }
 
 export type DagNodeStatus = 'idle' | 'running' | 'completed' | 'failed' | 'blocked';

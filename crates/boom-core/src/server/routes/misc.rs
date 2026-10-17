@@ -9,8 +9,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::super::{
-    channel_credential_hint, now_epoch, parse_ts_iso,
-    state::{AppState, ACTIVITY_FRESH_SEC, KNOWN_CHANNELS, LOG_MAX},
+    now_epoch, parse_ts_iso,
+    state::{AppState, ACTIVITY_FRESH_SEC, LOG_MAX},
     ApiError, JsonBody, ZaloLoginError,
 };
 
@@ -130,20 +130,21 @@ pub async fn sessions() -> Json<Value> {
 // ---------------------------------------------------------------------------
 
 /// `GET /api/channels/status` → `{channels: [{name, connected, detail}]}`.
-/// `detail` is null when connected, otherwise the honest reason.
+/// Real state from the channel registry: Telegram reflects its saved
+/// credential; platforms this build does not implement report an honest
+/// `unsupported` detail — never "gateway daemon not wired".
 pub async fn channels_status(State(state): State<AppState>) -> Json<Value> {
-    let channels: Vec<Value> = KNOWN_CHANNELS
+    let channels: Vec<Value> = state
+        .channels
+        .channel_ids()
         .iter()
-        .map(|name| {
-            let connected = state.harness.can_deliver(name);
-            let detail = if connected {
-                Value::Null
-            } else if state.daemon_wired {
-                json!(channel_credential_hint(name))
-            } else {
-                json!("gateway daemon not wired")
+        .map(|id| {
+            let info = state.channels.info(id);
+            let detail = match info.detail {
+                Some(d) => json!(d),
+                None => Value::Null,
             };
-            json!({ "name": name, "connected": connected, "detail": detail })
+            json!({ "name": info.id, "connected": info.status == "connected", "detail": detail })
         })
         .collect();
     Json(json!({ "channels": channels }))

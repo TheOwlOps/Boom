@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! GET    /api/health  /api/version  /api/updates/check  /api/logs
-//!        /api/activity  /api/sessions  /api/channels/status
+//!        /api/activity  /api/sessions  /api/channels  /api/channels/status
 //!        /api/channels/zalo-personal/status  /api/dag/status
 //!        /api/tools  /api/skills  /api/groups  /api/bots
 //!        /api/providers  /api/providers/ollama/status
@@ -13,25 +13,30 @@
 //!        /api/bots  /api/bots/active  /api/providers/config
 //!        /api/providers/test  /api/marketplace/install
 //!        /api/marketplace/uninstall
+//!        /api/channels/{id}/connect  /api/channels/{id}/disconnect
+//!        /api/channels/{id}/test
 //!        /api/channels/zalo-personal/login  /api/channels/zalo-personal/logout
 //! PUT    /api/bots/{id}
 //! DELETE /api/bots/{id}
 //! ```
 
+pub mod channels;
 pub mod defaults;
 pub mod file_providers;
 pub mod plugin_registry;
 pub mod routes;
 pub mod state;
 
+pub use channels::FileChannelRegistry;
 pub use file_providers::FileProviderRegistry;
 pub use state::{
     channel_credential_hint, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
-    split_marketplace_id, AppState, Bot, BotTools, BoxFuture, DagNode, Group, Harness,
-    LogEntry, MarketplaceError, NewBot, OllamaStatus, PluginMeta, ProviderConfig,
-    ProviderConfigError, ProviderMeta, ProviderRegistry, Storage, StorageError, ToolInfo,
-    ToolRegistry, TurnError, TurnRequest, TurnResult, UpdateInfo, Updater, ZaloLoginError,
-    ZaloPersonal, ACTIVITY_FRESH_SEC, CHAT_STRATEGIES, KNOWN_CHANNELS, LOG_MAX, MAX_BODY_BYTES,
+    split_marketplace_id, AppState, Bot, BotTools, BoxFuture, ChannelConnectInfo,
+    ChannelError, ChannelInfo, ChannelRegistry, DagNode, Group, Harness, LogEntry,
+    MarketplaceError, NewBot, OllamaStatus, PluginMeta, ProviderConfig, ProviderConfigError,
+    ProviderMeta, ProviderRegistry, Storage, StorageError, ToolInfo, ToolRegistry, TurnError,
+    TurnRequest, TurnResult, UpdateInfo, Updater, ZaloLoginError, ZaloPersonal,
+    ACTIVITY_FRESH_SEC, CHAT_STRATEGIES, KNOWN_CHANNELS, LOG_MAX, MAX_BODY_BYTES,
 };
 
 use std::{
@@ -184,7 +189,21 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tools/run", post(tools::run_tool))
         // skills
         .route("/api/skills", get(misc::list_skills))
-        // channels
+        // channels (fully qualified: `channels` also names the sibling
+        // `server::channels` module)
+        .route("/api/channels", get(routes::channels::list_channels))
+        .route(
+            "/api/channels/{id}/connect",
+            post(routes::channels::connect_channel),
+        )
+        .route(
+            "/api/channels/{id}/disconnect",
+            post(routes::channels::disconnect_channel),
+        )
+        .route(
+            "/api/channels/{id}/test",
+            post(routes::channels::test_channel),
+        )
         .route("/api/channels/status", get(misc::channels_status))
         .route(
             "/api/channels/zalo-personal/status",

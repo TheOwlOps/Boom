@@ -52,10 +52,10 @@ function UnofficialApiWarning() {
   return (
     <div
       role="alert"
-      className="mb-4 flex items-start gap-2.5 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3.5 py-3"
+      className="mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_70%,transparent)] px-3.5 py-3"
     >
-      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-zinc-400" />
-      <p className="text-sm font-medium leading-snug text-zinc-200">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--muted)]" />
+      <p className="text-sm font-medium leading-snug text-[var(--text)]">
         ⚠️ Zalo Personal uses an unofficial API. Your account may be banned by
         Zalo. Use a secondary account only.
       </p>
@@ -143,9 +143,9 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
 
   const busy = phase === "loading" || phase === "connecting" || phase === "disconnecting";
   const inputCls =
-    "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-neutral-500 focus:outline-none disabled:opacity-50";
+    "w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none disabled:opacity-50";
   const labelCls =
-    "mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-400";
+    "mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]";
 
   return (
     <div
@@ -156,21 +156,21 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
       aria-label="Zalo Personal setup"
     >
       <div
-        className="w-full max-w-md rounded-xl border border-neutral-800 bg-neutral-900 p-5"
+        className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5 text-zinc-400" />
-            <h2 className="text-base font-semibold text-neutral-100">
+            <MessageCircle className="h-5 w-5 text-[var(--muted)]" />
+            <h2 className="text-base font-semibold text-[var(--text)]">
               Zalo Personal
             </h2>
           </div>
           <button
             type="button"
             onClick={handleClose}
-            className="rounded p-1 text-neutral-500 hover:text-neutral-200"
+            className="rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -181,7 +181,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
 
         {/* Status / initial load error */}
         {phase === "loading" && (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-neutral-400">
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--muted)]">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading status…
           </div>
@@ -190,7 +190,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
         {phase !== "loading" && error && (
           <div
             role="alert"
-            className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-300"
+            className="mb-3 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_60%,transparent)] px-3 py-2 text-sm text-[var(--text)]"
           >
             {error}
           </div>
@@ -209,7 +209,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
                 Phone number
               </label>
               <div className="relative">
-                <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
                 <input
                   id="zalo-phone"
                   type="tel"
@@ -229,7 +229,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
                 Password
               </label>
               <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
+                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
                 <input
                   id="zalo-password"
                   type={showPassword ? "text" : "password"}
@@ -244,7 +244,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 hover:text-neutral-300"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
@@ -254,7 +254,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
                   )}
                 </button>
               </div>
-              <p className="mt-1.5 text-xs text-neutral-400">
+              <p className="mt-1.5 text-xs text-[var(--muted)]">
                 Credentials are sent only to the local backend and are never
                 stored by this app.
               </p>
@@ -276,11 +276,11 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
         {/* Connected view */}
         {(phase === "connected" || phase === "disconnecting") && (
           <div>
-            <div className="mb-4 flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/50 px-4 py-3">
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-zinc-400" />
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-4 py-3">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-[var(--muted)]" />
               <div>
-                <p className="text-sm font-medium text-zinc-200">Connected</p>
-                <p className="font-mono text-sm text-zinc-300/90">
+                <p className="text-sm font-medium text-[var(--text)]">Connected</p>
+                <p className="font-mono text-sm text-[color-mix(in_srgb,var(--text)_90%,transparent)]">
                   {maskedPhone ?? "•••"}
                 </p>
               </div>
@@ -289,7 +289,7 @@ export default function ZaloPersonalSetup({ open, onClose }: Props) {
               type="button"
               onClick={() => void handleDisconnect()}
               disabled={busy}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm font-medium text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-4 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
             >
               {phase === "disconnecting" ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

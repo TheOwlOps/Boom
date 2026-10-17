@@ -192,7 +192,7 @@ function ListSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading groups" className="flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="skeleton-shimmer h-20 rounded-lg bg-neutral-800" />
+        <div key={i} className="skeleton-shimmer h-20 rounded-lg bg-[var(--surface-2)]" />
       ))}
     </div>
   );
@@ -202,7 +202,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   return (
     <div
       role="alert"
-      className="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-zinc-950/40 px-4 py-3 text-sm text-neutral-200"
+      className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_40%,transparent)] px-4 py-3 text-sm text-[var(--text)]"
     >
       <span className="truncate" title={message}>
         {message || "Couldn't reach backend"}
@@ -210,7 +210,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700"
+        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))]"
       >
         <RefreshCw size={13} />
         Retry
@@ -224,12 +224,12 @@ function StatusBadge({ muted }: { muted: boolean }) {
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
         muted
-          ? "bg-zinc-500/15 text-zinc-300"
-          : "bg-zinc-500/15 text-zinc-300"
+          ? "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--text)]"
+          : "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--text)]"
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${muted ? "bg-zinc-400" : "bg-zinc-400"}`}
+        className={`h-1.5 w-1.5 rounded-full ${muted ? "bg-[var(--muted)]" : "bg-[var(--muted)]"}`}
         aria-hidden
       />
       {muted ? "muted" : "active"}
@@ -307,12 +307,12 @@ function PolicyModal({ group, onClose, onSaved }: {
     accent: string,
   ) => (
     <div>
-      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-neutral-400">
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
         {label}
       </div>
       <div className="flex flex-wrap gap-1.5">
         {list.length === 0 && (
-          <span className="text-xs text-neutral-600">none</span>
+          <span className="text-xs text-[var(--muted)]">none</span>
         )}
         {list.map((cmd) => (
           <button
@@ -335,12 +335,12 @@ function PolicyModal({ group, onClose, onSaved }: {
             if (e.key === "Enter") addTo(list, input, set, () => setInput(""));
           }}
           placeholder="add command…"
-          className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none"
+          className="w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none"
         />
         <button
           type="button"
           onClick={() => addTo(list, input, set, () => setInput(""))}
-          className="shrink-0 cursor-pointer rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700"
+          className="shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))]"
         >
           Add
         </button>
@@ -357,15 +357,15 @@ function PolicyModal({ group, onClose, onSaved }: {
       aria-label={`Policy for ${group.name}`}
     >
       <div
-        className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-lg bg-neutral-900 p-5"
+        className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-lg bg-[var(--surface)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-neutral-100">
+            <h3 className="text-sm font-semibold text-[var(--text)]">
               {channelEmoji(group.channel)} {group.name}
             </h3>
-            <p className="mt-0.5 font-mono text-xs text-neutral-400">
+            <p className="mt-0.5 font-mono text-xs text-[var(--muted)]">
               {group.channel} · {group.group_id}
             </p>
           </div>
@@ -373,7 +373,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="cursor-pointer rounded-md p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
+            className="cursor-pointer rounded-md p-1 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
           >
             <X size={16} />
           </button>
@@ -386,7 +386,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             setAllowed,
             newAllowed,
             setNewAllowed,
-            "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
+            "border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] text-[var(--text)] hover:border-[var(--border)]",
           )}
           {chipRow(
             "Denied commands",
@@ -394,14 +394,14 @@ function PolicyModal({ group, onClose, onSaved }: {
             setDenied,
             newDenied,
             setNewDenied,
-            "border-zinc-800 bg-zinc-950/50 text-zinc-300 hover:border-zinc-600",
+            "border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] text-[var(--text)] hover:border-[var(--border)]",
           )}
-          <p className="text-xs leading-relaxed text-neutral-400">
+          <p className="text-xs leading-relaxed text-[var(--muted)]">
             Denied commands always win. When an allow-list is non-empty, only
             listed commands are permitted. require_approval is left unchanged.
           </p>
           {error && (
-            <div role="alert" className="rounded-md bg-zinc-950/50 px-3 py-2 text-xs text-zinc-300">
+            <div role="alert" className="rounded-md bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-xs text-[var(--text)]">
               {error}
             </div>
           )}
@@ -411,7 +411,7 @@ function PolicyModal({ group, onClose, onSaved }: {
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+            className="cursor-pointer rounded-md border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--surface-2)]"
           >
             Cancel
           </button>
@@ -419,7 +419,7 @@ function PolicyModal({ group, onClose, onSaved }: {
             type="button"
             onClick={save}
             disabled={saving}
-            className="cursor-pointer rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--bg)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save policy"}
           </button>
@@ -509,30 +509,30 @@ export default function GroupManager() {
     <div className="flex flex-col gap-3">
       {/* Header: search + channel filter + refresh */}
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="mr-auto text-base font-semibold text-neutral-100">
+        <h2 className="mr-auto text-base font-semibold text-[var(--text)]">
           Groups{" "}
-          <span className="ml-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs font-normal text-neutral-400">
+          <span className="ml-1 rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-xs font-normal text-[var(--muted)]">
             {filtered.length}
           </span>
         </h2>
         <div className="relative">
           <Search
             size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]"
           />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name or group id…"
             aria-label="Search groups"
-            className="w-52 rounded-md border border-neutral-700 bg-neutral-900 py-1.5 pl-8 pr-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="w-52 rounded-md border border-[var(--border)] bg-[var(--surface)] py-1.5 pl-8 pr-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none"
           />
         </div>
         <select
           value={channelFilter}
           onChange={(e) => setChannelFilter(e.target.value)}
           aria-label="Filter by channel"
-          className="cursor-pointer rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-300 focus:border-neutral-500 focus:outline-none"
+          className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--text)] focus:border-[var(--muted)] focus:outline-none"
         >
           <option value="all">All channels</option>
           {channels.map((c) => (
@@ -546,7 +546,7 @@ export default function GroupManager() {
           onClick={load}
           title="Refresh"
           aria-label="Refresh groups"
-          className="cursor-pointer rounded-md border border-neutral-700 bg-neutral-900 p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+          className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] p-1.5 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
         >
           <RefreshCw size={14} />
         </button>
@@ -555,14 +555,14 @@ export default function GroupManager() {
       {actionError && (
         <div
           role="alert"
-          className="rounded-md bg-zinc-950/50 px-3 py-2 text-xs text-zinc-300"
+          className="rounded-md bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-xs text-[var(--text)]"
         >
           {actionError}
         </div>
       )}
 
       {loadError && groups.length > 0 && (
-        <div className="rounded-md border border-neutral-800 px-3 py-2 text-xs text-neutral-400">
+        <div className="rounded-md border border-[var(--border)] px-3 py-2 text-xs text-[var(--muted)]">
           Showing cached data — refresh failed: {loadError}
         </div>
       )}
@@ -589,26 +589,26 @@ export default function GroupManager() {
               <div
                 key={key}
                 role="listitem"
-                className="flex items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+                className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-3"
               >
                 <span className="text-2xl" aria-hidden title={g.channel}>
                   {channelEmoji(g.channel)}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-medium text-neutral-100">
+                    <span className="truncate text-sm font-medium text-[var(--text)]">
                       {g.name}
                     </span>
                     <StatusBadge muted={g.muted} />
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-xs text-neutral-400">
+                  <div className="mt-0.5 truncate font-mono text-xs text-[var(--muted)]">
                     {g.channel} · {g.group_id}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-400">
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-[var(--muted)]">
                     <span title="Members">{formatCount(g.member_count)} members</span>
                     <span title="Messages">{formatCount(g.message_count)} messages</span>
                     {g.policy.denied_commands.length > 0 && (
-                      <span className="text-zinc-400/80">
+                      <span className="text-[color-mix(in_srgb,var(--muted)_80%,transparent)]">
                         {g.policy.denied_commands.length} denied
                       </span>
                     )}
@@ -620,7 +620,7 @@ export default function GroupManager() {
                     type="button"
                     onClick={() => setPolicyGroup(g)}
                     title="View / edit command policy"
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))]"
                   >
                     <ShieldCheck size={13} />
                     Policy
@@ -632,8 +632,8 @@ export default function GroupManager() {
                     title={g.muted ? "Unmute group" : "Mute group"}
                     className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50 ${
                       g.muted
-                        ? "border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-950/70"
-                        : "border-zinc-800 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-950/70"
+                        ? "border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_40%,transparent)] text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--bg)_70%,transparent)]"
+                        : "border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_40%,transparent)] text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--bg)_70%,transparent)]"
                     }`}
                   >
                     {g.muted ? <Bell size={13} /> : <BellOff size={13} />}

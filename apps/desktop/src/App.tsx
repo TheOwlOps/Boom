@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Menu, Settings, Store } from "lucide-react";
+import { Menu } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import { ChatView, type BotApi } from "./components/ChatView";
-import StatusBar from "./components/StatusBar";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import UpdateChecker from "./components/UpdateChecker";
 // Marketplace modal (types re-exported for consumers by the component itself).
@@ -75,18 +74,15 @@ function usePersistedState<T>(
 /**
  * Slim header row (52px), iMessage-style chat title bar.
  * Left: bot identity — avatar monogram + name + subtitle.
- * Right: backend status dot, then Settings / Marketplace icon buttons.
+ * Right: backend status dot + command palette hint.
+ * Settings / Marketplace now live in the sidebar footer.
  * Monochrome: CSS vars only (var(--bg), var(--surface), var(--border),
  * var(--text), var(--muted)). Icon buttons are ghost circles with a gray
  * hover background.
  */
 function Header({
-  onOpenSettings,
-  onOpenMarketplace,
   onOpenCommandPalette,
 }: {
-  onOpenSettings(): void;
-  onOpenMarketplace(): void;
   onOpenCommandPalette(): void;
 }) {
   return (
@@ -109,7 +105,7 @@ function Header({
         </div>
       </div>
 
-      {/* Right — backend status dot + icon actions. */}
+      {/* Right — backend status dot + command palette. */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <BackendStatus compact />
         {/* Command palette hint chip — opens the palette on click. */}
@@ -123,26 +119,6 @@ function Header({
             <kbd className="border border-[var(--border)] rounded bg-[var(--surface)] px-1.5 py-0.5 font-[inherit] text-[11px] font-medium leading-none">
               ⌘K
             </kbd>
-          </button>
-        </Tooltip>
-        <Tooltip label="Settings">
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            aria-label="Open settings"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
-          >
-            <Settings className="h-[18px] w-[18px]" aria-hidden="true" />
-          </button>
-        </Tooltip>
-        <Tooltip label="Marketplace">
-          <button
-            type="button"
-            onClick={onOpenMarketplace}
-            aria-label="Open marketplace"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
-          >
-            <Store className="h-[18px] w-[18px]" aria-hidden="true" />
           </button>
         </Tooltip>
       </div>
@@ -342,6 +318,8 @@ export default function App() {
       setActiveSession(null);
       setMobileNavOpen(false);
     },
+    onOpenSettings: () => setSettingsOpen(true),
+    onOpenMarketplace: openMarketplace,
   };
 
   return (
@@ -361,23 +339,13 @@ export default function App() {
         <Sidebar {...sidebarProps} />
       </div>
 
-      {/* Center column — slim header, thin status bar, chat view */}
+      {/* Center column — slim header, chat view */}
       <main id="boom-main" className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
         <Header
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenMarketplace={openMarketplace}
           onOpenCommandPalette={() =>
             window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))
           }
         />
-        {/* Thin status strip under the header. The backend health dot now
-            lives in the header (right side); StatusBar keeps its own
-            one-line info (API state, tools/skills counts, uptime).
-            The full BackendStatus panel below only renders while
-            disconnected. */}
-        <div className="min-w-0">
-          <StatusBar />
-        </div>
         {/* Chat is the main view; all management lives in SettingsModal. */}
         <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label="Chat view">
           {/* Full backend health panel — only visible while disconnected. */}

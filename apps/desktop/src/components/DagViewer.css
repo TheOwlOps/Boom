@@ -3,8 +3,8 @@
   position: relative;
   height: 100%;
   min-height: 320px;
-  background: var(--surface, #111111);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -23,9 +23,9 @@
 }
 
 .dag-node .react-flow__node-default {
-  background: var(--surface-2, #1a1a1a);
-  color: var(--text, #fafafa);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 13px;
   max-width: 220px;
@@ -39,26 +39,26 @@
 
 .dag-node-idle .react-flow__node-default {
   border-style: dashed;
-  color: var(--muted, #a1a1aa);
+  color: var(--muted);
 }
 
 .dag-node-running .react-flow__node-default {
-  border-color: var(--warning, #71717a);
+  border-color: var(--warning);
   animation: dag-pulse 1.6s ease-out infinite;
 }
 
 .dag-node-completed .react-flow__node-default {
-  border-color: var(--success, #d4d4d8);
+  border-color: var(--success);
 }
 
 .dag-node-failed .react-flow__node-default {
-  border-color: var(--danger, #ffffff);
-  color: var(--danger, #ffffff);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .dag-node-blocked .react-flow__node-default {
   border-style: dashed;
-  color: var(--muted, #a1a1aa);
+  color: var(--muted);
   text-decoration: line-through;
 }
 
@@ -75,7 +75,7 @@
 }
 
 .dag-edge .react-flow__edge-path {
-  stroke: var(--muted, #a1a1aa);
+  stroke: var(--muted);
   stroke-width: 1.5;
 }
 
@@ -94,14 +94,14 @@
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--text, #fafafa);
+  color: var(--text);
 }
 
 .dag-error-dot {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--danger, #ffffff);
+  background: var(--danger);
   flex-shrink: 0;
 }
 
@@ -115,9 +115,9 @@
   flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  background: var(--surface-2, #1a1a1a);
-  color: var(--text, #fafafa);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
   font-size: 12px;
   cursor: pointer;
   transition: transform 150ms ease, filter 150ms ease;
@@ -142,9 +142,9 @@
   border-radius: 10px;
   background: linear-gradient(
     100deg,
-    var(--surface-2, #1a1a1a) 40%,
-    var(--border, rgba(255, 255, 255, 0.08)) 50%,
-    var(--surface-2, #1a1a1a) 60%
+    var(--surface-2) 40%,
+    var(--border) 50%,
+    var(--surface-2) 60%
   );
   background-size: 200% 100%;
   animation: dag-shimmer 1.5s linear infinite;
@@ -165,7 +165,7 @@
   gap: 12px;
   height: 100%;
   min-height: 320px;
-  color: var(--muted, #a1a1aa);
+  color: var(--muted);
 }
 
 .dag-empty-icon {

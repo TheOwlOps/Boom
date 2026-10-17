@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Store } from "lucide-react";
 import type { Bot } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
+import { BotAvatar } from "./BotAvatar";
 import { Skeleton, SkeletonAvatar } from "./Skeleton";
 import { BoomiEmptyState } from "./BoomiEmptyState";
 import "./Sidebar.css";
@@ -17,6 +18,8 @@ export interface SidebarProps {
   activeBotId: string | null;
   onSelectBot(id: string): void;
   onNewChat(): void;
+  onOpenSettings(): void;
+  onOpenMarketplace(): void;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
@@ -50,7 +53,13 @@ function TeammateRow({
       aria-selected={active}
     >
       <span className="teammate-avatar-wrap">
-        <BoomiAvatar size={40} status={online ? "idle" : "sleeping"} alt={bot.name} />
+        <BotAvatar
+          botId={bot.id}
+          name={bot.name}
+          emoji={bot.avatar_emoji}
+          size={40}
+          status={online ? "online" : "offline"}
+        />
         <span
           className={`teammate-presence${online ? " online" : ""}`}
           aria-hidden="true"
@@ -78,6 +87,8 @@ export default function Sidebar({
   activeBotId,
   onSelectBot,
   onNewChat,
+  onOpenSettings,
+  onOpenMarketplace,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
 
@@ -110,15 +121,23 @@ export default function Sidebar({
               title={`${b.name} — ${b.is_active ? "Online" : "Offline"}`}
               aria-label={b.name}
             >
-              <BoomiAvatar
+              <BotAvatar
+                botId={b.id}
+                name={b.name}
+                emoji={b.avatar_emoji}
                 size={36}
-                status={b.is_active ? "idle" : "sleeping"}
-                alt={b.name}
+                status={b.is_active ? "online" : "offline"}
               />
             </button>
           ))}
         </div>
         <div className="sidebar-collapsed-spacer" />
+        <button className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Open settings">
+          <Settings size={18} />
+        </button>
+        <button className="icon-btn" onClick={onOpenMarketplace} title="Marketplace" aria-label="Open marketplace">
+          <Store size={18} />
+        </button>
         <ChannelMonitor compact />
       </aside>
     );
@@ -210,6 +229,14 @@ export default function Sidebar({
       </nav>
 
       <footer className="sidebar-footer">
+        <button type="button" className="settings-btn" onClick={onOpenSettings} aria-label="Open settings">
+          <Settings size={18} aria-hidden="true" />
+          <span>Settings</span>
+        </button>
+        <button type="button" className="settings-btn" onClick={onOpenMarketplace} aria-label="Open marketplace">
+          <Store size={18} aria-hidden="true" />
+          <span>Marketplace</span>
+        </button>
         <ChannelMonitor compact />
       </footer>
     </aside>

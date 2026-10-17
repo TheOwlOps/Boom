@@ -4,6 +4,7 @@ import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { MessageBubble } from "./MessageParts";
 import { BoomiAvatar } from "./BoomiAvatar";
+import { BotAvatar } from "./BotAvatar";
 import { BoomiEmptyState } from "./BoomiEmptyState";
 import { ThinkingDots } from "./ThinkingDots";
 import { Skeleton, SkeletonAvatar } from "./Skeleton";
@@ -405,7 +406,17 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
           No bot-picker dropdown (sidebar owns selection via onBotApi),
           no panel toggle button. */}
       <header className="im-header">
-        <BoomiAvatar size={36} alt={activeBot ? activeBot.name : "Boomi"} />
+        {activeBot ? (
+          <BotAvatar
+            botId={activeBot.id}
+            name={activeBot.name}
+            emoji={activeBot.avatar_emoji}
+            size={36}
+            status="online"
+          />
+        ) : (
+          <BoomiAvatar size={36} alt="Boomi" />
+        )}
         <div className="im-header-meta">
           <div className="im-header-name">{activeBot ? activeBot.name : "Boomi"}</div>
           <div className="im-header-status">

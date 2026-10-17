@@ -129,10 +129,10 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
   if (compact) {
     const dotColor =
       state === "connected"
-        ? "bg-zinc-500"
+        ? "bg-[var(--muted)]"
         : state === "starting"
-          ? "bg-zinc-500"
-          : "bg-zinc-500";
+          ? "bg-[var(--muted)]"
+          : "bg-[var(--muted)]";
     const label =
       state === "connected"
         ? "Backend connected"
@@ -158,25 +158,25 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
   return (
     <div
       role="alert"
-      className="mx-4 mt-4 flex items-start gap-4 rounded-xl border border-zinc-500/30 bg-zinc-500/10 p-5"
+      className="mx-4 mt-4 flex items-start gap-4 rounded-xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[color-mix(in_srgb,var(--muted)_10%,transparent)] p-5"
     >
       <AlertTriangle
-        className="mt-0.5 h-6 w-6 shrink-0 text-zinc-400"
+        className="mt-0.5 h-6 w-6 shrink-0 text-[var(--muted)]"
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
-        <h2 className="text-base font-semibold text-neutral-100">
+        <h2 className="text-base font-semibold text-[var(--text)]">
           Backend is not running
         </h2>
-        <p className="mt-1 text-sm text-neutral-400">
+        <p className="mt-1 text-sm text-[var(--muted)]">
           {getBackendHelpText()}
         </p>
         {backendError && (
-          <details className="mt-2 rounded-lg bg-black/30 p-3">
-            <summary className="cursor-pointer text-xs font-medium text-zinc-400">
+          <details className="mt-2 rounded-lg bg-[color-mix(in_srgb,var(--bg)_30%,transparent)] p-3">
+            <summary className="cursor-pointer text-xs font-medium text-[var(--muted)]">
               Chi tiết lỗi (bấm để xem)
             </summary>
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-neutral-300">
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-[var(--text)]">
               {backendError}
             </pre>
           </details>
@@ -186,7 +186,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
             type="button"
             onClick={() => void handleStart()}
             disabled={startingNative}
-            className="btn-hover flex items-center gap-2 rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="btn-hover flex items-center gap-2 rounded-lg bg-[var(--accent)] px-3.5 py-2 text-sm font-medium text-[var(--bg)] disabled:opacity-50"
           >
             {startingNative ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -198,7 +198,7 @@ export default function BackendStatus({ compact = false }: BackendStatusProps) {
           <button
             type="button"
             onClick={handleRetry}
-            className="btn-hover flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-medium text-neutral-200"
+            className="btn-hover flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-medium text-[var(--text)]"
           >
             <RotateCw className="h-4 w-4" aria-hidden="true" />
             Retry

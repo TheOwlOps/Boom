@@ -135,10 +135,10 @@ function formatTime(ts: string): string {
 /* ------------------------------------------------------------------ theme */
 
 const LEVEL_STYLES: Record<LogLevel, string> = {
-  INFO: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-  WARN: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-  ERROR: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-  DEBUG: "bg-neutral-500/15 text-neutral-400 border-neutral-500/30",
+  INFO: "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--muted)] border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
+  WARN: "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--muted)] border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
+  ERROR: "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--muted)] border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
+  DEBUG: "bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--muted)] border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
 };
 
 const LEVEL_FILTERS: LevelFilter[] = ["ALL", "INFO", "WARN", "ERROR", "DEBUG"];
@@ -279,9 +279,9 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
   /* ------------------------------------------------------------------ UI */
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-lg border border-neutral-800 bg-neutral-900 text-neutral-200">
+    <div className="flex h-full min-h-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]">
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 p-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] p-3">
         <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by level">
           {LEVEL_FILTERS.map((f) => (
             <button
@@ -290,12 +290,12 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
               onClick={() => setLevelFilter(f)}
               className={`rounded border px-2 py-0.5 font-mono text-xs transition-colors ${
                 levelFilter === f
-                  ? "border-neutral-400 bg-neutral-700 text-white"
-                  : "border-neutral-800 bg-neutral-900 text-neutral-400 hover:border-neutral-600"
+                  ? "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)]"
+                  : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:border-[var(--muted)]"
               }`}
             >
               {f}
-              {f !== "ALL" && <span className="ml-1 text-neutral-400">{levelCounts[f]}</span>}
+              {f !== "ALL" && <span className="ml-1 text-[var(--muted)]">{levelCounts[f]}</span>}
             </button>
           ))}
         </div>
@@ -306,14 +306,14 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search messages…"
           aria-label="Search log messages"
-          className="min-w-40 flex-1 rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-200 placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+          className="min-w-40 flex-1 rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs text-[var(--text)] placeholder-[var(--muted)] focus:border-[var(--muted)] focus:outline-none"
         />
 
         <select
           value={moduleFilter}
           onChange={(e) => setModuleFilter(e.target.value)}
           aria-label="Filter by module"
-          className="rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-200 focus:border-neutral-500 focus:outline-none"
+          className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 font-mono text-xs text-[var(--text)] focus:border-[var(--muted)] focus:outline-none"
         >
           <option value="ALL">all modules</option>
           {modules.map((m) => (
@@ -324,12 +324,12 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
         </select>
 
         <div className="ml-auto flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-neutral-400">
+          <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-[var(--muted)]">
             <input
               type="checkbox"
               checked={autoScroll}
               onChange={(e) => setAutoScroll(e.target.checked)}
-              className="accent-zinc-500"
+              className="accent-[var(--muted)]"
             />
             auto-scroll
           </label>
@@ -338,8 +338,8 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
             onClick={() => setPaused((p) => !p)}
             className={`rounded border px-2 py-1 font-mono text-xs transition-colors ${
               paused
-                ? "border-zinc-500/50 bg-zinc-500/15 text-zinc-400"
-                : "border-neutral-700 bg-neutral-800 text-neutral-200 hover:border-neutral-500"
+                ? "border-[color-mix(in_srgb,var(--border)_50%,transparent)] bg-[color-mix(in_srgb,var(--muted)_15%,transparent)] text-[var(--muted)]"
+                : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)] hover:border-[var(--border)]"
             }`}
           >
             {paused ? "▶ Resume" : "⏸ Pause"}
@@ -351,51 +351,51 @@ export default function LogViewer({ initialLimit = DEFAULT_LIMIT, pollIntervalMs
       <div ref={boxRef} className="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-xs leading-5" aria-label="Gateway logs">
         {loading ? (
           <div className="flex h-full items-center justify-center">
-            <span className="animate-pulse text-neutral-400">// loading logs…</span>
+            <span className="animate-pulse text-[var(--muted)]">// loading logs…</span>
           </div>
         ) : error && entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3">
-            <span className="text-zinc-400">// failed to load logs: {error}</span>
+            <span className="text-[var(--muted)]">// failed to load logs: {error}</span>
             <button
               type="button"
               onClick={() => void loadInitial()}
-              className="rounded border border-neutral-700 bg-neutral-800 px-3 py-1 font-mono text-xs text-neutral-200 hover:border-neutral-500"
+              className="rounded border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1 font-mono text-xs text-[var(--text)] hover:border-[var(--border)]"
             >
               Retry
             </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex h-full items-center justify-center">
-            <span className="text-neutral-600">// no log entries match the current filters</span>
+            <span className="text-[var(--muted)]">// no log entries match the current filters</span>
           </div>
         ) : (
           filtered.map((e) => (
-            <div key={e.key} className="flex gap-2 whitespace-pre-wrap break-words rounded px-1 py-px hover:bg-neutral-800/60">
-              <span className="shrink-0 select-none text-neutral-600">{formatTime(e.timestamp)}</span>
+            <div key={e.key} className="flex gap-2 whitespace-pre-wrap break-words rounded px-1 py-px hover:bg-[color-mix(in_srgb,var(--surface-2)_60%,transparent)]">
+              <span className="shrink-0 select-none text-[var(--muted)]">{formatTime(e.timestamp)}</span>
               <span className={`shrink-0 select-none rounded border px-1 leading-5 ${LEVEL_STYLES[e.level]}`}>{e.level}</span>
-              <span className="shrink-0 select-none text-neutral-400">[{e.module}]</span>
-              <span className="min-w-0 text-neutral-300">{e.message}</span>
+              <span className="shrink-0 select-none text-[var(--muted)]">[{e.module}]</span>
+              <span className="min-w-0 text-[var(--text)]">{e.message}</span>
             </div>
           ))
         )}
       </div>
 
       {/* Footer: count + load more */}
-      <div className="flex items-center gap-3 border-t border-neutral-800 px-3 py-2 font-mono text-xs text-neutral-400">
+      <div className="flex items-center gap-3 border-t border-[var(--border)] px-3 py-2 font-mono text-xs text-[var(--muted)]">
         <span>
           {filtered.length} / {entries.length} entries
-          {paused && <span className="ml-2 text-zinc-500">(polling paused)</span>}
+          {paused && <span className="ml-2 text-[var(--muted)]">(polling paused)</span>}
         </span>
         <button
           type="button"
           onClick={() => void loadMore()}
           disabled={loadingMore || !hasMore || loading}
-          className="rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-neutral-300 transition-colors hover:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text)] transition-colors hover:border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loadingMore ? "loading…" : hasMore ? "Load more (older)" : "no more entries"}
         </button>
         {error && entries.length > 0 && (
-          <span className="text-zinc-500">// last load failed: {error}</span>
+          <span className="text-[var(--muted)]">// last load failed: {error}</span>
         )}
       </div>
     </div>

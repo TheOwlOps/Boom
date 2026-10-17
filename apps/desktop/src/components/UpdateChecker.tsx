@@ -166,21 +166,21 @@ export default function UpdateChecker() {
   const versionLabel =
     phase === "available" ? (
       <>
-        <Sparkles className="h-4 w-4 shrink-0 text-zinc-300" aria-hidden="true" />
-        <span className="font-semibold text-neutral-100">
+        <Sparkles className="h-4 w-4 shrink-0 text-[var(--text)]" aria-hidden="true" />
+        <span className="font-semibold text-[var(--text)]">
           🎉 New version {update.version} available!
         </span>
-        <span className="hidden text-neutral-400 sm:inline">
+        <span className="hidden text-[var(--muted)] sm:inline">
           You&apos;re on {update.currentVersion}.
         </span>
       </>
     ) : phase === "downloading" ? (
       <>
         <Loader2
-          className="h-4 w-4 shrink-0 animate-spin text-zinc-300"
+          className="h-4 w-4 shrink-0 animate-spin text-[var(--text)]"
           aria-hidden="true"
         />
-        <span className="font-medium text-neutral-100">
+        <span className="font-medium text-[var(--text)]">
           {progress === null
             ? "Downloading update…"
             : `Downloading update… ${progress}%`}
@@ -189,20 +189,20 @@ export default function UpdateChecker() {
     ) : phase === "installed" ? (
       <>
         <CheckCircle2
-          className="h-4 w-4 shrink-0 text-zinc-300"
+          className="h-4 w-4 shrink-0 text-[var(--text)]"
           aria-hidden="true"
         />
-        <span className="font-semibold text-neutral-100">
+        <span className="font-semibold text-[var(--text)]">
           Update installed — restart to apply it.
         </span>
       </>
     ) : (
       <>
         <AlertTriangle
-          className="h-4 w-4 shrink-0 text-zinc-300"
+          className="h-4 w-4 shrink-0 text-[var(--text)]"
           aria-hidden="true"
         />
-        <span className="font-medium text-neutral-100">
+        <span className="font-medium text-[var(--text)]">
           {error ?? "Update failed."}
         </span>
       </>
@@ -214,7 +214,7 @@ export default function UpdateChecker() {
       aria-live="polite"
       className="fade-in slide-down fixed inset-x-0 top-0 z-40"
     >
-      <div className="border-b border-zinc-700 bg-zinc-900 shadow-lg shadow-black/50">
+      <div className="border-b border-[var(--border)] bg-[var(--surface)] shadow-lg shadow-black/50">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
             {versionLabel}
@@ -257,7 +257,7 @@ export default function UpdateChecker() {
             disabled={phase === "downloading"}
             title="Dismiss"
             aria-label="Dismiss update banner"
-            className="btn-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 hover:bg-white/10 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className="btn-hover flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -266,7 +266,7 @@ export default function UpdateChecker() {
         {/* Download progress bar. Indeterminate (pulsing) when the update
             server did not report a content length. */}
         {phase === "downloading" && (
-          <div className="h-1 w-full bg-zinc-950/80" aria-hidden="true">
+          <div className="h-1 w-full bg-[color-mix(in_srgb,var(--bg)_80%,transparent)]" aria-hidden="true">
             <div
               className={`h-full bg-[var(--accent)] transition-[width] duration-200 ${
                 progress === null ? "w-full animate-pulse" : ""

@@ -371,6 +371,134 @@ pub trait ZaloPersonal: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// Channels
+// ---------------------------------------------------------------------------
+
+/// Public status of one channel for `GET /api/channels`.
+///
+/// `status` is one of `connected`, `disconnected`, `not-configured` or
+/// `unsupported`. Channels the Rust core does not implement report
+/// `unsupported` with an honest `detail` — never "not wired".
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChannelInfo {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub supported: bool,
+    pub detail: Option<String>,
+}
+
+/// Info returned by a successful `POST /api/channels/:id/connect`.
+#[derive(Clone, Debug, Serialize)]
+pub struct ChannelConnectInfo {
+    pub bot_username: Option<String>,
+    pub message: String,
+}
+
+/// Channel failure carrying the HTTP status the route should return.
+#[derive(Clone, Debug)]
+pub struct ChannelError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl ChannelError {
+    pub fn new(status: u16, message: impl Into<String>) -> Self {
+        Self { status, message: message.into() }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(400, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(404, message)
+    }
+
+    /// Upstream (platform API) failure.
+    pub fn upstream(message: impl Into<String>) -> Self {
+        Self::new(502, message)
+    }
+}
+
+/// Channel registry (Rust-native port of Python's `gateway/channel.py`
+/// adapters + `KNOWN_CHANNELS`). Telegram is implemented for real against
+/// the Bot API; every other platform reports `unsupported` honestly.
+///
+/// Secrets live only in the 0600 config file; they are never returned by
+/// `info` and never appear in error messages or logs.
+pub trait ChannelRegistry: Send + Sync {
+    /// Fixed channel list (mirrors [`KNOWN_CHANNELS`] order).
+    fn channel_ids(&self) -> Vec<String>;
+    /// Current public status of one channel. Unknown ids report
+    /// `unsupported` with `detail` "unknown channel".
+    fn info(&self, id: &str) -> ChannelInfo;
+    /// Save the credential after a live verification against the platform
+    /// API. `Ok` only when the platform accepted the credential.
+    fn connect(&self, id: &str, token: &str) -> BoxFuture<'_, Result<ChannelConnectInfo, ChannelError>>;
+    /// Drop the stored credential. Idempotent: disconnecting an
+    /// unconfigured channel succeeds.
+    fn disconnect(&self, id: &str) -> Result<(), ChannelError>;
+    /// Live self-test: with `chat_id` sends a test message, without it
+    /// just re-verifies the stored credential. `Ok` carries a short
+    /// human-readable confirmation.
+    fn test(
+        &self,
+        id: &str,
+        chat_id: Option<&str>,
+        message: Option<&str>,
+    ) -> BoxFuture<'_, Result<String, ChannelError>>;
+}
+
+/// `$BOOM_HOME`, else `~/.boom` (Python: `os.environ.get("BOOM_HOME", ...)`
+/// in `agent/src/config.py`). Touches no files.
+pub(crate) fn boom_home_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("BOOM_HOME") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    dirs::home_dir()
+        .map(|h| h.join(".boom"))
+        .unwrap_or_else(|| PathBuf::from(".boom"))
+}
+
+/// Owner-read/write-only (Python: `CONFIG_MODE = 0o600`).
+#[cfg(unix)]
+const SECRET_FILE_MODE: u32 = 0o600;
+
+/// Owner-only permissions on a secret file (Unix; a no-op on Windows).
+#[cfg(unix)]
+pub(crate) fn restrict_permissions(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SECRET_FILE_MODE))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn restrict_permissions(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Atomic, owner-only write of a secret-bearing config file: write temp,
+/// chmod 0600, rename, then re-apply the mode (rename can reset it on some
+/// filesystems). Returns the final path.
+pub(crate) fn atomic_write_secret(
+    dir: &std::path::Path,
+    filename: &str,
+    text: &str,
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!("{filename}.tmp"));
+    std::fs::write(&tmp, text)?;
+    restrict_permissions(&tmp)?;
+    let final_path = dir.join(filename);
+    std::fs::rename(&tmp, &final_path)?;
+    restrict_permissions(&final_path)?;
+    Ok(final_path)
+}
+
+// ---------------------------------------------------------------------------
 // AppState
 // ---------------------------------------------------------------------------
 
@@ -391,6 +519,9 @@ pub struct AppState {
     pub storage: Arc<dyn Storage>,
     pub updater: Arc<dyn Updater>,
     pub zalo: Arc<dyn ZaloPersonal>,
+    /// Real channel connections (Telegram Bot API) + honest `unsupported`
+    /// states for the platforms this build does not implement.
+    pub channels: Arc<dyn ChannelRegistry>,
     /// Reported by /api/health and /api/version.
     pub version: String,
     /// Server start time for `uptime_sec`.

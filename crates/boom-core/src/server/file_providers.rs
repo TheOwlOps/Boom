@@ -25,9 +25,6 @@ use super::state::*;
 
 /// File name inside the Boom home directory (Python: `CONFIG_FILENAME`).
 const CONFIG_FILENAME: &str = "providers.json";
-/// Owner-read/write-only (Python: `CONFIG_MODE = 0o600`).
-#[cfg(unix)]
-const CONFIG_MODE: u32 = 0o600;
 /// Probe timeout (Python: `TEST_TIMEOUT_SEC = 10.0`).
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -68,7 +65,7 @@ impl FileProviderRegistry {
     /// — the same convention as Python's `ProviderManager.__init__` and
     /// `agent/src/config.py`. Touches no files.
     pub fn new() -> Self {
-        Self::with_base_dir(default_base_dir())
+        Self::with_base_dir(boom_home_dir())
     }
 
     /// Constructor with an explicit base directory (Python's injectable
@@ -93,24 +90,10 @@ impl FileProviderRegistry {
 
     /// Atomic write with 0600 permissions (Python `_save`).
     fn save(&self, data: &ProvidersFile) -> Result<(), ProviderConfigError> {
-        fs::create_dir_all(&self.base_dir).map_err(|e| {
-            ProviderConfigError::Internal(format!("failed to create config dir: {e}"))
-        })?;
         let text = serde_json::to_string_pretty(data).map_err(|e| {
             ProviderConfigError::Internal(format!("failed to serialize provider config: {e}"))
         })?;
-        let tmp = self.base_dir.join("providers.json.tmp");
-        fs::write(&tmp, text).map_err(|e| {
-            ProviderConfigError::Internal(format!("failed to save provider config: {e}"))
-        })?;
-        restrict_permissions(&tmp).map_err(|e| {
-            ProviderConfigError::Internal(format!("failed to save provider config: {e}"))
-        })?;
-        fs::rename(&tmp, &self.path).map_err(|e| {
-            ProviderConfigError::Internal(format!("failed to save provider config: {e}"))
-        })?;
-        // rename() can reset the mode on some filesystems — enforce again.
-        restrict_permissions(&self.path).map_err(|e| {
+        atomic_write_secret(&self.base_dir, CONFIG_FILENAME, &text).map_err(|e| {
             ProviderConfigError::Internal(format!("failed to save provider config: {e}"))
         })?;
         Ok(())
@@ -127,30 +110,7 @@ impl Default for FileProviderRegistry {
     }
 }
 
-/// `$BOOM_HOME`, else `~/.boom` (Python: `os.environ.get("BOOM_HOME", ...)`).
-fn default_base_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("BOOM_HOME") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-    dirs::home_dir()
-        .map(|h| h.join(".boom"))
-        .unwrap_or_else(|| PathBuf::from(".boom"))
-}
 
-/// Owner-only permissions on Unix; a no-op on Windows (per task spec).
-#[cfg(unix)]
-fn restrict_permissions(path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(CONFIG_MODE))
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // Connection probes (Python: ProviderManager._build_probe / test_connection)
@@ -766,11 +726,11 @@ mod tests {
 
     #[test]
     fn boom_home_env_selects_base_dir() {
-        // default_base_dir honours BOOM_HOME (unit-level check only; the
+        // boom_home_dir honours BOOM_HOME (unit-level check only; the
         // registry constructor itself never touches the filesystem).
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("BOOM_HOME", dir.path());
-        let resolved = default_base_dir();
+        let resolved = boom_home_dir();
         std::env::remove_var("BOOM_HOME");
         assert_eq!(resolved, dir.path());
     }

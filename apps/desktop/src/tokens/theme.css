@@ -8,12 +8,13 @@
  * ------------------------------------------------------------------ */
 
 :root {
-  /* Monochrome palette (dark default): black / white / grays only.
+  /* Monochrome palette (dark default): dark gray / white / grays only.
+     Softer than pure black — matches Grokbot's dark gray aesthetic.
      Semantic states (success/warning/danger) are carried by shade
      intensity + icons, never by hue. */
-  --bg: #0a0a0a;
-  --surface: #111111;
-  --surface-2: #1a1a1a;
+  --bg: #1a1a1a;
+  --surface: #1e1e1e;
+  --surface-2: #262626;
   --border: rgba(255, 255, 255, 0.08);
   --text: #fafafa;
   --muted: #a1a1aa;
@@ -25,9 +26,9 @@
 
   /* Channel triplets for tailwind opacity support (bg-bg/80 etc).
      Same values as the hex tokens above, space-separated RGB channels. */
-  --bg-rgb: 10 10 10;
-  --surface-rgb: 17 17 17;
-  --surface-2-rgb: 26 26 26;
+  --bg-rgb: 26 26 26;
+  --surface-rgb: 30 30 30;
+  --surface-2-rgb: 38 38 38;
   --text-rgb: 250 250 250;
   --muted-rgb: 161 161 170;
   --accent-rgb: 255 255 255;

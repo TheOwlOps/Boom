@@ -790,6 +790,10 @@ impl AppState {
             storage,
             updater: Arc::new(GithubUpdater::new(version.clone())),
             zalo: Arc::new(NoZalo),
+            // Real channel connections: Telegram via the Bot API, persisted
+            // to $BOOM_HOME/channels.json (0600). Other platforms report
+            // `unsupported` honestly.
+            channels: Arc::new(super::channels::FileChannelRegistry::new()),
             version,
             start: Instant::now(),
             skills_dir,

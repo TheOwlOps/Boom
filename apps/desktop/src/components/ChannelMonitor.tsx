@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  FlaskConical,
   Hash,
+  Loader2,
   MessageCircle,
   MessageSquare,
   MessagesSquare,
   Phone,
+  Plug,
   RefreshCw,
   Send,
   Smartphone,
+  Unplug,
   type LucideIcon,
 } from "lucide-react";
 import { EmptyState } from "./EmptyState";
-import { getChannels } from "../lib/api";
-import type { ChannelStatus } from "../lib/types";
+import ChannelConnectDialog from "./ChannelConnectDialog";
+import { disconnectChannel, getChannels, testChannel } from "../lib/api";
+import type { ChannelState, ChannelStatus } from "../lib/types";
 import ZaloPersonalSetup from "./ZaloPersonalSetup";
 
 const REFRESH_MS = 30_000;
@@ -81,7 +86,11 @@ function ChannelIcon({ name }: { name: string }) {
   );
 }
 
-function StatusDot({ connected, size = 8 }: { connected: boolean; size?: number }) {
+/** Status dot: green-ish (var(--success)) when connected, gray otherwise.
+ *  Unsupported channels render dimmed so they read as unavailable. */
+function StatusDot({ state, size = 8 }: { state: ChannelState; size?: number }) {
+  const connected = state === "connected";
+  const dimmed = state === "unsupported";
   return (
     <span
       aria-hidden
@@ -90,11 +99,32 @@ function StatusDot({ connected, size = 8 }: { connected: boolean; size?: number 
         height: size,
         borderRadius: 999,
         background: connected ? "var(--success)" : "var(--muted)",
-        opacity: connected ? 1 : 0.45,
+        opacity: connected ? 1 : dimmed ? 0.25 : 0.45,
         flexShrink: 0,
       }}
     />
   );
+}
+
+/** Honest one-line label for each backend state. */
+function stateLabel(state: ChannelState): string {
+  switch (state) {
+    case "connected": return "Connected";
+    case "disconnected": return "Not connected";
+    case "not-configured": return "Not connected";
+    case "unsupported": return "Not supported";
+    case "unknown": return "Unknown";
+  }
+}
+
+/** Whether the row may offer a Connect action (opens the token dialog). */
+function canConnect(state: ChannelState): boolean {
+  return state === "disconnected" || state === "not-configured" || state === "unknown";
+}
+
+/** Whether the row may offer Disconnect / Test actions. */
+function canDisconnect(state: ChannelState): boolean {
+  return state === "connected";
 }
 
 function ErrorCard({ onRetry }: { onRetry: () => void }) {
@@ -170,6 +200,20 @@ function CompactSkeleton() {
   );
 }
 
+const actionBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  padding: "5px 9px",
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  fontSize: 12,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
 export interface ChannelMonitorProps {
   /** Compact sidebar variant: dots row + "N/M connected". */
   compact?: boolean;
@@ -179,6 +223,14 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
   const [channels, setChannels] = useState<ChannelStatus[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [zaloOpen, setZaloOpen] = useState(false);
+  /** Channel currently in the Connect dialog (full variant only). */
+  const [connecting, setConnecting] = useState<ChannelStatus | null>(null);
+  /** Channel ids with an in-flight disconnect or test. */
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  /** Last action error per channel id (shown inline under the row). */
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  /** Last test outcome per channel id ("Test passed" / backend message). */
+  const [testNotes, setTestNotes] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -198,6 +250,52 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
     return () => clearInterval(id);
   }, [load]);
 
+  function markBusy(id: string, on: boolean) {
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
+
+  async function handleDisconnect(c: ChannelStatus) {
+    markBusy(c.id, true);
+    setRowErrors((prev) => ({ ...prev, [c.id]: "" }));
+    try {
+      await disconnectChannel(c.id);
+      await load();
+    } catch (e) {
+      setRowErrors((prev) => ({
+        ...prev,
+        [c.id]: e instanceof Error ? e.message : "Disconnect failed",
+      }));
+    } finally {
+      markBusy(c.id, false);
+    }
+  }
+
+  async function handleTest(c: ChannelStatus) {
+    markBusy(c.id, true);
+    setTestNotes((prev) => ({ ...prev, [c.id]: "" }));
+    setRowErrors((prev) => ({ ...prev, [c.id]: "" }));
+    try {
+      const res = await testChannel(c.id);
+      setTestNotes((prev) => ({
+        ...prev,
+        [c.id]: res.ok
+          ? (res.message ?? "Test passed")
+          : (res.message ?? "Test failed"),
+      }));
+    } catch (e) {
+      setRowErrors((prev) => ({
+        ...prev,
+        [c.id]: e instanceof Error ? e.message : "Test failed",
+      }));
+    } finally {
+      markBusy(c.id, false);
+    }
+  }
+
   // Still loading and never fetched successfully.
   if (channels === null) {
     if (failed) return <ErrorCard onRetry={load} />;
@@ -215,16 +313,16 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
   }
 
   if (compact) {
-    const connected = channels.filter((c) => c.connected).length;
+    const connected = channels.filter((c) => c.state === "connected").length;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }} role="status">
           {channels.map((c) => (
             <span
-              key={c.name}
-              title={`${capitalize(c.name)}: ${c.connected ? "connected" : (c.detail ?? "not connected")}`}
+              key={c.id}
+              title={`${capitalize(c.name)}: ${stateLabel(c.state)}${c.detail ? ` — ${c.detail}` : ""}`}
             >
-              <StatusDot connected={c.connected} size={10} />
+              <StatusDot state={c.state} size={10} />
             </span>
           ))}
         </div>
@@ -237,44 +335,109 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }} role="status">
-      {channels.map((c) => (
-        <div
-          key={c.name}
-          title={c.connected ? undefined : (c.detail ?? undefined)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "8px 10px",
-            borderRadius: 10,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--surface-2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <ChannelIcon name={c.name} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, color: "var(--text)" }}>{capitalize(c.name)}</div>
-            {!c.connected && c.detail && (
+      {channels.map((c) => {
+        const busy = busyIds.has(c.id);
+        const unsupported = c.state === "unsupported";
+        const rowError = rowErrors[c.id];
+        const testNote = testNotes[c.id];
+        return (
+          <div key={c.id} style={{ borderRadius: 10 }}>
+            <div
+              title={c.detail ?? undefined}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "8px 10px",
+                borderRadius: 10,
+                opacity: unsupported ? 0.55 : 1,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--surface-2)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <ChannelIcon name={c.name} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: "var(--text)" }}>{capitalize(c.name)}</div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--muted)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {unsupported
+                    ? "Chưa hỗ trợ trong bản này"
+                    : c.detail ?? stateLabel(c.state)}
+                </div>
+              </div>
+              {/* Actions: connected -> Test + Disconnect; not connected -> Connect; unsupported -> none. */}
+              {canDisconnect(c.state) && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => void handleTest(c)}
+                    disabled={busy}
+                    style={{ ...actionBtn, opacity: busy ? 0.5 : 1 }}
+                    aria-label={`Test ${c.name} connection`}
+                  >
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : <FlaskConical size={12} />}
+                    Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnect(c)}
+                    disabled={busy}
+                    style={{ ...actionBtn, opacity: busy ? 0.5 : 1 }}
+                    aria-label={`Disconnect ${c.name}`}
+                  >
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : <Unplug size={12} />}
+                    Disconnect
+                  </button>
+                </div>
+              )}
+              {canConnect(c.state) && (
+                <button
+                  type="button"
+                  onClick={() => setConnecting(c)}
+                  style={actionBtn}
+                  aria-label={`Connect ${c.name}`}
+                >
+                  <Plug size={12} />
+                  Connect
+                </button>
+              )}
+              <StatusDot state={c.state} />
+            </div>
+            {(rowError || testNote) && (
               <div
                 style={{
                   fontSize: 12,
                   color: "var(--muted)",
+                  padding: "2px 10px 6px 54px",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
+                role={rowError ? "alert" : undefined}
               >
-                {c.detail}
+                {rowError ?? testNote}
               </div>
             )}
           </div>
-          <StatusDot connected={c.connected} />
-        </div>
-      ))}
+        );
+      })}
+      <ChannelConnectDialog
+        channelId={connecting?.id ?? null}
+        channelName={connecting ? capitalize(connecting.name) : ""}
+        onClose={() => setConnecting(null)}
+        onConnected={() => void load()}
+      />
       <button
         type="button"
         onClick={() => setZaloOpen(true)}

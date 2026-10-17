@@ -383,7 +383,7 @@
   border: none;
   border-radius: var(--radius-control);
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   cursor: pointer;
   transition: background-color 150ms ease, transform 150ms ease;
 }
@@ -474,12 +474,12 @@
 
 .icon-btn.accent {
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
 }
 
 .icon-btn.accent:hover {
   background: var(--accent-hover);
-  color: #fff;
+  color: var(--bg);
 }
 
 .sidebar-search {
