@@ -226,44 +226,44 @@ function ProviderRow({
         onClick={onToggle}
         aria-expanded={expanded}
         aria-label={`${meta.name} provider settings`}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)]"
+        className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-2)]"
       >
         <ProviderLogo
           providerId={meta.id}
-          size={20}
+          size={18}
           colored
           className="shrink-0"
         />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--text)]">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--text)]">
           {meta.name}
         </span>
         {active && (
-          <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
+          <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--bg)] px-1.5 py-px text-[10px] font-medium text-[var(--text)]">
             Active
           </span>
         )}
-        <span className="flex shrink-0 items-center gap-1.5">
+        <span className="flex shrink-0 items-center gap-1">
           <span
             aria-hidden="true"
-            className={`h-2 w-2 rounded-full ${
+            className={`h-1.5 w-1.5 rounded-full ${
               connected ? "bg-emerald-500" : "bg-[var(--border)]"
             }`}
           />
-          <span className="whitespace-nowrap text-xs text-[var(--muted)]">
+          <span className="whitespace-nowrap text-[11px] text-[var(--muted)]">
             {connected ? "Connected" : "Not configured"}
           </span>
         </span>
         <ChevronDown
           aria-hidden="true"
-          className={`h-4 w-4 shrink-0 text-[var(--muted)] transition-transform ${
+          className={`h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform ${
             expanded ? "rotate-180" : ""
           }`}
         />
       </button>
 
-      {/* Expanded detail form. */}
+      {/* Expanded detail form — compact. */}
       {expanded && (
-        <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)] px-4 py-4">
+        <div className="space-y-2.5 border-t border-[var(--border)] bg-[var(--bg)] px-3 py-3">
           {meta.needs_key && (
             <div>
               <label className={labelCls} htmlFor={`${meta.id}-key`}>
@@ -373,17 +373,17 @@ function ProviderRow({
             </p>
           )}
 
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-1.5 pt-0.5">
             <button
               type="button"
               onClick={handleSave}
               disabled={row.saving}
-              className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
+              className="inline-flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
             >
               {row.saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Save className="h-4 w-4" />
+                <Save className="h-3.5 w-3.5" />
               )}
               Save
             </button>
@@ -392,14 +392,14 @@ function ProviderRow({
               onClick={handleTest}
               disabled={row.conn === "testing" || row.saving}
               title="Saves the current values first, then tests the connection"
-              className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
+              className="inline-flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
             >
               {row.conn === "testing" || row.saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Plug className="h-4 w-4" />
+                <Plug className="h-3.5 w-3.5" />
               )}
-              Test connection
+              Test
             </button>
           </div>
         </div>
