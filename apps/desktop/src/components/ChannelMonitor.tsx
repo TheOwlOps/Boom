@@ -313,7 +313,6 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
   }
 
   if (compact) {
-    const connected = channels.filter((c) => c.state === "connected").length;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }} role="status">
@@ -326,9 +325,6 @@ export function ChannelMonitor({ compact = false }: ChannelMonitorProps) {
             </span>
           ))}
         </div>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          {connected}/{channels.length} connected
-        </span>
       </div>
     );
   }
