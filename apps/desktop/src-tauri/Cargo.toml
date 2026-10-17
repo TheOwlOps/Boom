@@ -50,6 +50,8 @@ tower-http = { version = "0.5", features = ["cors"] }
 # HTTP client for LLM provider calls (chat endpoint). default-features=false
 # drops native-tls (no system OpenSSL needed); rustls is pure Rust.
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+# SHA256 verification for the lazy-downloaded Zalo bridge binary.
+sha2 = "0.10"
 
 [dev-dependencies]
 # Needed by backend endpoint tests (tower::ServiceExt::oneshot).

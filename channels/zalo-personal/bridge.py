@@ -437,10 +437,20 @@ def _new_client(session_cookies=None, imei=None):
     kwargs = dict(phone=None, password=None, auto_login=bool(session_cookies))
     if session_cookies:
         kwargs["session_cookies"] = session_cookies
-    if imei:
-        kwargs["imei"] = imei
+    # ZaloAPI requires a device imei; generate a stable one for fresh
+    # logins (persisted with the session so relaunch reuses it).
+    kwargs["imei"] = imei or _generate_imei()
     client = BoomZaloClient(**kwargs)
     return client, self_id
+
+
+def _generate_imei():
+    """Generate a device imei in zlapi's own scheme (uuid + md5 agent)."""
+    import uuid
+
+    agent = "BoomZaloBridge/1.0"
+    digest = hashlib.md5(agent.encode("utf-8")).hexdigest()
+    return "{}-{}".format(uuid.uuid4(), digest)
 
 
 def _handle_member_join(data):

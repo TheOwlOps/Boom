@@ -18,18 +18,23 @@ const STATUS_POLL_MS = 3_000;
 /**
  * Zalo Personal connect via QR login.
  *
- * Talks directly to the separate Python bridge process
- * (`channels/zalo-personal/bridge.py`) over HTTP — not through the Rust
- * backend. The Rust backend can auto-start / stop that process
- * (`start_zalo_bridge` command); the bridge restores its saved session so a
- * relaunch skips the QR scan.
+ * Talks directly to the separate Zalo bridge process over HTTP — not through
+ * the Rust backend. The Rust backend can auto-start / stop that process
+ * (`start_zalo_bridge` command): on first use it lazy-downloads the
+ * standalone `zalo-bridge` binary (~30MB, one time, no Python needed) from
+ * the `zalo-bridge-v1` GitHub release into `$BOOM_HOME/bin/`, verifies its
+ * SHA256, and reuses it afterwards. The bridge restores its saved session
+ * so a relaunch skips the QR scan.
  */
 export default function ZaloPersonalConnect({
   onConnected,
 }: {
   onConnected(): void;
 }) {
-  const [phase, setPhase] = useState<"checking" | "offline" | "ready">("checking");
+  const [phase, setPhase] = useState<
+    "checking" | "offline" | "downloading" | "ready"
+  >("checking");
+  const [downloadPct, setDownloadPct] = useState<number | null>(null);
   const [status, setStatus] = useState<ZaloPersonalBridgeStatus>("qr_pending");
   const [statusError, setStatusError] = useState<string | null>(null);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
@@ -40,6 +45,7 @@ export default function ZaloPersonalConnect({
   const qrUrlRef = useRef<string | null>(null);
   const timersRef = useRef<number[]>([]);
   const notifiedRef = useRef(false);
+  const downloadFailedRef = useRef(false);
 
   function clearTimers() {
     for (const t of timersRef.current) window.clearInterval(t);
@@ -111,18 +117,45 @@ export default function ZaloPersonalConnect({
     };
   }, [start, revokeQr]);
 
-  /** Start the bridge via the Tauri backend (auto-spawns the Python process). */
+  /** Start the bridge via the Tauri backend (lazy-downloads the standalone
+   *  binary on first use, with progress events). */
   const startBridge = useCallback(async () => {
     setStarting(true);
     setStartMsg("");
+    setDownloadPct(null);
+    downloadFailedRef.current = false;
+    let unlisten: (() => void) | null = null;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<{
+        phase: "downloading" | "done" | "error";
+        downloaded?: number;
+        total?: number | null;
+        error?: string;
+      }>("zalo-bridge-download", (ev) => {
+        const p = ev.payload;
+        if (p.phase === "downloading") {
+          setPhase("downloading");
+          setDownloadPct(
+            p.total ? Math.round(((p.downloaded ?? 0) / p.total) * 100) : null
+          );
+        } else if (p.phase === "done") {
+          setDownloadPct(null);
+        } else if (p.phase === "error") {
+          setDownloadPct(null);
+          downloadFailedRef.current = true;
+          setStartMsg(`Không khởi động được: ${p.error ?? "lỗi không rõ"}`);
+          setPhase("offline");
+        }
+      });
       const msg = await invoke<string>("start_zalo_bridge");
       setStartMsg(msg);
-      // The bridge needs a moment to bind its port — retry the check a few
-      // times before giving up and letting the user hit "Thử lại".
-      for (let i = 0; i < 6; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
+      // The bridge may need to download ~30MB on first use — poll until it
+      // answers (up to ~5 minutes), the progress event keeps the UI alive.
+      for (let i = 0; i < 150; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (downloadFailedRef.current) break;
         if (await checkBridgeRunning()) break;
       }
       await start();
@@ -133,6 +166,7 @@ export default function ZaloPersonalConnect({
           : "Không khởi động được bridge"
       );
     } finally {
+      unlisten?.();
       setStarting(false);
     }
   }, [start]);
@@ -146,12 +180,41 @@ export default function ZaloPersonalConnect({
     );
   }
 
+  if (phase === "downloading") {
+    return (
+      <div className="space-y-2">
+        <p className="flex items-center gap-1.5 text-xs text-[var(--text)]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Đang tải Zalo Bridge lần đầu…
+          {downloadPct !== null ? ` ${downloadPct}%` : ""}
+        </p>
+        <div
+          className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"
+          role="progressbar"
+          aria-valuenow={downloadPct ?? undefined}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className="h-full rounded-full bg-[var(--text)] transition-[width]"
+            style={{ width: `${downloadPct ?? 8}%` }}
+          />
+        </div>
+        <p className="text-[11px] text-[var(--muted)]">
+          Tải một lần duy nhất (~30MB) từ GitHub, có kiểm tra SHA256 — không
+          cần cài Python. Lần sau mở app là dùng ngay.
+        </p>
+      </div>
+    );
+  }
+
   if (phase === "offline") {
     return (
       <div className="space-y-2">
         <p className="text-xs text-[var(--muted)]">
-          Bridge Zalo Personal chưa chạy. Bấm nút bên dưới để Boom tự khởi động
-          nó (lưu đăng nhập — lần sau mở app không cần quét QR lại):
+          Bridge Zalo Personal chưa chạy. Bấm nút bên dưới để Boom tự tải và
+          khởi động nó (một lần duy nhất ~30MB, không cần cài Python; lưu
+          đăng nhập — lần sau mở app không cần quét QR lại):
         </p>
         <div className="flex gap-1.5 pt-0.5">
           <button

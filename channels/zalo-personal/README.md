@@ -10,13 +10,25 @@ It is intentionally small:
   (`http.server`). The only dependency is `zalo-api`.
 
 This bridge runs as a **separate, optional process**. It is NOT bundled with
-the Boom desktop app — start it only if you need Zalo Personal.
+the Boom desktop app — the app stays the same size.
 
-**Auto-start:** the Boom desktop app auto-starts this bridge on launch
-(Rust backend spawns `python channels/zalo-personal/bridge.py`, bundled as a
-Tauri resource in packaged builds). The bridge restores its saved session
-(`$BOOM_HOME/zalo_personal/session.json`), so a relaunch skips the QR scan.
-You can also start it manually:
+**One-click install (no Python needed):** the first time you open Zalo
+Personal in Boom and click **Khởi động Bridge**, the app automatically
+downloads the standalone `zalo-bridge` executable (~30MB, one time only)
+from the [`zalo-bridge-v1`](https://github.com/TheOwlOps/Boom/releases/tag/zalo-bridge-v1)
+GitHub release into `$BOOM_HOME/bin/`, verifies its SHA256, and reuses it
+afterwards. A progress bar is shown during the download.
+
+**Auto-start:** the Boom desktop app auto-starts the bridge on launch
+(prefers the downloaded binary, falls back to `python
+channels/zalo-personal/bridge.py` in dev checkouts). The bridge restores
+its saved session (`$BOOM_HOME/zalo_personal/session.json`), so a relaunch
+skips the QR scan. You can also start it manually:
+
+```bash
+pip install -r requirements.txt
+python bridge.py
+```
 
 ## How it works
 
@@ -130,3 +142,25 @@ Zalo web client). Zalo does not bless automation:
   working, check for a newer `zalo-api` release.
 
 You accept that risk by running this bridge.
+
+## Building the standalone binary (maintainers)
+
+The one-click binary is built with PyInstaller (one-file, `bridge.spec`):
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller bridge.spec   # → dist/zalo-bridge
+```
+
+Notes:
+
+- `zalo-api` loads its ~180 method modules via `importlib` at runtime, so
+  the spec uses `collect_submodules("zlapi")` — a plain build misses them.
+- `pyzbar` needs the native libzbar: the spec bundles it when found
+  (`apt install libzbar0` / `brew install zbar`) and the
+  `rthooks/pyi_rth_zbar.py` runtime hook points pyzbar at it. Without the
+  system library, `/qr-lookup-image` answers 501 (graceful).
+- CI (`.github/workflows/zalo-bridge.yml`) builds Linux x86_64, Windows
+  x86_64 and macOS arm64, smoke-tests each binary (`/status`), and on
+  manual dispatch publishes them + per-asset `.sha256` files to the
+  separate `zalo-bridge-v1` release.

@@ -5,7 +5,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{Manager, RunEvent, State};
+use tauri::{Emitter, Manager, RunEvent, State};
 
 // ---------------------------------------------------------------------------
 // Backend: boom-core in-process server
@@ -341,18 +341,209 @@ fn get_backend_error(stderr: State<StderrBuffer>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Zalo Personal bridge (Python, auto-start, best-effort)
+// Zalo Personal bridge (standalone binary, lazy-download, best-effort)
 //
-// The Zalo Personal bridge is a *separate* minimal Python process
-// (`channels/zalo-personal/bridge.py`) speaking the unofficial Zalo personal
-// API via QR login. It is optional: the app must keep working when Python
-// or the script is missing, so every failure here is a logged warning, never
-// a crash.
+// The Zalo Personal bridge is a *separate* minimal process speaking the
+// unofficial Zalo personal API via QR login. It ships as a standalone
+// PyInstaller binary (`zalo-bridge` / `zalo-bridge.exe`) published on the
+// `zalo-bridge-v1` GitHub release — the desktop installers do NOT bundle
+// it, so they stay the same size. On first use (explicit user action via
+// the `start_zalo_bridge` command) the backend downloads the matching
+// binary into `$BOOM_HOME/bin/`, verifies its SHA256, and reuses it
+// afterwards. Dev checkouts and platforms without a published binary fall
+// back to `python channels/zalo-personal/bridge.py`.
+//
+// It is optional: the app must keep working when the download fails and
+// no Python exists, so every failure here is a logged warning, never a
+// crash.
 //
 // Session persistence lives inside the bridge itself
 // (`$BOOM_HOME/zalo_personal/session.json`, mode 0600): a relaunch reuses
 // the saved cookies and skips the QR scan.
 // ---------------------------------------------------------------------------
+
+/// GitHub release tag hosting the prebuilt Zalo bridge binaries.
+/// Separate from the desktop installer releases.
+const ZALO_BRIDGE_RELEASE_TAG: &str = "zalo-bridge-v1";
+
+/// Prebuilt binary asset name for this platform, matching the
+/// `zalo-bridge.yml` workflow matrix. Platforms without a published asset
+/// (Intel macOS, Linux ARM) intentionally 404 so the caller falls back to
+/// `python bridge.py`.
+fn zalo_bridge_asset_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "zalo-bridge-windows-x86_64.exe"
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "zalo-bridge-macos-arm64"
+        } else {
+            "zalo-bridge-macos-x86_64"
+        }
+    } else if cfg!(target_arch = "aarch64") {
+        "zalo-bridge-linux-aarch64"
+    } else {
+        "zalo-bridge-linux-x86_64"
+    }
+}
+
+/// `$BOOM_HOME`, mirroring the bridge's own resolution (`BOOM_HOME` env or
+/// `~/.boom`).
+fn boom_home_dir() -> std::path::PathBuf {
+    if let Ok(h) = std::env::var("BOOM_HOME") {
+        if !h.is_empty() {
+            return std::path::PathBuf::from(h);
+        }
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".boom")
+}
+
+/// Install location of the lazy-downloaded bridge binary.
+fn zalo_bridge_bin_path() -> std::path::PathBuf {
+    let exe = if cfg!(target_os = "windows") {
+        "zalo-bridge.exe"
+    } else {
+        "zalo-bridge"
+    };
+    boom_home_dir().join("bin").join(exe)
+}
+
+/// Download the prebuilt bridge binary for this platform from the
+/// `zalo-bridge-v1` GitHub release into `dest` (`$BOOM_HOME/bin/`), verifying
+/// its SHA256 against the published `<asset>.sha256` file. The download is
+/// streamed to `<dest>.part`, hash-checked, then atomically renamed.
+///
+/// Emits `zalo-bridge-download` progress events:
+/// `{phase: "downloading", downloaded: u64, total: u64|null}`.
+async fn download_zalo_bridge_binary(
+    app: &tauri::AppHandle,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    let asset = zalo_bridge_asset_name();
+    let base_url = format!(
+        "https://github.com/TheOwlOps/Boom/releases/download/{}/{}",
+        ZALO_BRIDGE_RELEASE_TAG, asset
+    );
+    let client = reqwest::Client::builder()
+        .user_agent("BoomDesktop/zalo-bridge-download")
+        .build()
+        .map_err(|e| format!("http client: {}", e))?;
+
+    // 1. Expected SHA256 (published alongside the binary by zalo-bridge.yml).
+    let expected = client
+        .get(format!("{}.sha256", base_url))
+        .send()
+        .await
+        .map_err(|e| format!("sha256 download failed: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("sha256 download failed: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("sha256 read failed: {}", e))?;
+    let expected = expected
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("release sha256 file is malformed".to_string());
+    }
+
+    // 2. Stream the binary with progress events.
+    let mut resp = client
+        .get(&base_url)
+        .send()
+        .await
+        .map_err(|e| format!("download failed: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("download failed: {}", e))?;
+    let total = resp.content_length();
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create bin dir: {}", e))?;
+    }
+    let tmp = dest.with_extension("part");
+    let mut file =
+        std::fs::File::create(&tmp).map_err(|e| format!("cannot write binary: {}", e))?;
+
+    let actual = {
+        use sha2::Digest;
+        use std::io::Write;
+        let mut hasher = sha2::Sha256::new();
+        let mut downloaded: u64 = 0;
+        loop {
+            match resp.chunk().await {
+                Ok(Some(bytes)) => {
+                    hasher.update(&bytes);
+                    file.write_all(&bytes)
+                        .map_err(|e| format!("cannot write binary: {}", e))?;
+                    downloaded += bytes.len() as u64;
+                    let _ = app.emit(
+                        "zalo-bridge-download",
+                        serde_json::json!({
+                            "phase": "downloading",
+                            "downloaded": downloaded,
+                            "total": total,
+                        }),
+                    );
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!("download failed: {}", e));
+                }
+            }
+        }
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    };
+    drop(file);
+    if actual != expected {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("sha256 mismatch — deleted corrupted download".to_string());
+    }
+    std::fs::rename(&tmp, dest).map_err(|e| format!("cannot install binary: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dest)
+            .map_err(|e| format!("cannot stat binary: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(dest, perms)
+            .map_err(|e| format!("cannot chmod binary: {}", e))?;
+    }
+    log::info!("[zalo-bridge] downloaded {} (sha256 ok)", dest.display());
+    Ok(())
+}
+
+/// Ensure the standalone bridge binary exists in `$BOOM_HOME/bin/`,
+/// downloading it from the `zalo-bridge-v1` release on first use.
+/// Emits `zalo-bridge-download` progress events. Returns the binary path.
+async fn ensure_zalo_bridge_binary(
+    app: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    let dest = zalo_bridge_bin_path();
+    if dest.is_file() {
+        if std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) > 0 {
+            return Ok(dest);
+        }
+        let _ = std::fs::remove_file(&dest);
+    }
+    let _ = app.emit(
+        "zalo-bridge-download",
+        serde_json::json!({ "phase": "downloading", "downloaded": 0, "total": serde_json::Value::Null }),
+    );
+    download_zalo_bridge_binary(app, &dest).await?;
+    Ok(dest)
+}
 
 /// Port the Zalo Personal bridge listens on, resolved from
 /// `BOOM_ZALO_BRIDGE_PORT` (default 17890) — mirrors the bridge default.
@@ -438,8 +629,68 @@ fn find_python() -> Option<String> {
 /// (bridge adopted from the port, never started, or already exited).
 struct ZaloBridgeProcess(Mutex<Option<std::process::Child>>);
 
+/// True if our tracked bridge child is alive. Cleans up a stale handle.
+fn zalo_bridge_child_alive(state: &State<ZaloBridgeProcess>) -> bool {
+    let mut guard = match state.0.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let alive = match guard.as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
+    if !alive {
+        *guard = None;
+    }
+    alive
+}
+
+/// Spawn the bridge program (standalone binary, or `python bridge.py`) and
+/// track the child. The caller must have checked the port / existing child.
+fn spawn_bridge_child(
+    state: &State<ZaloBridgeProcess>,
+    program: &std::path::Path,
+    args: &[&std::path::Path],
+) -> Result<(), String> {
+    let cmdline = std::iter::once(program.as_os_str())
+        .chain(args.iter().map(|a| a.as_os_str()))
+        .map(|s| s.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    log::info!("[zalo-bridge] spawning: {}", cmdline);
+    let mut cmd = std::process::Command::new(program);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    // Inherit the environment: BOOM_HOME / BOOM_ZALO_* flow through.
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW — no console flash on Windows.
+        cmd.creation_flags(0x08000000);
+    }
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn {}: {}", program.display(), e))?;
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|e| format!("zalo bridge state lock poisoned: {}", e))?;
+    *guard = Some(child);
+    Ok(())
+}
+
 /// Spawn the bridge if it is not already running. Idempotent: a live tracked
 /// child or an already-listening port is reused.
+///
+/// Prefers the downloaded standalone binary (`$BOOM_HOME/bin/zalo-bridge`);
+/// falls back to `python bridge.py` (dev checkouts / platforms without a
+/// published binary). Never downloads here — auto-start must not surprise
+/// the user with a ~30MB download; downloading happens only in the
+/// `start_zalo_bridge` command (explicit user action).
 ///
 /// Never panics; every failure is returned as `Err(String)` so the caller
 /// can log it and keep the app alive.
@@ -454,57 +705,88 @@ fn spawn_zalo_bridge(
             port
         ));
     }
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|e| format!("zalo bridge state lock poisoned: {}", e))?;
-        if let Some(child) = guard.as_mut() {
-            match child.try_wait() {
-                Ok(None) => return Ok("zalo bridge already started".to_string()),
-                // Dead child: drop it so a fresh one is spawned below.
-                _ => *guard = None,
-            }
-        }
+    if zalo_bridge_child_alive(state) {
+        return Ok("zalo bridge already started".to_string());
     }
 
+    // 1. Standalone binary (previously lazy-downloaded).
+    let bin = zalo_bridge_bin_path();
+    if bin.is_file() {
+        spawn_bridge_child(state, &bin, &[])?;
+        return Ok(format!(
+            "zalo bridge starting on 127.0.0.1:{} ({})",
+            port,
+            bin.display()
+        ));
+    }
+
+    // 2. Python fallback.
     let script = find_zalo_bridge_script(app).ok_or_else(|| {
         "bridge.py not found (looked in dev repo path, bundled resources, and next to the executable)".to_string()
     })?;
     let python = find_python()
         .ok_or_else(|| "no Python interpreter on PATH (tried python3, python)".to_string())?;
-
-    log::info!("[zalo-bridge] spawning: {} {}", python, script.display());
-    let mut cmd = std::process::Command::new(&python);
-    cmd.arg(&script)
-        // Inherit the environment: BOOM_HOME / BOOM_ZALO_* flow through.
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        // Detach from any console so no terminal window flashes on Windows.
-        .stdin(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW
-        cmd.creation_flags(0x08000000);
-    }
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("failed to spawn {} {}: {}", python, script.display(), e))?;
-
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|e| format!("zalo bridge state lock poisoned: {}", e))?;
-        *guard = Some(child);
-    }
+    spawn_bridge_child(state, std::path::Path::new(&python), &[script.as_path()])?;
     Ok(format!(
         "zalo bridge starting on 127.0.0.1:{} ({} {})",
         port,
         python,
         script.display()
     ))
+}
+
+/// Background task for the `start_zalo_bridge` command: ensure the
+/// standalone binary (downloading it on first use, with progress events),
+/// spawn it, or fall back to `python bridge.py`.
+/// Emits a final `zalo-bridge-download` {phase: done|error} event.
+async fn ensure_and_spawn_zalo_bridge(app: tauri::AppHandle) {
+    let state: State<ZaloBridgeProcess> = app.state();
+    let port = zalo_bridge_port();
+    if zalo_bridge_port_open(port) || zalo_bridge_child_alive(&state) {
+        return;
+    }
+    // 1. Standalone binary (downloads on first use).
+    match ensure_zalo_bridge_binary(&app).await {
+        Ok(bin) => match spawn_bridge_child(&state, &bin, &[]) {
+            Ok(()) => {
+                log::info!("[zalo-bridge] started: {}", bin.display());
+                let _ = app.emit(
+                    "zalo-bridge-download",
+                    serde_json::json!({ "phase": "done" }),
+                );
+            }
+            Err(e) => {
+                log::warn!("[zalo-bridge] cannot spawn downloaded binary: {}", e);
+                let _ = app.emit(
+                    "zalo-bridge-download",
+                    serde_json::json!({ "phase": "error", "error": e }),
+                );
+            }
+        },
+        Err(e) => {
+            // 2. Python fallback (offline, or platform without a binary).
+            log::warn!("[zalo-bridge] binary unavailable ({}); python fallback", e);
+            match spawn_zalo_bridge(&app, &state) {
+                Ok(msg) => {
+                    log::info!("[zalo-bridge] python fallback: {}", msg);
+                    let _ = app.emit(
+                        "zalo-bridge-download",
+                        serde_json::json!({ "phase": "done" }),
+                    );
+                }
+                Err(e2) => {
+                    log::warn!("[zalo-bridge] python fallback failed: {}", e2);
+                    let _ = app.emit(
+                        "zalo-bridge-download",
+                        serde_json::json!({
+                            "phase": "error",
+                            "error": format!("{}. Fallback: {}", e, e2),
+                        }),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Stop the bridge child we started, if any. Idempotent. An adopted bridge
@@ -526,27 +808,11 @@ fn stop_zalo_bridge_process(state: &State<ZaloBridgeProcess>) {
 }
 
 /// True if the bridge answers on its port, or our tracked child is alive.
-/// Cleans up a stale child handle.
 fn zalo_bridge_is_running(state: &State<ZaloBridgeProcess>) -> bool {
-    let port = zalo_bridge_port();
-    if zalo_bridge_port_open(port) {
+    if zalo_bridge_port_open(zalo_bridge_port()) {
         return true;
     }
-    let mut guard = match state.0.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            eprintln!("[zalo-bridge] cannot lock bridge state for status check: {}", e);
-            return false;
-        }
-    };
-    let alive = match guard.as_mut() {
-        Some(child) => matches!(child.try_wait(), Ok(None)),
-        None => false,
-    };
-    if !alive {
-        *guard = None;
-    }
-    alive
+    zalo_bridge_child_alive(state)
 }
 
 // ---------------------------------------------------------------------------
@@ -561,16 +827,28 @@ fn zalo_bridge_status(state: State<ZaloBridgeProcess>) -> String {
 }
 
 /// Start the Zalo bridge (no-op if already running).
-/// Returns a human-readable success/error message — never throws.
+/// On first use this downloads the standalone binary (~30MB) from the
+/// `zalo-bridge-v1` GitHub release — with `zalo-bridge-download` progress
+/// events for the UI — verifies its SHA256, and reuses the cached
+/// `$BOOM_HOME/bin/` copy afterwards. Falls back to `python bridge.py`
+/// when the download fails. Returns immediately; never throws.
 #[tauri::command]
 fn start_zalo_bridge(app: tauri::AppHandle, state: State<ZaloBridgeProcess>) -> String {
-    match spawn_zalo_bridge(&app, &state) {
-        Ok(msg) => msg,
-        Err(e) => {
-            log::warn!("[zalo-bridge] start_zalo_bridge failed: {}", e);
-            format!("failed to start zalo bridge: {}", e)
-        }
+    let port = zalo_bridge_port();
+    if zalo_bridge_port_open(port) {
+        return format!(
+            "zalo bridge already listening on 127.0.0.1:{} (adopted, not started by this app)",
+            port
+        );
     }
+    if zalo_bridge_child_alive(&state) {
+        return "zalo bridge already started".to_string();
+    }
+    // The ensure+spawn flow (possibly a multi-MB download) runs in the
+    // background so the UI stays responsive; progress arrives via the
+    // `zalo-bridge-download` event.
+    tauri::async_runtime::spawn(ensure_and_spawn_zalo_bridge(app));
+    "starting zalo bridge…".to_string()
 }
 
 /// Stop the Zalo bridge child started by this app (no-op if none).
@@ -725,10 +1003,12 @@ pub fn run() {
                     eprintln!("[backend] auto-start failed: {}", e);
                 }
             }
-            // Auto-start the Zalo Personal bridge on launch (best effort):
-            // the bridge restores its saved session and skips the QR scan on
-            // relaunch. A missing Python or bridge.py only logs a warning —
-            // the app window must still open.
+            // Auto-start the Zalo Personal bridge on launch (best effort, no
+            // download here): prefers the previously downloaded standalone
+            // binary, else `python bridge.py`. The bridge restores its saved
+            // session and skips the QR scan on relaunch. A missing binary
+            // and missing Python only log a warning — the app window must
+            // still open.
             let zstate: State<ZaloBridgeProcess> = app.state();
             match spawn_zalo_bridge(app.handle(), &zstate) {
                 Ok(msg) => log::info!("[zalo-bridge] auto-start: {}", msg),
