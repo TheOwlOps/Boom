@@ -1,113 +1,205 @@
-/* BotAvatar.css — Grokbot-style animated per-bot avatars.
+/* BotAvatar.css — blob bot avatars, Grok-style.
  *
- * The tile itself is colorful (deterministic hue per bot id); everything
- * around it stays monochrome. Motion uses transform/opacity only.
+ * A soft circular blob with two tilted oval eyes (inline SVG). 8 deterministic
+ * variants (color + signature idle motion). Eyes blink and follow the cursor;
+ * hovering makes the blob hop. All motion is transform-only and disabled
+ * under `prefers-reduced-motion`.
  */
 
-.bot-avatar {
-  --bot-from: hsl(210, 78%, 62%);
-  --bot-to: hsl(238, 72%, 44%);
-  --bot-glow: hsla(210, 85%, 60%, 0.45);
+.blob-avatar {
+  --blob-bg: #f4f4f5;
+  --blob-eye: #18181b;
+  --blob-glow: rgba(0, 0, 0, 0.18);
+  --ex: 0px;
+  --ey: 0px;
+  --escale: 1;
 
   position: relative;
-  display: inline-grid;
-  place-items: center;
+  display: inline-block;
   flex: none;
-  border-radius: 28%;
-  background: linear-gradient(135deg, var(--bot-from), var(--bot-to));
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.35),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.22),
-    0 2px 6px rgba(0, 0, 0, 0.25);
-  overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+  cursor: default;
 }
 
-/* Soft top-light sheen for depth. */
-.bot-avatar::after {
-  content: "";
+/* The blob body — variant color + idle motion live here. */
+.blob-avatar-body {
   position: absolute;
   inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 45%);
-  pointer-events: none;
-}
-
-.bot-avatar-glyph {
-  position: relative;
-  z-index: 1;
-  line-height: 1;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
-}
-
-/* --- status variants ------------------------------------------- */
-
-/* Online: gentle float + accent glow. */
-.bot-avatar--online {
-  animation: bot-float 4.5s ease-in-out infinite;
+  border-radius: 50%;
+  background: var(--blob-bg);
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.35),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.22),
-    0 0 12px var(--bot-glow),
-    0 2px 6px rgba(0, 0, 0, 0.25);
+    inset 0 -3px 6px rgba(0, 0, 0, 0.08),
+    inset 0 2px 3px rgba(255, 255, 255, 0.5),
+    0 2px 5px rgba(0, 0, 0, 0.18);
 }
 
-@keyframes bot-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
+.blob-avatar-face {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-/* Thinking: pulsing glow — the bot is working. */
-.bot-avatar--thinking {
-  animation: bot-think 1.6s ease-in-out infinite;
+/* --- variant palettes -------------------------------------------- */
+
+.blob-avatar--ghost { --blob-bg: #f4f4f5; --blob-eye: #18181b; --blob-glow: rgba(0, 0, 0, 0.22); }
+.blob-avatar--ink   { --blob-bg: #26262b; --blob-eye: #fafafa; --blob-glow: rgba(0, 0, 0, 0.55); }
+.blob-avatar--slate { --blob-bg: #a1a1aa; --blob-eye: #27272a; --blob-glow: rgba(120, 120, 130, 0.4); }
+.blob-avatar--peach { --blob-bg: #ffd9c4; --blob-eye: #432818; --blob-glow: rgba(255, 170, 120, 0.5); }
+.blob-avatar--mint  { --blob-bg: #c8eed9; --blob-eye: #14342a; --blob-glow: rgba(110, 220, 160, 0.5); }
+.blob-avatar--sky   { --blob-bg: #cde7ff; --blob-eye: #1d3557; --blob-glow: rgba(120, 180, 255, 0.55); }
+.blob-avatar--lav   { --blob-bg: #e2d3fb; --blob-eye: #3b2a5e; --blob-glow: rgba(170, 130, 250, 0.5); }
+.blob-avatar--lemon { --blob-bg: #ffedbe; --blob-eye: #57430f; --blob-glow: rgba(250, 210, 90, 0.55); }
+
+/* --- idle signature motions (one per variant) -------------------- */
+
+.blob-avatar--ghost .blob-avatar-body  { animation: blob-breathe 3.2s ease-in-out infinite; }
+.blob-avatar--ink .blob-avatar-body    { animation: blob-rock 3.8s ease-in-out infinite; }
+.blob-avatar--slate .blob-avatar-body  { animation: blob-wiggle 2.6s ease-in-out infinite; }
+.blob-avatar--peach .blob-avatar-body  { animation: blob-jelly 2.8s ease-in-out infinite; }
+.blob-avatar--mint .blob-avatar-body   { animation: blob-bob 3s ease-in-out infinite; }
+.blob-avatar--sky .blob-avatar-body    { animation: blob-sway 3.4s ease-in-out infinite; }
+.blob-avatar--lav .blob-avatar-body    { animation: blob-puff 4.2s ease-in-out infinite; }
+.blob-avatar--lemon .blob-avatar-body  { animation: blob-nod 3s ease-in-out infinite; }
+
+@keyframes blob-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.045); }
+}
+@keyframes blob-rock {
+  0%, 100% { transform: rotate(-4deg); }
+  50%      { transform: rotate(4deg); }
+}
+@keyframes blob-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25%      { transform: rotate(-7deg); }
+  50%      { transform: rotate(5deg); }
+  75%      { transform: rotate(-3deg); }
+}
+@keyframes blob-jelly {
+  0%, 100% { transform: scale(1, 1); }
+  50%      { transform: scale(1.07, 0.93); }
+}
+@keyframes blob-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes blob-sway {
+  0%, 100% { transform: translateX(-3px); }
+  50%      { transform: translateX(3px); }
+}
+@keyframes blob-puff {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.07); }
+}
+@keyframes blob-nod {
+  0%, 100% { transform: rotate(-7deg) translateY(0); }
+  50%      { transform: rotate(7deg) translateY(1.5px); }
 }
 
-@keyframes bot-think {
-  0%,
-  100% {
-    transform: scale(1);
-    box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.35),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
-      0 0 6px var(--bot-glow);
-  }
-  50% {
-    transform: scale(1.06);
-    box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.35),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
-      0 0 18px var(--bot-glow),
-      0 2px 8px rgba(0, 0, 0, 0.3);
-  }
+/* --- status layers ------------------------------------------------ */
+
+/* Online: soft tinted glow on top of the variant motion. */
+.blob-avatar--glow .blob-avatar-body {
+  box-shadow:
+    inset 0 -3px 6px rgba(0, 0, 0, 0.08),
+    inset 0 2px 3px rgba(255, 255, 255, 0.5),
+    0 0 10px var(--blob-glow),
+    0 2px 5px rgba(0, 0, 0, 0.18);
 }
 
-/* Offline: desaturated, no motion. */
-.bot-avatar--offline {
-  filter: grayscale(0.92) brightness(0.72);
+/* Thinking: body rocks, eyes dart side to side. */
+.blob-avatar--thinking .blob-avatar-body {
+  animation: blob-think-rock 1.1s ease-in-out infinite;
+}
+@keyframes blob-think-rock {
+  0%, 100% { transform: rotate(-6deg); }
+  50%      { transform: rotate(6deg); }
+}
+.blob-avatar--thinking .blob-eyes-dart {
+  animation: blob-dart 0.9s ease-in-out infinite;
+}
+@keyframes blob-dart {
+  0%, 100% { transform: translateX(-6px); }
+  50%      { transform: translateX(6px); }
 }
 
-/* Idle / static: no animation, plain tile. */
-.bot-avatar--static {
-  /* intentional: no keyframes */
+/* Offline: desaturated, frozen. */
+.blob-avatar--offline {
+  filter: grayscale(0.92) brightness(0.74);
+}
+.blob-avatar--offline .blob-avatar-body,
+.blob-avatar--offline .blob-eye {
+  animation: none;
 }
 
-/* --- accessibility ---------------------------------------------- */
+/* Static: no motion at all (animated=false). */
+.blob-avatar--static .blob-avatar-body,
+.blob-avatar--static .blob-eye {
+  animation: none;
+}
+
+/* --- eyes ---------------------------------------------------------- */
+
+.blob-eyes-follow {
+  transform: translate(var(--ex), var(--ey)) scale(var(--escale));
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.12s ease-out;
+}
+
+.blob-eyes-dart {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.blob-eye {
+  fill: var(--blob-eye);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blob-blink 4.8s ease-in-out infinite;
+}
+.blob-eye--left  { rotate: -11deg; }
+.blob-eye--right { rotate: 11deg; animation-delay: 0.06s; }
+
+@keyframes blob-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  94.5%         { transform: scaleY(0.08); }
+}
+
+/* --- hover interaction --------------------------------------------- */
+
+/* Hop once on hover; the body keeps its idle motion underneath. */
+.blob-avatar:hover {
+  animation: blob-hop 0.55s ease;
+}
+@keyframes blob-hop {
+  0%   { transform: translateY(0) scale(1, 1); }
+  30%  { transform: translateY(-7px) scale(0.96, 1.06); }
+  60%  { transform: translateY(0) scale(1.07, 0.9); }
+  80%  { transform: translateY(-2px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+
+/* Eyes widen while hovered. */
+.blob-avatar:hover .blob-eyes-follow {
+  --escale: 1.14;
+}
+
+/* --- accessibility --------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .bot-avatar--online,
-  .bot-avatar--thinking {
+  .blob-avatar,
+  .blob-avatar:hover,
+  .blob-avatar-body,
+  .blob-eyes-dart,
+  .blob-eye {
     animation: none;
   }
-  .bot-avatar--online {
-    box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.35),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
-      0 2px 6px rgba(0, 0, 0, 0.25);
+  .blob-eyes-follow {
+    transition: none;
+  }
+  .blob-avatar:hover .blob-eyes-follow {
+    --escale: 1;
   }
 }
