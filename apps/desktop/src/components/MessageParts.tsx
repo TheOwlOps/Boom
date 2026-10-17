@@ -91,17 +91,19 @@ const mdComponents: Components = {
 };
 
 /**
- * Team-chat message content (no chrome).
+ * Message content (no chrome).
  *  - user: plain pre-wrapped text.
  *  - assistant: markdown rendered inline.
- * The row (avatar, sender name, timestamp) is rendered by ChatView.
+ * Renders both `tc-md` (team-chat skin, used by GroupChatView) and
+ * `gc-md` (bubble skin, used by ChatView) so either parent stylesheet
+ * can refine typography.
  */
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
   return isUser ? (
-    <div className="tc-user-text">{message.text}</div>
+    <div className="tc-user-text gc-user-text">{message.text}</div>
   ) : (
-    <div className="tc-md">
+    <div className="tc-md gc-md">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
         {message.text}
       </ReactMarkdown>

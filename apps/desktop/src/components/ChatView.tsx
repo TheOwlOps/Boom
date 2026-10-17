@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SendHorizonal, RotateCcw, Copy, Check, KeyRound, X, User } from "lucide-react";
+import { SendHorizonal, RotateCcw, Copy, Check, KeyRound, X } from "lucide-react";
 import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "../lib/api";
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
 import { formatSmartTime, formatFullTime } from "../lib/formatTime";
@@ -459,72 +459,63 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
           const isTyping = msg.id === typingId;
           const copied = copiedId === msg.id;
           const isUser = msg.role === "user";
-          const senderName = isUser ? "You" : (activeBot ? activeBot.name : "Boomi");
           const ts = formatSmartTime(msg.ts);
           const fullTs = formatFullTime(msg.ts);
           return (
-            <div key={msg.id} className="msg-row">
-              {/* Hover actions: Copy on every message, Regenerate only on the
-                  latest assistant reply. CSS reveals them on .msg-row:hover. */}
-              <div className="msg-actions" role="toolbar" aria-label="Message actions">
-                <button
-                  type="button"
-                  className={`msg-action-btn${copied ? " is-copied" : ""}`}
-                  onClick={() => void copyText(msg.id, msg.text)}
-                  aria-label={copied ? "Copied to clipboard" : "Copy message"}
-                >
-                  {copied ? <Check size={13} /> : <Copy size={13} />}
-                  {copied ? "Copied" : "Copy"}
-                </button>
-                {msg.role === "assistant" && msg.id === lastAssistantId && !isTyping && (
-                  <button
-                    type="button"
-                    className="msg-action-btn"
-                    onClick={regenerate}
-                    disabled={sending}
-                    aria-label="Regenerate reply"
-                  >
-                    <RotateCcw size={13} />
-                    Regenerate
-                  </button>
-                )}
-              </div>
-
-              {/* Team-chat row: avatar + name/time header + content. */}
-              <div className="msg-appear tc-msg">
-                <div className="tc-msg-avatar">
-                  {isUser ? (
-                    <span className="tc-user-chip" aria-hidden="true">
-                      <User size={18} />
-                    </span>
-                  ) : isTyping ? (
-                    <BoomiAvatar size={36} status="thinking" alt="Boomi is typing" />
+            <div key={msg.id} className={`gc-row ${isUser ? "gc-row-user" : "gc-row-bot"}`}>
+              {/* Bot avatar on the left (iMessage/Grok style). */}
+              {!isUser && (
+                <div className="gc-avatar" aria-hidden="true">
+                  {isTyping ? (
+                    <BoomiAvatar size={34} status="thinking" alt="Boomi is typing" />
                   ) : activeBot ? (
                     <BotAvatar
                       botId={activeBot.id}
                       name={activeBot.name}
                       emoji={activeBot.avatar_emoji}
-                      size={36}
+                      size={34}
                       status="online"
                     />
                   ) : (
-                    <BoomiAvatar size={36} alt="Boomi" />
+                    <BoomiAvatar size={34} alt="Boomi" />
                   )}
                 </div>
-                <div className="tc-msg-main">
-                  <div className="tc-msg-head">
-                    <span className="tc-msg-name">{senderName}</span>
-                    {ts && (
-                      <span className="tc-msg-time" title={fullTs} aria-label={`Sent at ${fullTs}`}>
-                        {ts}
-                      </span>
-                    )}
-                  </div>
-                  <div className="tc-msg-body">
-                    {isTyping ? (
-                      <TypingText text={msg.text} wordsShown={revealedWords} />
-                    ) : (
-                      <MessageBubble message={msg} />
+              )}
+              <div className="gc-main">
+                <div className={`gc-bubble ${isUser ? "gc-bubble-user" : "gc-bubble-bot"}`}>
+                  {isTyping ? (
+                    <TypingText text={msg.text} wordsShown={revealedWords} />
+                  ) : (
+                    <MessageBubble message={msg} />
+                  )}
+                </div>
+                <div className="gc-meta">
+                  {ts && (
+                    <span className="gc-time" title={fullTs}>
+                      {ts}
+                    </span>
+                  )}
+                  <div className="gc-actions" role="toolbar" aria-label="Message actions">
+                    <button
+                      type="button"
+                      className={`gc-action-btn${copied ? " is-copied" : ""}`}
+                      onClick={() => void copyText(msg.id, msg.text)}
+                      aria-label={copied ? "Copied to clipboard" : "Copy message"}
+                      title={copied ? "Copied" : "Copy"}
+                    >
+                      {copied ? <Check size={13} /> : <Copy size={13} />}
+                    </button>
+                    {msg.role === "assistant" && msg.id === lastAssistantId && !isTyping && (
+                      <button
+                        type="button"
+                        className="gc-action-btn"
+                        onClick={regenerate}
+                        disabled={sending}
+                        aria-label="Regenerate reply"
+                        title="Regenerate"
+                      >
+                        <RotateCcw size={13} />
+                      </button>
                     )}
                   </div>
                 </div>
@@ -533,31 +524,26 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
           );
         })}
 
+        {/* Bot working: bouncing avatar + dancing dots + playful status. */}
         {phase && (
-          <div className="tc-thinking">
-            {/* Animated thinking avatar + phase label, no bubble. */}
-            <div className="tc-msg-avatar">
-              <BoomiAvatar size={36} status="thinking" alt="Boomi is thinking" />
-            </div>
-            <div className="tc-thinking-main">
-              <div className="tc-msg-head">
-                <span className="tc-msg-name">{activeBot ? activeBot.name : "Boomi"}</span>
-              </div>
-              <ThinkingDots label={phase ? `${phase}…` : "Thinking"} />
-            </div>
-          </div>
+          <BotThinking
+            phase={phase}
+            botId={activeBot?.id ?? null}
+            botName={activeBot?.name ?? null}
+            botEmoji={activeBot?.avatar_emoji ?? null}
+          />
         )}
 
         {noProvider && (
-          <div className="provider-prompt" role="status">
-            <KeyRound size={16} aria-hidden="true" className="provider-prompt-icon" />
-            <p className="provider-prompt-text">
+          <div className="gc-card" role="status">
+            <KeyRound size={16} aria-hidden="true" style={{ color: "var(--muted)", flexShrink: 0 }} />
+            <p className="gc-card-text">
               No AI provider configured — add an API key in Settings so Boom can reply.
             </p>
             {onOpenSettings && (
               <button
                 type="button"
-                className="provider-prompt-button"
+                className="gc-card-btn"
                 onClick={onOpenSettings}
               >
                 Open Settings
@@ -565,7 +551,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
             )}
             <button
               type="button"
-              className="provider-prompt-dismiss"
+              className="gc-card-dismiss"
               onClick={() => setNoProvider(false)}
               aria-label="Dismiss notification"
             >
@@ -575,9 +561,9 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         )}
 
         {error && (
-          <div className="error-card" role="alert">
-            <p className="error-text">{error}</p>
-            <button type="button" className="retry-button" onClick={retryLast} disabled={sending}>
+          <div className="gc-card gc-card-error" role="alert">
+            <p className="gc-card-text">{error}</p>
+            <button type="button" className="gc-card-btn" onClick={retryLast} disabled={sending}>
               <RotateCcw size={14} /> Retry
             </button>
           </div>
@@ -586,11 +572,12 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         {/* Scroll sentinel: smooth auto-scroll target (see scrollToBottomSmooth). */}
         <div ref={bottomRef} aria-hidden="true" />
       </div>
+      </div>
 
-      {/* Typing indicator: visible near the composer while waiting for a reply. */}
+      {/* Slim "replying…" strip above the composer while waiting. */}
       {sending && (
-        <div className="tc-sending" role="status" aria-live="polite">
-          <span className="typing-dots" aria-hidden="true">
+        <div className="gc-sending" role="status" aria-live="polite">
+          <span className="gc-dots" aria-hidden="true">
             <span />
             <span />
             <span />
@@ -599,28 +586,32 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         </div>
       )}
 
-      <form
-        className="tc-composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <textarea
-          ref={inputRef}
-          className="tc-input"
-          rows={1}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder={sending ? "Boom is replying…" : "Message Boom…"}
-          disabled={sending}
-          aria-label="Message input"
-        />
-        <button type="submit" className="tc-send" disabled={!canSend} aria-label="Send message">
-          <SendHorizonal size={18} />
-        </button>
-      </form>
+      <div className="gc-composer-wrap">
+        <div className="gc-composer-inner">
+          <form
+            className="gc-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
+            }}
+          >
+            <textarea
+              ref={inputRef}
+              className="gc-input"
+              rows={1}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={sending ? "Boom is replying…" : "Message Boom…"}
+              disabled={sending}
+              aria-label="Message input"
+            />
+            <button type="submit" className="gc-send" disabled={!canSend} aria-label="Send message">
+              <SendHorizonal size={17} />
+            </button>
+          </form>
+        </div>
+      </div>
     </section>
   );
 }
