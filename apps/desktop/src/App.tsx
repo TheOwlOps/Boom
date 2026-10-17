@@ -154,7 +154,7 @@ export default function App() {
     false,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection] = useState<SettingsSection>("general");
+  const [settingsSection] = useState<SettingsSection>("providers");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Bot roster for the teammates sidebar. ChatView owns the fetch +

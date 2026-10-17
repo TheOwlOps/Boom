@@ -470,7 +470,7 @@ function ToggleSwitch({
 export default function SettingsPage({ section: controlledSection }: { section?: SettingsSection } = {}) {
   const [internalSection, setInternalSection] = useState<SettingsSection>("providers");
   const section = controlledSection ?? internalSection;
-  const setSection = controlledSection ? () => {} : setInternalSection;
+  const isControlled = controlledSection !== undefined;
 
   const [theme, setTheme] = useStoredSetting(LS_THEME, "dark" as Theme, isTheme);
   const [fontSize, setFontSize] = useStoredSetting<FontSize>(
@@ -504,34 +504,36 @@ export default function SettingsPage({ section: controlledSection }: { section?:
 
   return (
     <div className="flex h-full min-h-0">
-      {/* Section nav — left sidebar */}
-      <nav
-        aria-label="Settings sections"
-        className="w-52 shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] p-3"
-      >
-        <h2 className="px-2 pb-2 text-sm font-semibold text-[var(--text)]">
-          Settings
-        </h2>
-        <ul className="space-y-1">
-          {SECTION_NAV.map(({ id, label, Icon }) => (
-            <li key={id}>
-              <button
-                type="button"
-                onClick={() => setSection(id)}
-                aria-current={section === id ? "page" : undefined}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  section === id
-                    ? "bg-[var(--surface-2)] text-[var(--text)]"
-                    : "text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                {label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      {/* Section nav — only shown when not controlled by parent modal */}
+      {!isControlled && (
+        <nav
+          aria-label="Settings sections"
+          className="w-52 shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] p-3"
+        >
+          <h2 className="px-2 pb-2 text-sm font-semibold text-[var(--text)]">
+            Settings
+          </h2>
+          <ul className="space-y-1">
+            {SECTION_NAV.map(({ id, label, Icon }) => (
+              <li key={id}>
+                <button
+                  type="button"
+                  onClick={() => setInternalSection(id)}
+                  aria-current={section === id ? "page" : undefined}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    section === id
+                      ? "bg-[var(--surface-2)] text-[var(--text)]"
+                      : "text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
 
       {/* Section content — right */}
       <div className="min-w-0 flex-1 overflow-y-auto bg-[var(--bg)]">

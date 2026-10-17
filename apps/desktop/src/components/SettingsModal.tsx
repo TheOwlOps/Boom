@@ -21,10 +21,12 @@ import {
   Activity,
   Bell,
   Bot,
+  Info,
+  Palette,
+  Plug,
   Radio,
 
   Search,
-  Settings as SettingsIcon,
   Sparkles,
   Users,
   Workflow,
@@ -42,7 +44,10 @@ import SkillList from "./SkillList";
 import ToolManager from "./ToolManager";
 
 export type SettingsSection =
-  | "general"
+  | "providers"
+  | "appearance"
+  | "notifications"
+  | "about"
   | "groups"
   | "activity"
   | "bots"
@@ -56,7 +61,10 @@ const SECTIONS: Array<{
   icon: LucideIcon;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: SettingsIcon, keywords: ["theme", "appearance", "font", "provider", "backend", "notification", "about", "update"] },
+  { id: "providers", label: "Providers", icon: Plug, keywords: ["provider", "api key", "model", "llm", "openai", "anthropic"] },
+  { id: "appearance", label: "Appearance", icon: Palette, keywords: ["theme", "appearance", "font", "dark", "light"] },
+  { id: "notifications", label: "Notifications", icon: Bell, keywords: ["notification", "sound", "alert"] },
+  { id: "about", label: "About", icon: Info, keywords: ["about", "version", "update"] },
   { id: "groups", label: "Groups", icon: Users, keywords: ["group", "chat group", "member"] },
   { id: "activity", label: "Activity", icon: Activity, keywords: ["activity", "event", "history"] },
   { id: "bots", label: "Bots", icon: Bot, keywords: ["bot", "assistant"] },
@@ -72,7 +80,7 @@ interface SettingsModalProps {
   initialSection?: SettingsSection;
 }
 
-export function SettingsModal({ open, onClose, initialSection = "general" }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, initialSection = "providers" }: SettingsModalProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [search, setSearch] = useState("");
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -107,7 +115,7 @@ export function SettingsModal({ open, onClose, initialSection = "general" }: Set
       )
     : SECTIONS;
 
-  const activeLabel = SECTIONS.find((s) => s.id === section)?.label ?? "General";
+  const activeLabel = SECTIONS.find((s) => s.id === section)?.label ?? "Providers";
 
   return (
     <div
@@ -193,7 +201,9 @@ export function SettingsModal({ open, onClose, initialSection = "general" }: Set
             </button>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
-            {section === "general" && <SettingsPage />}
+            {(section === "providers" || section === "appearance" || section === "notifications" || section === "about") && (
+              <SettingsPage section={section} />
+            )}
             {section === "groups" && <GroupManager />}
             {section === "activity" && <ActivityFeed />}
             {section === "bots" && <BotManager />}
