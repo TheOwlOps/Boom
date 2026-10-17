@@ -1,7 +1,7 @@
 /**
  * SettingsModal — consolidated settings and management hub.
  *
- * Replaces the old top-bar tab navigation (Groups, Logs, Activity, Bots,
+ * Replaces the old top-bar tab navigation (Groups, Activity, Bots,
  * DAG, Tools, Skills, Settings). Opens as a full-screen modal
  * (same pattern as Marketplace) with a left sidebar for section navigation
  * and the main content area rendering the corresponding component.
@@ -9,7 +9,6 @@
  * Sections:
  *   - General: theme, font size, backend, notifications, about (SettingsPage)
  *   - Groups: GroupManager
- *   - Logs: LogViewer
  *   - Activity: ActivityFeed
  *   - Bots: BotManager
  *   - DAG: DagViewer
@@ -23,7 +22,7 @@ import {
   Bell,
   Bot,
   Radio,
-  ScrollText,
+
   Search,
   Settings as SettingsIcon,
   Sparkles,
@@ -38,7 +37,6 @@ import { ShortcutHint } from "./ShortcutHint";
 import BotManager from "./BotManager";
 import DagViewer from "./DagViewer";
 import GroupManager from "./GroupManager";
-import LogViewer from "./LogViewer";
 import SettingsPage from "./SettingsPage";
 import SkillList from "./SkillList";
 import ToolManager from "./ToolManager";
@@ -46,7 +44,6 @@ import ToolManager from "./ToolManager";
 export type SettingsSection =
   | "general"
   | "groups"
-  | "logs"
   | "activity"
   | "bots"
   | "dag"
@@ -61,7 +58,6 @@ const SECTIONS: Array<{
 }> = [
   { id: "general", label: "General", icon: SettingsIcon, keywords: ["theme", "appearance", "font", "provider", "backend", "notification", "about", "update"] },
   { id: "groups", label: "Groups", icon: Users, keywords: ["group", "chat group", "member"] },
-  { id: "logs", label: "Logs", icon: ScrollText, keywords: ["log", "terminal", "output"] },
   { id: "activity", label: "Activity", icon: Activity, keywords: ["activity", "event", "history"] },
   { id: "bots", label: "Bots", icon: Bot, keywords: ["bot", "assistant"] },
   { id: "dag", label: "DAG", icon: Workflow, keywords: ["dag", "workflow", "pipeline", "graph"] },
@@ -199,7 +195,6 @@ export function SettingsModal({ open, onClose, initialSection = "general" }: Set
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
             {section === "general" && <SettingsPage />}
             {section === "groups" && <GroupManager />}
-            {section === "logs" && <LogViewer />}
             {section === "activity" && <ActivityFeed />}
             {section === "bots" && <BotManager />}
             {section === "dag" && <DagViewer />}
