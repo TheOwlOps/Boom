@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from "react";
-import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Bot as BotIcon, Users } from "lucide-react";
-import type { Bot } from "../lib/types";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Bot as BotIcon, Users, X, Pencil } from "lucide-react";
+import type { Bot, BotDraft } from "../lib/types";
+import { createBot, updateBot, deleteBot } from "../lib/api";
 import { type BotGroup, type GroupPreview } from "../lib/botGroups";
 import { formatSmartTime } from "../lib/formatTime";
 import { MemberAvatarStack } from "./BotGroupManager";
@@ -29,9 +30,11 @@ export interface SidebarProps {
   activeGroupId: string | null;
   onSelectGroup(id: string): void;
   onNewChat(): void;
-  onCreateBot(): void;
   onCreateGroup(): void;
   onOpenSettings(): void;
+  /** Called after a bot is created/renamed/deleted inline — parent refreshes the list.
+   *  Receives the new bot's id when a bot was just created (to auto-select it). */
+  onBotsChanged(selectBotId?: string): void;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
@@ -44,25 +47,283 @@ function Logo({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+/** Inline input row for creating a new bot (VS Code style). Enter = create, Esc = cancel. */
+function CreateBotRow({
+  onCreated,
+  onCancel,
+}: {
+  onCreated(bot: Bot): void;
+  onCancel(): void;
+}) {
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const draft: BotDraft = {
+        name: trimmed,
+        description: "",
+        system_prompt: "",
+        avatar_emoji: "🤖",
+        allowed_tools: [],
+        denied_tools: [],
+        channel_bindings: [],
+      };
+      const bot = await createBot(draft);
+      onCreated(bot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được bot");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="teammate-item teammate-item-editing"
+      role="option"
+      aria-selected="false"
+      aria-label="Tạo bot mới"
+    >
+      <span className="teammate-avatar-wrap">
+        <span className="teammate-avatar-new" aria-hidden="true">
+          <Plus size={20} />
+        </span>
+      </span>
+      <span className="teammate-meta">
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void submit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+          onBlur={() => {
+            if (!name.trim() && !saving) onCancel();
+          }}
+          placeholder="Tên bot…"
+          disabled={saving}
+          className="teammate-name-input"
+          aria-label="Tên bot mới"
+        />
+        {error ? (
+          <span className="teammate-inline-error">{error}</span>
+        ) : (
+          <span className="teammate-preview">Enter để tạo · Esc để hủy</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Inline input row for renaming a bot. Enter = save, Esc = cancel. */
+function RenameRow({
+  bot,
+  onDone,
+  onCancel,
+}: {
+  bot: Bot;
+  onDone(): void;
+  onCancel(): void;
+}) {
+  const [name, setName] = useState(bot.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, []);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || saving) return;
+    if (trimmed === bot.name) {
+      onCancel();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const draft: BotDraft = {
+        name: trimmed,
+        description: bot.description,
+        system_prompt: bot.system_prompt,
+        avatar_emoji: bot.avatar_emoji,
+        allowed_tools: bot.allowed_tools,
+        denied_tools: bot.denied_tools,
+        channel_bindings: bot.channel_bindings,
+      };
+      await updateBot(bot.id, draft);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không đổi tên được");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="teammate-item teammate-item-editing"
+      role="option"
+      aria-selected="false"
+      aria-label={`Đổi tên ${bot.name}`}
+    >
+      <span className="teammate-avatar-wrap">
+        <BotAvatar
+          botId={bot.id}
+          name={bot.name}
+          emoji={bot.avatar_emoji}
+          size={40}
+          status={bot.is_active ? "online" : "offline"}
+        />
+      </span>
+      <span className="teammate-meta">
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void submit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+          disabled={saving}
+          className="teammate-name-input"
+          aria-label="Tên mới của bot"
+        />
+        {error ? (
+          <span className="teammate-inline-error">{error}</span>
+        ) : (
+          <span className="teammate-preview">Enter để lưu · Esc để hủy</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function TeammateRow({
   bot,
   active,
   onSelect,
+  onBotsChanged,
 }: {
   bot: Bot;
   active: boolean;
   onSelect(id: string): void;
+  onBotsChanged(): void;
 }) {
+  const [renaming, setRenaming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const online = bot.is_active;
-  const preview = (bot.description ?? "").trim() || "No description yet";
+  const preview = (bot.description ?? "").trim() || "Chưa có mô tả";
+
+  if (renaming) {
+    return (
+      <RenameRow
+        bot={bot}
+        onDone={() => {
+          setRenaming(false);
+          onBotsChanged();
+        }}
+        onCancel={() => setRenaming(false)}
+      />
+    );
+  }
+
+  if (confirmingDelete) {
+    return (
+      <div
+        className="teammate-item teammate-item-danger"
+        role="option"
+        aria-selected={active}
+        aria-label={`Xác nhận xóa ${bot.name}`}
+      >
+        <span className="teammate-meta">
+          <span className="teammate-name">Xóa "{bot.name}"?</span>
+          <span className="teammate-preview">Không thể hoàn tác</span>
+        </span>
+        <span className="teammate-row-actions">
+          <button
+            type="button"
+            className="teammate-confirm-btn danger"
+            disabled={deleting}
+            onClick={async () => {
+              setDeleting(true);
+              try {
+                await deleteBot(bot.id);
+                onBotsChanged();
+              } catch {
+                setDeleting(false);
+                setConfirmingDelete(false);
+              }
+            }}
+          >
+            {deleting ? "…" : "Xóa"}
+          </button>
+          <button
+            type="button"
+            className="teammate-confirm-btn"
+            disabled={deleting}
+            onClick={() => setConfirmingDelete(false)}
+          >
+            Hủy
+          </button>
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
+    <div
       className={`teammate-item stagger-item${active ? " active" : ""}`}
       onClick={() => onSelect(bot.id)}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        setRenaming(true);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setConfirmingDelete(true);
+      }}
       title={`${bot.name} — ${online ? "Online" : "Offline"}`}
       role="option"
       aria-selected={active}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(bot.id);
+        } else if (e.key === "F2") {
+          e.preventDefault();
+          setRenaming(true);
+        }
+      }}
     >
       <span className="teammate-avatar-wrap">
         <BotAvatar
@@ -81,7 +342,33 @@ function TeammateRow({
         <span className="teammate-name">{bot.name}</span>
         <span className="teammate-preview">{preview}</span>
       </span>
-    </button>
+      <span className="teammate-hover-actions">
+        <button
+          type="button"
+          className="teammate-icon-btn"
+          title="Đổi tên"
+          aria-label={`Đổi tên ${bot.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setRenaming(true);
+          }}
+        >
+          <Pencil size={14} />
+        </button>
+        <button
+          type="button"
+          className="teammate-icon-btn danger"
+          title="Xóa bot"
+          aria-label={`Xóa ${bot.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmingDelete(true);
+          }}
+        >
+          <X size={14} />
+        </button>
+      </span>
+    </div>
   );
 }
 
@@ -140,13 +427,21 @@ export default function Sidebar({
   activeGroupId,
   onSelectGroup,
   onNewChat,
-  onCreateBot,
   onCreateGroup,
   onOpenSettings,
+  onBotsChanged,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  /** Inline bot creation (VS Code style) — true while the name input row is shown. */
+  const [creatingBot, setCreatingBot] = useState(false);
+
+  /** Start inline bot creation. Expands the sidebar first when collapsed. */
+  const startCreatingBot = () => {
+    if (collapsed) onToggle();
+    setCreatingBot(true);
+  };
 
   // Close menu on outside click / Escape.
   useEffect(() => {
@@ -204,7 +499,7 @@ export default function Sidebar({
                 <Plus size={15} className="shrink-0 text-[var(--muted)]" />
                 New chat
               </button>
-              <button type="button" role="menuitem" onClick={closeAnd(onCreateBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+              <button type="button" role="menuitem" onClick={closeAnd(startCreatingBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
                 <BotIcon size={15} className="shrink-0 text-[var(--muted)]" />
                 Create bot
               </button>
@@ -277,7 +572,7 @@ export default function Sidebar({
                   <Plus size={15} className="shrink-0 text-[var(--muted)]" />
                   New chat
                 </button>
-                <button type="button" role="menuitem" onClick={closeAnd(onCreateBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                <button type="button" role="menuitem" onClick={closeAnd(startCreatingBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
                   <BotIcon size={15} className="shrink-0 text-[var(--muted)]" />
                   Create bot
                 </button>
@@ -354,6 +649,16 @@ export default function Sidebar({
           />
         )}
 
+        {!loadingBots && creatingBot && (
+          <CreateBotRow
+            onCreated={(bot) => {
+              setCreatingBot(false);
+              onBotsChanged(bot.id);
+            }}
+            onCancel={() => setCreatingBot(false)}
+          />
+        )}
+
         {!loadingBots &&
           filtered.map((b) => (
             <TeammateRow
@@ -361,6 +666,7 @@ export default function Sidebar({
               bot={b}
               active={b.id === activeBotId}
               onSelect={onSelectBot}
+              onBotsChanged={onBotsChanged}
             />
           ))}
       </nav>

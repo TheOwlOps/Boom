@@ -305,10 +305,23 @@ export default function App() {
       setActiveGroupId(null);
       setMobileNavOpen(false);
     },
-    onBotsChanged: () => {
+    onBotsChanged: (selectBotId?: string) => {
       // Sidebar did an inline create/rename/delete — refresh the roster.
-      // ChatView keeps its own copy via onBotApi; it reconciles on next switch.
-      void listBots().then(setBots).catch(() => {});
+      void listBots()
+        .then((list) => {
+          setBots(list);
+          if (selectBotId && list.some((b) => b.id === selectBotId)) {
+            // Newly created bot — switch to it straight away.
+            void botApiRef.current?.switchBot(selectBotId);
+            setBotPanelOpen(true);
+          } else {
+            // The active bot may have been deleted — clear a stale selection.
+            setActiveBotId((prev) =>
+              prev && list.some((b) => b.id === prev) ? prev : null
+            );
+          }
+        })
+        .catch(() => {});
       setMobileNavOpen(false);
     },
     onCreateGroup: () => {
