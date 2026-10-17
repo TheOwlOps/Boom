@@ -2,37 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   FlaskConical,
-  Hash,
   Loader2,
-  MessageCircle,
-  MessageSquare,
-  MessagesSquare,
-  Phone,
   Plug,
-  Send,
-  Smartphone,
   Unplug,
-  type LucideIcon,
 } from "lucide-react";
+import ChannelLogo from "./ChannelLogo";
 import ChannelConnectDialog from "./ChannelConnectDialog";
 import MessengerOAuthConnect from "./MessengerOAuthConnect";
 import ZaloPersonalConnect from "./ZaloPersonalConnect";
 import { disconnectChannel, getChannels, testChannel } from "../lib/api";
 import type { ChannelState, ChannelStatus } from "../lib/types";
 
-// Map channel name -> a recognizable lucide icon. Unknown names fall back to
-// an initial letter chip.
-const CHANNEL_ICONS: Record<string, LucideIcon> = {
-  telegram: Send,
-  discord: Hash,
-  slack: Hash,
-  whatsapp: Phone,
-  messenger: MessageCircle,
-  line: MessageSquare,
-  zalo: Smartphone,
-  "zalo-personal": Smartphone,
-  feishu: MessagesSquare,
-};
+// Channel brand logos come from ChannelLogo (official Simple Icons paths).
+// Unknown channel ids fall back to an initial letter chip.
 
 function capitalize(s: string): string {
   return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
@@ -47,9 +29,21 @@ function displayName(channel: ChannelStatus): string {
   return CHANNEL_DISPLAY_NAMES[channel.id] ?? capitalize(channel.name);
 }
 
+/** Brand logo with letter-chip fallback for unknown channel ids. */
 function ChannelIcon({ name }: { name: string }) {
-  const Icon = CHANNEL_ICONS[name.toLowerCase()];
-  if (Icon) return <Icon size={18} className="shrink-0 text-[var(--muted)]" aria-hidden />;
+  const id = name.toLowerCase();
+  const known = [
+    "telegram",
+    "discord",
+    "messenger",
+    "slack",
+    "whatsapp",
+    "line",
+    "zalo",
+    "zalo-personal",
+    "feishu",
+  ].includes(id);
+  if (known) return <ChannelLogo channelId={id} size={18} className="shrink-0" />;
   return (
     <span
       className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded bg-[var(--surface-2)] text-[10px] font-semibold text-[var(--muted)]"
