@@ -18,6 +18,37 @@ interface ToolsResponse {
   count?: number;
 }
 
+interface ConnectorSummary {
+  id: string;
+  name: string;
+  connected: boolean;
+}
+
+interface ConnectorsResponse {
+  connectors?: unknown;
+}
+
+/** Map a connector tool name → connector id (from GET /api/connectors).
+ *  Most tools are `<connectorId>_<action>`; the exceptions are listed
+ *  explicitly below. Returns null for non-connector tools. */
+function toolToConnectorId(toolName: string): string | null {
+  const n = toolName.toLowerCase();
+  // Explicit exceptions first.
+  if (n === "flight_search") return "duffel";
+  if (n === "flight_status") return "flightaware";
+  if (n.startsWith("plaid_") || n.startsWith("finance_")) return "finances";
+  if (n.startsWith("event")) return "ticketmaster"; // events_search, event_details
+  // Default: <connectorId>_rest — check against known connector ids.
+  const KNOWN_IDS = [
+    "gmail", "gcalendar", "gdrive", "github", "spotify", "social",
+    "places", "health", "canva", "meta_ads", "shopify", "stripe", "tailscale",
+  ];
+  for (const id of KNOWN_IDS) {
+    if (n === id || n.startsWith(id + "_")) return id;
+  }
+  return null;
+}
+
 function isToolDef(v: unknown): v is ToolDef {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
@@ -28,8 +59,27 @@ function isToolDef(v: unknown): v is ToolDef {
   );
 }
 
-/** Tool trial-run modal: enter JSON args, calls POST /api/tools/run. */
-function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
+function isConnectorSummary(v: unknown): v is ConnectorSummary {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.connected === "boolean";
+}
+
+/** Tool trial-run modal: enter JSON args, calls POST /api/tools/run.
+ *  When the tool's connector is not connected, shows a clear "connect first"
+ *  message instead of the args form — running would only return a
+ *  "not connected" error from the backend. */
+function RunModal({
+  tool,
+  connectorName,
+  connectorConnected,
+  onClose,
+}: {
+  tool: ToolDef;
+  connectorName: string | null;
+  connectorConnected: boolean;
+  onClose(): void;
+}) {
   const [args, setArgs] = useState("{}");
   const [result, setResult] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -59,14 +109,28 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
       <div className="w-full max-w-lg rounded-lg bg-[var(--surface)] p-5" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-1 font-semibold text-[var(--text)]">Run: {tool.name}</h3>
         <p className="mb-3 text-sm text-[var(--muted)]">{tool.description}</p>
-        <label className="mb-1 block text-xs text-[var(--muted)]">Args (JSON)</label>
-        <textarea
-          value={args}
-          onChange={(e) => setArgs(e.target.value)}
-          rows={5}
-          spellCheck={false}
-          className="mb-3 w-full rounded border border-[var(--border)] bg-[var(--bg)] p-2 font-mono text-sm text-[var(--text)]"
-        />
+        {connectorName !== null && !connectorConnected ? (
+          <div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+            <p className="text-sm font-medium text-[var(--text)]">
+              {connectorName} is not connected
+            </p>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              This tool needs {connectorName} connected to work. Open Settings →
+              Connectors, connect {connectorName}, then try again.
+            </p>
+          </div>
+        ) : (
+          <>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Args (JSON)</label>
+            <textarea
+              value={args}
+              onChange={(e) => setArgs(e.target.value)}
+              rows={5}
+              spellCheck={false}
+              className="mb-3 w-full rounded border border-[var(--border)] bg-[var(--bg)] p-2 font-mono text-sm text-[var(--text)]"
+            />
+          </>
+        )}
         {result !== null && (
           <pre className="mb-3 max-h-48 overflow-auto rounded bg-[var(--bg)] p-2 font-mono text-xs text-[var(--text)]">
             {result}
@@ -76,13 +140,15 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
           <button onClick={onClose} className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)]">
             Close
           </button>
-          <button
-            onClick={() => void run()}
-            disabled={running}
-            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
-          >
-            {running ? "Running…" : "Execute"}
-          </button>
+          {connectorConnected && (
+            <button
+              onClick={() => void run()}
+              disabled={running}
+              className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
+            >
+              {running ? "Running…" : "Execute"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -93,6 +159,7 @@ function RunModal({ tool, onClose }: { tool: ToolDef; onClose(): void }) {
 export default function ToolManager() {
   const [query, setQuery] = useState("");
   const [tools, setTools] = useState<ToolDef[] | null>(null);
+  const [connectors, setConnectors] = useState<Map<string, ConnectorSummary> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const [active, setActive] = useState<ToolDef | null>(null);
@@ -100,6 +167,8 @@ export default function ToolManager() {
   // The tool list comes from the live backend (GET /api/tools). There is no
   // static fallback catalog on purpose: a stale catalog would show tools the
   // backend does not have, and every Run click on one would 404.
+  // Connector connection status comes from GET /api/connectors so each tool
+  // row can show whether its service is connected.
   useEffect(() => {
     let cancelled = false;
     setLoadError(null);
@@ -115,10 +184,31 @@ export default function ToolManager() {
         setLoadError(err instanceof Error ? err.message : "Could not reach the backend.");
         setTools([]);
       });
+    fetch(`${API_BASE}/api/connectors`)
+      .then(async (res) => {
+        if (!res.ok) return;
+        const body = (await res.json()) as ConnectorsResponse;
+        if (!Array.isArray(body.connectors)) return;
+        const map = new Map<string, ConnectorSummary>();
+        for (const c of body.connectors.filter(isConnectorSummary)) {
+          map.set(c.id.toLowerCase(), c);
+        }
+        if (!cancelled) setConnectors(map);
+      })
+      .catch(() => {
+        // Connection status is best-effort: tools still list without it.
+      });
     return () => {
       cancelled = true;
     };
   }, [retryTick]);
+
+  /** Connector status for a tool: {id, name, connected} or null when unknown. */
+  const connectorStatus = (toolName: string): ConnectorSummary | null => {
+    const id = toolToConnectorId(toolName);
+    if (id === null || connectors === null) return null;
+    return connectors.get(id) ?? null;
+  };
 
   // Filter by tool name (case-insensitive).
   // Son's request: hide system/built-in tools, only show connector tools
@@ -202,23 +292,58 @@ export default function ToolManager() {
               {group} ({list.length})
             </h3>
             <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
-              {list.map((t) => (
-                <li key={t.name} className="flex items-center gap-3 px-3 py-2">
-                  <code className="font-mono text-sm text-[var(--text)]">{t.name}</code>
-                  <span className="flex-1 text-sm text-[var(--muted)]">{t.description}</span>
-                  <button
-                    onClick={() => setActive(t)}
-                    className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
-                  >
-                    Run
-                  </button>
-                </li>
-              ))}
+              {list.map((t) => {
+                const cs = connectorStatus(t.name);
+                return (
+                  <li key={t.name} className="flex items-center gap-3 px-3 py-2">
+                    <span
+                      title={
+                        cs === null
+                          ? "Connection status unknown"
+                          : cs.connected
+                            ? `${cs.name} connected`
+                            : `${cs.name} not connected`
+                      }
+                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                        cs === null
+                          ? "bg-[var(--muted)]"
+                          : cs.connected
+                            ? "bg-green-500"
+                            : "bg-[var(--muted)] opacity-50"
+                      }`}
+                    />
+                    <code className="font-mono text-sm text-[var(--text)]">{t.name}</code>
+                    <span className="flex-1 text-sm text-[var(--muted)]">
+                      {t.description}
+                      {cs !== null && !cs.connected && (
+                        <span className="ml-2 text-xs">({cs.name} not connected)</span>
+                      )}
+                    </span>
+                    <button
+                      onClick={() => setActive(t)}
+                      className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+                    >
+                      Run
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))
       )}
-      {active && <RunModal tool={active} onClose={() => setActive(null)} />}
+      {active &&
+        (() => {
+          const cs = connectorStatus(active.name);
+          return (
+            <RunModal
+              tool={active}
+              connectorName={cs?.name ?? null}
+              connectorConnected={cs?.connected ?? true}
+              onClose={() => setActive(null)}
+            />
+          );
+        })()}
     </div>
   );
 }
