@@ -121,8 +121,33 @@ export default function ToolManager() {
   }, [retryTick]);
 
   // Filter by tool name (case-insensitive).
+  // Son's request: hide system/built-in tools, only show connector tools
+  // (the external services/channels like Gmail, GitHub, Spotify, etc.)
+  const CONNECTOR_PREFIXES = [
+    "gmail_", "gcalendar_", "gdrive_",
+    "github_",
+    "spotify_",
+    "social_",
+    "places_",
+    "flight", "duffel_",
+    "event",
+    "canva_",
+    "health_",
+    "plaid_", "finance_",
+    "meta_",
+    "shopify_", "stripe_",
+    "tailscale_",
+  ];
+  const isConnectorTool = (name: string) =>
+    CONNECTOR_PREFIXES.some((p) => name.toLowerCase().startsWith(p));
+
   const filtered = useMemo(
-    () => (tools ?? []).filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase())),
+    () =>
+      (tools ?? []).filter(
+        (t) =>
+          isConnectorTool(t.name) &&
+          t.name.toLowerCase().includes(query.trim().toLowerCase()),
+      ),
     [tools, query],
   );
 
