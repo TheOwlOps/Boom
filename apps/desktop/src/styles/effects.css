@@ -561,6 +561,7 @@
 
 .msg-row {
   position: relative;
+  width: 100%;
 }
 
 .msg-actions {

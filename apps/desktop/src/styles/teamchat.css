@@ -11,6 +11,15 @@
  * Light theme works through [data-theme="light"] on <html>.
  * ------------------------------------------------------------------ */
 
+/* ChatView root: full width, flex column. */
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+
 /* ------------------------------------------------------------------
  * Header: slim channel bar — avatar + name + status.
  * ------------------------------------------------------------------ */
@@ -70,15 +79,18 @@
 .tc-list {
   display: flex;
   flex-direction: column;
+  width: 100%;
   padding: 8px 0 16px;
 }
 
 /* One message row: avatar (top-aligned) + main column. */
 .tc-msg {
   display: flex;
+  width: 100%;
   gap: 12px;
   padding: 6px 20px;
   transition: background-color 120ms ease;
+  box-sizing: border-box;
 }
 
 .tc-msg:hover {
