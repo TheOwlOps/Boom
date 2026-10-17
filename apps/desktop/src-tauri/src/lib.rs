@@ -442,6 +442,9 @@ pub fn run() {
         // Process plugin: exposes restart/exit so the UI can offer a
         // "Restart" button after an update is installed.
         .plugin(tauri_plugin_process::init())
+        // Opener plugin: lets the UI open the system browser (e.g. the
+        // Facebook OAuth login page for Messenger connect).
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Logging is initialised in every build (not just debug builds).
             // Backend lifecycle events must be visible in production: a

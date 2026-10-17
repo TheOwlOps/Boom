@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import ChannelConnectDialog from "./ChannelConnectDialog";
+import MessengerOAuthConnect from "./MessengerOAuthConnect";
 import { disconnectChannel, getChannels, testChannel } from "../lib/api";
 import type { ChannelState, ChannelStatus } from "../lib/types";
 
@@ -72,6 +73,7 @@ function ChannelRow({
   onDisconnect,
   onTest,
   onConnect,
+  onMessengerConnected,
 }: {
   channel: ChannelStatus;
   expanded: boolean;
@@ -82,10 +84,12 @@ function ChannelRow({
   onDisconnect(): void;
   onTest(): void;
   onConnect(): void;
+  onMessengerConnected(): void;
 }) {
   const connected = channel.state === "connected";
   const unsupported = channel.state === "unsupported";
   const name = capitalize(channel.name);
+  const isMessenger = channel.id === "messenger";
 
   return (
     <li>
@@ -128,6 +132,12 @@ function ChannelRow({
           )}
           {unsupported ? (
             <p className="text-xs text-[var(--muted)]">Chưa hỗ trợ trong bản này.</p>
+          ) : isMessenger && !connected ? (
+            /* Messenger: browser-based Facebook login instead of token paste. */
+            <MessengerOAuthConnect
+              onConnected={onMessengerConnected}
+              onManualConnect={onConnect}
+            />
           ) : (
             <div className="flex gap-1.5 pt-0.5">
               {connected ? (
@@ -272,6 +282,7 @@ export default function ChannelAccordion({ query }: { query: string }) {
             onDisconnect={() => void handleDisconnect(c)}
             onTest={() => void handleTest(c)}
             onConnect={() => setConnecting(c)}
+            onMessengerConnected={() => void load()}
           />
         ))}
       </ul>

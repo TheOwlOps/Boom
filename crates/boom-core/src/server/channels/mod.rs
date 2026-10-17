@@ -104,6 +104,38 @@ pub struct FileChannelRegistry {
     /// In-memory lock so concurrent connect/disconnect calls serialize
     /// their read-modify-write cycles.
     write_lock: Mutex<()>,
+    /// Single-use OAuth CSRF states → creation time (Messenger login).
+    /// Entries expire after [`OAUTH_STATE_TTL_SECS`].
+    oauth_states: Mutex<HashMap<String, std::time::Instant>>,
+}
+
+/// How long a minted OAuth `state` stays valid (seconds).
+const OAUTH_STATE_TTL_SECS: u64 = 600;
+
+/// Filename (inside `$BOOM_HOME/channels/`) holding the Facebook App
+/// credentials for the Messenger OAuth login flow.
+const OAUTH_CONFIG_FILENAME: &str = "messenger_oauth.json";
+
+/// Mint an unpredictable CSRF state token without extra dependencies:
+/// hash of (wall-clock nanos, pid, atomic counter) rendered as hex.
+fn mint_oauth_state() -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut h = DefaultHasher::new();
+    nanos.hash(&mut h);
+    std::process::id().hash(&mut h);
+    COUNTER.fetch_add(1, Ordering::Relaxed).hash(&mut h);
+    format!("{:016x}{:016x}", h.finish(), {
+        let mut h2 = DefaultHasher::new();
+        nanos.wrapping_add(0x9e3779b97f4a7c15).hash(&mut h2);
+        h2.finish()
+    })
 }
 
 impl FileChannelRegistry {
@@ -153,6 +185,7 @@ impl FileChannelRegistry {
             discord_api,
             messenger_api,
             write_lock: Mutex::new(()),
+            oauth_states: Mutex::new(HashMap::new()),
         }
     }
 
@@ -267,6 +300,126 @@ impl FileChannelRegistry {
                 display_name(id)
             ))),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Messenger Facebook OAuth login flow
+    // ------------------------------------------------------------------
+
+    /// Path of the OAuth app-credentials file.
+    fn oauth_config_path(&self) -> PathBuf {
+        self.channels_dir.join(OAUTH_CONFIG_FILENAME)
+    }
+
+    /// Load the saved Facebook App credentials, if any.
+    fn load_oauth_config(&self) -> Option<MessengerOAuthConfig> {
+        let raw = fs::read_to_string(self.oauth_config_path()).ok()?;
+        let cfg: MessengerOAuthConfig = serde_json::from_str(&raw).ok()?;
+        if cfg.app_id.trim().is_empty() || cfg.app_secret.is_empty() {
+            return None;
+        }
+        Some(cfg)
+    }
+
+    /// Persist Facebook App credentials (0600, atomic). The secret is
+    /// never echoed back to callers.
+    fn save_oauth_config(&self, app_id: &str, app_secret: &str) -> Result<(), String> {
+        let app_id = app_id.trim();
+        if app_id.is_empty() {
+            return Err("Facebook App ID is required".to_string());
+        }
+        if app_secret.is_empty() {
+            return Err("Facebook App Secret is required".to_string());
+        }
+        let cfg = MessengerOAuthConfig {
+            app_id: app_id.to_string(),
+            app_secret: app_secret.to_string(),
+        };
+        let text = serde_json::to_string_pretty(&cfg)
+            .map_err(|e| format!("failed to serialize oauth config: {e}"))?;
+        atomic_write_secret(&self.channels_dir, OAUTH_CONFIG_FILENAME, &text)
+            .map_err(|e| format!("failed to save oauth config: {e}"))?;
+        Ok(())
+    }
+
+    /// Mint a single-use CSRF state and build the Facebook Login URL.
+    /// `redirect_uri` is the backend's own callback URL (derived from the
+    /// request Host so it always matches this server's address).
+    fn oauth_start(&self, redirect_uri: &str) -> Result<String, ChannelError> {
+        let cfg = self.load_oauth_config().ok_or_else(|| {
+            ChannelError::bad_request(
+                "Facebook App chưa được cấu hình — nhập App ID và App Secret trước",
+            )
+        })?;
+        let state = mint_oauth_state();
+        // Prune expired states, then store the fresh one.
+        if let Ok(mut states) = self.oauth_states.lock() {
+            let now = std::time::Instant::now();
+            states.retain(|_, t| now.duration_since(*t).as_secs() < OAUTH_STATE_TTL_SECS);
+            states.insert(state.clone(), now);
+        }
+        Ok(messenger::authorize_url(&cfg.app_id, redirect_uri, &state))
+    }
+
+    /// Validate the single-use `state`, exchange `code` for a user token,
+    /// take the first managed Page and persist its Page token as the
+    /// messenger credential (verified first, like a manual connect).
+    /// `Ok` → the connected Page's display name.
+    async fn oauth_callback(
+        &self,
+        code: &str,
+        state: &str,
+        redirect_uri: &str,
+    ) -> Result<String, ChannelError> {
+        // Single-use state check first: unknown/expired/replayed → 400.
+        let fresh = self
+            .oauth_states
+            .lock()
+            .map(|mut states| {
+                let valid = states
+                    .remove(state)
+                    .map(|t| std::time::Instant::now().duration_since(t).as_secs() < OAUTH_STATE_TTL_SECS)
+                    .unwrap_or(false);
+                // Opportunistic prune on every callback.
+                let now = std::time::Instant::now();
+                states.retain(|_, t| now.duration_since(*t).as_secs() < OAUTH_STATE_TTL_SECS);
+                valid
+            })
+            .unwrap_or(false);
+        if !fresh {
+            return Err(ChannelError::bad_request(
+                "OAuth state không hợp lệ hoặc đã hết hạn — hãy bấm Connect lại",
+            ));
+        }
+        let cfg = self.load_oauth_config().ok_or_else(|| {
+            ChannelError::new(500, "Facebook App config biến mất giữa chừng — hãy cấu hình lại")
+        })?;
+        let messenger_api = self.messenger_api.clone();
+        let msg_cfg = messenger::OAuthConfig {
+            app_id: cfg.app_id.clone(),
+            app_secret: cfg.app_secret.clone(),
+        };
+        let user_token = messenger::exchange_code(&messenger_api, &msg_cfg, redirect_uri, code)
+            .await
+            .map_err(ChannelError::upstream)?;
+        let pages = messenger::list_pages(&messenger_api, &user_token)
+            .await
+            .map_err(ChannelError::upstream)?;
+        // Never keep the short-lived user token: only the Page token is stored.
+        drop(user_token);
+        let page = pages.into_iter().next().ok_or_else(|| {
+            ChannelError::upstream(
+                "Tài khoản Facebook này không quản lý Page nào — hãy tạo Page rồi thử lại",
+            )
+        })?;
+        let page_name = if page.name.is_empty() {
+            page.id.clone()
+        } else {
+            page.name.clone()
+        };
+        // `connect` re-verifies the Page token live before persisting it.
+        self.connect("messenger", &page.access_token).await?;
+        Ok(page_name)
     }
 }
 
@@ -577,6 +730,41 @@ impl ChannelRegistry for FileChannelRegistry {
                 }
                 _ => unreachable!("is_supported guard above"),
             }
+        })
+    }
+
+    fn messenger_oauth_config(&self) -> Option<MessengerOAuthConfig> {
+        self.load_oauth_config()
+    }
+
+    fn save_messenger_oauth_config(
+        &self,
+        app_id: &str,
+        app_secret: &str,
+    ) -> Result<(), ChannelError> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| ChannelError::new(500, "failed to save oauth config"))?;
+        self.save_oauth_config(app_id, app_secret)
+            .map_err(ChannelError::bad_request)
+    }
+
+    fn messenger_oauth_start(&self, redirect_uri: &str) -> Result<String, ChannelError> {
+        self.oauth_start(redirect_uri)
+    }
+
+    fn messenger_oauth_callback(
+        &self,
+        code: &str,
+        state: &str,
+        redirect_uri: &str,
+    ) -> BoxFuture<'_, Result<String, ChannelError>> {
+        let code = code.to_string();
+        let state = state.to_string();
+        let redirect_uri = redirect_uri.to_string();
+        Box::pin(async move {
+            self.oauth_callback(&code, &state, &redirect_uri).await
         })
     }
 }
@@ -1107,5 +1295,172 @@ mod tests {
         assert!(safe_filename("../evil").is_none());
         assert!(safe_filename("a/b").is_none());
         assert!(safe_filename("").is_none());
+    }
+
+    // ---------------- Messenger OAuth login flow ----------------
+
+    /// Path-routing mock for the OAuth flow:
+    /// - `GET /oauth/access_token` → user token
+    /// - `GET /me/accounts` → one page with a page token
+    /// - `GET /me?` → page identity (the connect-time verify)
+    async fn oauth_mock_server() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..3 {
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut req: Vec<u8> = Vec::new();
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    let n = sock.read(&mut buf).await.expect("read");
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    if mock::find_header_end(&req).is_some() {
+                        break;
+                    }
+                }
+                let text = String::from_utf8_lossy(&req).into_owned();
+                requests.push(text.clone());
+                let body = if text.contains("GET /oauth/access_token") {
+                    r#"{"access_token":"USERTOKEN","token_type":"bearer"}"#
+                } else if text.contains("GET /me/accounts") {
+                    r#"{"data":[{"id":"987","name":"Boom Page","access_token":"PAGETOKEN"}]}"#
+                } else {
+                    r#"{"id":"987","name":"Boom Page"}"#
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                sock.write_all(resp.as_bytes()).await.expect("write");
+            }
+            requests
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn oauth_test_registry(base: &str) -> (tempfile::TempDir, FileChannelRegistry) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reg = FileChannelRegistry::with_base_dir_and_apis(
+            dir.path().to_path_buf(),
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            base.to_string(),
+        );
+        (dir, reg)
+    }
+
+    #[test]
+    fn oauth_config_roundtrip() {
+        let (dir, reg) = test_registry("http://127.0.0.1:1");
+        assert!(reg.messenger_oauth_config().is_none());
+        reg.save_messenger_oauth_config("123456", "s3cr3t")
+            .expect("save");
+        let cfg = reg.messenger_oauth_config().expect("load");
+        assert_eq!(cfg.app_id, "123456");
+        assert_eq!(cfg.app_secret, "s3cr3t");
+        assert!(dir.path().join("channels").join("messenger_oauth.json").exists());
+        // Reload from disk on a fresh registry.
+        let reg2 = FileChannelRegistry::with_base_dir(dir.path().to_path_buf());
+        assert_eq!(
+            reg2.messenger_oauth_config().expect("reload").app_id,
+            "123456"
+        );
+    }
+
+    #[test]
+    fn oauth_config_rejects_empty() {
+        let (_dir, reg) = test_registry("http://127.0.0.1:1");
+        assert!(reg.save_messenger_oauth_config("", "x").is_err());
+        assert!(reg.save_messenger_oauth_config("123", "").is_err());
+        assert!(reg.messenger_oauth_config().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oauth_config_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, reg) = test_registry("http://127.0.0.1:1");
+        reg.save_messenger_oauth_config("123", "s3cr3t").expect("save");
+        let mode = fs::metadata(dir.path().join("channels").join("messenger_oauth.json"))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "oauth config must be 0600");
+    }
+
+    #[test]
+    fn oauth_start_requires_config() {
+        let (_dir, reg) = test_registry("http://127.0.0.1:1");
+        let err = reg
+            .messenger_oauth_start("http://localhost:18080/api/channels/messenger/oauth/callback")
+            .unwrap_err();
+        assert_eq!(err.status, 400);
+    }
+
+    #[test]
+    fn oauth_start_returns_login_url_with_single_use_state() {
+        let (_dir, reg) = test_registry("http://127.0.0.1:1");
+        reg.save_messenger_oauth_config("123456", "s3cr3t").expect("save");
+        let redirect = "http://localhost:18080/api/channels/messenger/oauth/callback";
+        let url = reg.messenger_oauth_start(redirect).expect("start");
+        assert!(url.contains("https://www.facebook.com/"), "url: {url}");
+        assert!(url.contains("client_id=123456"), "url: {url}");
+        assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A18080"), "url: {url}");
+        // A state was minted and stored.
+        let states = reg.oauth_states.lock().expect("lock");
+        assert_eq!(states.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_rejects_unknown_state_without_network() {
+        let (_dir, reg) = test_registry("http://127.0.0.1:1");
+        reg.save_messenger_oauth_config("123", "s3cr3t").expect("save");
+        let err = reg
+            .messenger_oauth_callback("code", "nope", "http://localhost:1/cb")
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, 400);
+    }
+
+    #[tokio::test]
+    async fn oauth_callback_full_flow_connects_page() {
+        let (base, handle) = oauth_mock_server().await;
+        let (_dir, reg) = oauth_test_registry(&base);
+        reg.save_messenger_oauth_config("123456", "s3cr3t").expect("save");
+        let redirect = "http://localhost:18080/api/channels/messenger/oauth/callback";
+        let url = reg.messenger_oauth_start(redirect).expect("start");
+        // Pull the minted state out of the URL.
+        let state = url
+            .split("state=")
+            .nth(1)
+            .expect("state in url")
+            .split('&')
+            .next()
+            .expect("state value")
+            .to_string();
+        let page_name = reg
+            .messenger_oauth_callback("thecode", &state, redirect)
+            .await
+            .expect("callback");
+        assert_eq!(page_name, "Boom Page");
+        assert_eq!(reg.info("messenger").status, "connected");
+        // State is single-use: replaying fails.
+        let replay = reg
+            .messenger_oauth_callback("thecode", &state, redirect)
+            .await
+            .unwrap_err();
+        assert_eq!(replay.status, 400);
+        let reqs = handle.await.expect("server task");
+        assert_eq!(reqs.len(), 3, "exchange + accounts + verify");
+        assert!(reqs[0].contains("GET /oauth/access_token"), "req: {}", reqs[0]);
+        assert!(reqs[1].contains("GET /me/accounts"), "req: {}", reqs[1]);
     }
 }

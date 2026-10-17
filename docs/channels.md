@@ -63,6 +63,45 @@ Setup notes:
 Skip your own bot's messages when processing (compare `sender` against
 your bot id) to avoid echo loops.
 
+## Messenger OAuth login (browser-based, no token paste)
+
+Boom can log you in with Facebook instead of asking for a Page token:
+
+1. Create a free Facebook App at <https://developers.facebook.com>
+   → **Create App**, then add the **Facebook Login** product.
+2. Copy the **App ID** and **App Secret** (App Settings → Basic) and
+   paste them into Boom: Tools → Channels → Messenger → expand →
+   they are stored at `$BOOM_HOME/channels/messenger_oauth.json` (`0600`).
+3. Click **Connect with Facebook**: Boom opens the Facebook login page
+   in your browser. After you approve, Facebook redirects back to
+   `http://localhost:<port>/api/channels/messenger/oauth/callback`
+   (this server) which exchanges the code, picks your first managed
+   Page, verifies its Page token and stores it — the manual
+   `POST /api/channels/messenger/connect` with a pasted token still
+   works as a fallback.
+
+Notes:
+
+- While the app is in **Development** mode, `localhost` redirect URIs
+  are exempt from the "Valid OAuth Redirect URIs" list; add the exact
+  callback URL there if Facebook complains (required once the app is
+  Live).
+- In Development mode the login only works for users with a role on
+  the app (admin/developer/tester) and Pages they manage.
+- `pages_messaging` needs App Review before **Live**-mode strangers can
+  use it; your own Pages work in dev mode without review.
+
+API surface:
+
+- `GET /api/channels/messenger/oauth/config` →
+  `{configured, app_id}` (the secret is never returned).
+- `POST /api/channels/messenger/oauth/config` — body
+  `{app_id, app_secret}`.
+- `GET /api/channels/messenger/oauth/start` → `{url}` — the Facebook
+  Login URL (single-use CSRF `state` minted server-side).
+- `GET /api/channels/messenger/oauth/callback?code=…&state=…` — returns
+  a small HTML landing page (this URL loads in the browser tab).
+
 ## Messenger ingress (webhook required)
 
 Messenger offers **no polling API**. Receiving user messages requires a

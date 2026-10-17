@@ -212,6 +212,20 @@ pub fn router(state: AppState) -> Router {
             "/api/channels/{id}/updates",
             get(routes::channels::poll_updates),
         )
+        // Messenger Facebook OAuth login flow (browser-based, no token paste).
+        .route(
+            "/api/channels/messenger/oauth/config",
+            get(routes::channels::messenger_oauth_config_status)
+                .post(routes::channels::save_messenger_oauth_config),
+        )
+        .route(
+            "/api/channels/messenger/oauth/start",
+            get(routes::channels::messenger_oauth_start),
+        )
+        .route(
+            "/api/channels/messenger/oauth/callback",
+            get(routes::channels::messenger_oauth_callback),
+        )
         .route("/api/channels/status", get(misc::channels_status))
         .route(
             "/api/channels/zalo-personal/status",

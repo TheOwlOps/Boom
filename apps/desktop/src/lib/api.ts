@@ -281,6 +281,43 @@ export function disconnectChannel(id: string): Promise<void> {
 export function testChannel(id: string): Promise<ChannelTestResult> {
   return sendJson('POST', `/api/channels/${encodeURIComponent(id)}/test`, parseChannelTestResult);
 }
+
+/* ---------------- Messenger Facebook OAuth ------------------------------ */
+
+export interface MessengerOAuthConfigStatus {
+  configured: boolean;
+  app_id: string | null;
+}
+
+function parseMessengerOAuthConfig(v: unknown): MessengerOAuthConfigStatus {
+  if (!isRecord(v)) throw new Error('malformed response: messenger oauth config');
+  return {
+    configured: v.configured === true,
+    app_id: typeof v.app_id === 'string' ? v.app_id : null,
+  };
+}
+
+/** GET /api/channels/messenger/oauth/config — app_id is public, the secret is never returned. */
+export function getMessengerOAuthConfig(): Promise<MessengerOAuthConfigStatus> {
+  return getJson('/api/channels/messenger/oauth/config', parseMessengerOAuthConfig);
+}
+
+/** POST /api/channels/messenger/oauth/config — save the Facebook App credentials. */
+export function saveMessengerOAuthConfig(appId: string, appSecret: string): Promise<void> {
+  return sendJson('POST', '/api/channels/messenger/oauth/config', () => undefined, {
+    app_id: appId.trim(),
+    app_secret: appSecret,
+  });
+}
+
+/** GET /api/channels/messenger/oauth/start → the Facebook Login URL to open in the browser. */
+export async function getMessengerOAuthUrl(): Promise<string> {
+  const v = await getJson<unknown>('/api/channels/messenger/oauth/start', (x) => x);
+  if (!isRecord(v) || typeof v.url !== 'string' || !v.url) {
+    throw new Error('malformed response: messenger oauth start');
+  }
+  return v.url;
+}
 export function getDag(): Promise<DagNode[]> { return getJson('/api/dag/status', parseDag); }
 
 /* ---------------- Custom bots (Grok-style) -------------------------------- */

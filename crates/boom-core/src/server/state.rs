@@ -495,7 +495,6 @@ pub struct ChannelError {
     pub status: u16,
     pub message: String,
 }
-
 impl ChannelError {
     pub fn new(status: u16, message: impl Into<String>) -> Self {
         Self { status, message: message.into() }
@@ -513,6 +512,17 @@ impl ChannelError {
     pub fn upstream(message: impl Into<String>) -> Self {
         Self::new(502, message)
     }
+}
+
+/// Facebook App credentials for the Messenger OAuth login flow.
+/// Persisted at `$BOOM_HOME/channels/messenger_oauth.json` (0600); the
+/// secret is never returned by any API.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MessengerOAuthConfig {
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub app_secret: String,
 }
 
 /// Channel registry (Rust-native port of Python's `gateway/channel.py`
@@ -557,6 +567,48 @@ pub trait ChannelRegistry: Send + Sync {
         chat_id: Option<&str>,
         after: Option<&str>,
     ) -> BoxFuture<'_, Result<Vec<InboundMessage>, ChannelError>>;
+    /// Saved Messenger OAuth app credentials, if the user configured them.
+    fn messenger_oauth_config(&self) -> Option<MessengerOAuthConfig> {
+        None
+    }
+    /// Save Messenger OAuth app credentials (0600). The secret is never
+    /// echoed back.
+    fn save_messenger_oauth_config(
+        &self,
+        app_id: &str,
+        app_secret: &str,
+    ) -> Result<(), ChannelError> {
+        let _ = (app_id, app_secret);
+        Err(ChannelError::bad_request(
+            "messenger oauth is not supported by this registry",
+        ))
+    }
+    /// Build the Facebook Login URL for Messenger connect. A single-use
+    /// CSRF `state` is minted and must be echoed back to
+    /// [`ChannelRegistry::messenger_oauth_callback`].
+    fn messenger_oauth_start(&self, redirect_uri: &str) -> Result<String, ChannelError> {
+        let _ = redirect_uri;
+        Err(ChannelError::bad_request(
+            "messenger oauth is not supported by this registry",
+        ))
+    }
+    /// Finish the OAuth login: validate the single-use `state`, exchange
+    /// `code` for a user token, take the first managed Page, verify its
+    /// Page token and persist it as the messenger channel credential.
+    /// `Ok` carries the connected Page's display name.
+    fn messenger_oauth_callback(
+        &self,
+        code: &str,
+        state: &str,
+        redirect_uri: &str,
+    ) -> BoxFuture<'_, Result<String, ChannelError>> {
+        let _ = (code, state, redirect_uri);
+        Box::pin(async {
+            Err(ChannelError::bad_request(
+                "messenger oauth is not supported by this registry",
+            ))
+        })
+    }
 }
 
 /// `$BOOM_HOME`, else `~/.boom` (Python: `os.environ.get("BOOM_HOME", ...)`

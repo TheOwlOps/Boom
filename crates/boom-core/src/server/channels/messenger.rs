@@ -17,6 +17,12 @@ use serde_json::Value;
 
 /// Graph API base (overridable in tests).
 pub const API_BASE: &str = "https://graph.facebook.com/v21.0";
+/// Facebook Login dialog base (the API base is overridable in tests, but
+/// the login dialog always lives on www.facebook.com).
+pub const OAUTH_DIALOG_BASE: &str = "https://www.facebook.com/v21.0/dialog/oauth";
+/// Scopes the OAuth flow requests: list the user's Pages and use
+/// Messenger on the chosen Page.
+pub const OAUTH_SCOPES: &str = "pages_messaging,pages_show_list";
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Page identity returned by `GET /me`.
@@ -24,6 +30,126 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 pub struct PageIdentity {
     pub id: String,
     pub name: String,
+}
+
+/// Facebook App credentials for the Messenger OAuth login flow.
+/// Stored by the registry at `$BOOM_HOME/channels/messenger_oauth.json`
+/// (0600); never echoed into responses, logs, or errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthConfig {
+    pub app_id: String,
+    pub app_secret: String,
+}
+
+/// One Facebook Page the user manages, with its Page access token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageToken {
+    pub id: String,
+    pub name: String,
+    pub access_token: String,
+}
+
+/// Minimal RFC 3986 percent-encoding for OAuth query values (keeps the
+/// unreserved set `A-Z a-z 0-9 - _ . ~` verbatim).
+fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Build the Facebook Login URL the user opens in their browser.
+/// `redirect_uri` must be registered in the Facebook App's "Valid OAuth
+/// Redirect URIs" (localhost is exempt while the app is in dev mode).
+pub fn authorize_url(app_id: &str, redirect_uri: &str, state: &str) -> String {
+    format!(
+        "{OAUTH_DIALOG_BASE}?client_id={}&redirect_uri={}&scope={}&response_type=code&state={}",
+        pct_encode(app_id.trim()),
+        pct_encode(redirect_uri),
+        pct_encode(OAUTH_SCOPES),
+        pct_encode(state),
+    )
+}
+
+/// Parse a `GET /oauth/access_token` response. `Ok` → user access token.
+/// Never echoes the code or secret: Graph error bodies are rendered via
+/// [`describe_graph_error`].
+pub fn parse_token_exchange(body: &Value) -> Result<String, String> {
+    if let Some(err) = body.get("error") {
+        return Err(describe_graph_error(err));
+    }
+    body.get("access_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Messenger token exchange returned no access_token".to_string())
+}
+
+/// Parse a `GET /me/accounts` response into page tokens.
+pub fn parse_accounts(body: &Value) -> Result<Vec<PageToken>, String> {
+    if let Some(err) = body.get("error") {
+        return Err(describe_graph_error(err));
+    }
+    let data = body
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Messenger accounts response has no data array".to_string())?;
+    let mut pages = Vec::new();
+    for entry in data {
+        let (Some(id), Some(name), Some(token)) = (
+            entry.get("id").and_then(Value::as_str),
+            entry.get("name").and_then(Value::as_str),
+            entry.get("access_token").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if token.is_empty() {
+            continue;
+        }
+        pages.push(PageToken {
+            id: id.to_string(),
+            name: name.to_string(),
+            access_token: token.to_string(),
+        });
+    }
+    Ok(pages)
+}
+
+/// Live exchange: `GET /oauth/access_token` turns the login `code` into a
+/// short-lived user access token. `Err` never contains the code or secret.
+pub async fn exchange_code(
+    api_base: &str,
+    cfg: &OAuthConfig,
+    redirect_uri: &str,
+    code: &str,
+) -> Result<String, String> {
+    let url = format!(
+        "{}/oauth/access_token?client_id={}&client_secret={}&redirect_uri={}&code={}",
+        api_base.trim_end_matches('/'),
+        pct_encode(cfg.app_id.trim()),
+        pct_encode(&cfg.app_secret),
+        pct_encode(redirect_uri),
+        pct_encode(code),
+    );
+    let body = read_json_body(client()?.get(&url).send().await.map_err(transport_error)?).await?;
+    parse_token_exchange(&body)
+}
+
+/// Live list: `GET /me/accounts` returns the Pages the user manages with
+/// their Page access tokens. `Err` never contains the user token.
+pub async fn list_pages(api_base: &str, user_token: &str) -> Result<Vec<PageToken>, String> {
+    let url = format!(
+        "{}/me/accounts?fields=id,name,access_token&access_token={}",
+        api_base.trim_end_matches('/'),
+        pct_encode(user_token),
+    );
+    let body = read_json_body(client()?.get(&url).send().await.map_err(transport_error)?).await?;
+    parse_accounts(&body)
 }
 
 /// Parse a `GET /me?fields=id,name` response.
@@ -256,6 +382,121 @@ mod tests {
         assert!(reqs[0].contains(r#""text":"hello""#), "req: {}", reqs[0]);
         assert!(
             reqs[0].contains(r#""messaging_type":"RESPONSE""#),
+            "req: {}",
+            reqs[0]
+        );
+    }
+
+    // ---------------- OAuth login flow ----------------
+
+    #[test]
+    fn pct_encode_keeps_unreserved_verbatim() {
+        assert_eq!(pct_encode("abc123-_.~"), "abc123-_.~");
+        assert_eq!(
+            pct_encode("http://localhost:18080/cb?x=1"),
+            "http%3A%2F%2Flocalhost%3A18080%2Fcb%3Fx%3D1"
+        );
+        assert_eq!(pct_encode("a b+c"), "a%20b%2Bc");
+    }
+
+    #[test]
+    fn authorize_url_has_all_params() {
+        let url = authorize_url("123456", "http://localhost:18080/cb", "state9");
+        assert!(
+            url.starts_with("https://www.facebook.com/v21.0/dialog/oauth?"),
+            "url: {url}"
+        );
+        assert!(url.contains("client_id=123456"), "url: {url}");
+        assert!(
+            url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A18080%2Fcb"),
+            "url: {url}"
+        );
+        assert!(url.contains("response_type=code"), "url: {url}");
+        assert!(url.contains("state=state9"), "url: {url}");
+        assert!(url.contains("scope=pages_messaging%2Cpages_show_list"), "url: {url}");
+    }
+
+    #[test]
+    fn parse_token_exchange_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"access_token":"USERTOKEN","token_type":"bearer","expires_in":3600}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_token_exchange(&body).expect("parse"), "USERTOKEN");
+    }
+
+    #[test]
+    fn parse_token_exchange_graph_error_never_echoes_code() {
+        let body: Value = serde_json::from_str(
+            r#"{"error":{"message":"Invalid verification code format.","code":100}}"#,
+        )
+        .unwrap();
+        let err = parse_token_exchange(&body).unwrap_err();
+        assert!(err.contains("100"), "err: {err}");
+        assert!(!err.contains("SECRET"), "err: {err}");
+    }
+
+    #[test]
+    fn parse_accounts_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"data":[{"id":"987","name":"Boom Page","access_token":"PAGETOKEN"},{"id":"654","name":"NoToken"}]}"#,
+        )
+        .unwrap();
+        let pages = parse_accounts(&body).expect("parse");
+        assert_eq!(pages.len(), 1, "entries without a token are skipped");
+        assert_eq!(pages[0].id, "987");
+        assert_eq!(pages[0].name, "Boom Page");
+        assert_eq!(pages[0].access_token, "PAGETOKEN");
+    }
+
+    #[test]
+    fn parse_accounts_empty_is_ok() {
+        let body: Value = serde_json::from_str(r#"{"data":[]}"#).unwrap();
+        assert!(parse_accounts(&body).expect("parse").is_empty());
+    }
+
+    #[tokio::test]
+    async fn exchange_code_hits_token_endpoint() {
+        let (base, handle) = mock_server(
+            200,
+            r#"{"access_token":"USERTOKEN","token_type":"bearer"}"#,
+        )
+        .await;
+        let cfg = OAuthConfig {
+            app_id: "123".to_string(),
+            app_secret: "s3cr3t".to_string(),
+        };
+        let token = exchange_code(&base, &cfg, "http://localhost:1/cb", "thecode")
+            .await
+            .expect("exchange");
+        assert_eq!(token, "USERTOKEN");
+        let reqs = handle.await.expect("server task");
+        assert_eq!(reqs.len(), 1);
+        assert!(
+            reqs[0].starts_with("GET /oauth/access_token?"),
+            "req: {}",
+            reqs[0]
+        );
+        assert!(reqs[0].contains("client_id=123"), "req: {}", reqs[0]);
+        assert!(reqs[0].contains("code=thecode"), "req: {}", reqs[0]);
+        // The app secret must be sent for the code exchange (Facebook
+        // requires it); it is a query param like every Graph call, and our
+        // error paths never echo request URLs.
+    }
+
+    #[tokio::test]
+    async fn list_pages_hits_accounts_endpoint() {
+        let (base, handle) = mock_server(
+            200,
+            r#"{"data":[{"id":"987","name":"Boom Page","access_token":"PAGETOKEN"}]}"#,
+        )
+        .await;
+        let pages = list_pages(&base, "USERTOKEN").await.expect("pages");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].access_token, "PAGETOKEN");
+        let reqs = handle.await.expect("server task");
+        assert!(
+            reqs[0].starts_with("GET /me/accounts?"),
             "req: {}",
             reqs[0]
         );

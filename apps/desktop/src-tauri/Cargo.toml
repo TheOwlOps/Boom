@@ -39,6 +39,7 @@ tauri-plugin-log = "2"
 # Kept as-is until Tauri upstream migrates the plugin to a non-yanked zip.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
+tauri-plugin-opener = "2"
 # NOTE: tauri-plugin-shell was removed with the Python sidecar (2026-10-16):
 # the backend is now boom-core in-process, so nothing spawns a sidecar.
 # Pure Rust backend (replaces Python/PyInstaller): axum HTTP server serving
