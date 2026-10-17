@@ -18,6 +18,7 @@ from agent.src.environment import AgentEnvironment
 from agent.src.loop.react import ReActLoop
 from agent.src.orchestration.brain import Brain
 from agent.src.providers.llm import LLMProvider
+from agent.src.branding import BOOMI_MINI
 from agent.src.security.system_one_gate import SystemOneGate
 from gateway.daemon import GatewayDaemon
 
@@ -237,6 +238,7 @@ class BoomCLI:
                   file=sys.stderr, flush=True)
 
     def print_banner(self):
+        print(BOOMI_MINI)
         print(BANNER)
         print(f"Model: {self.config.primary_provider.model} | Mode: {'YOLO (Auto-approve)' if self.config.yolo else 'Interactive Approval'}")
         print(f"Session: {self.session_id} | Working Directory: {Path(self.config.workdir).resolve()}")
@@ -367,6 +369,7 @@ class BoomCLI:
 
     async def run_daemon(self):
         """Run as autonomous multi-channel gateway daemon."""
+        print(BOOMI_MINI)
         print(BANNER)
         print("Starting Boom Autonomous Gateway Daemon...")
 
