@@ -205,6 +205,27 @@ struct SharedInner {
 
 const LOG_CAP: usize = 200;
 
+/// Recover a poisoned [`std::sync::Mutex`] instead of cascading the panic.
+///
+/// A thread that panics while holding one of these locks must not take down
+/// every later request. Stats/logs/rate state is observability data, so we
+/// reclaim the (possibly partially updated) guard via
+/// [`std::sync::PoisonError::into_inner`]. Behaviour is unchanged when the
+/// lock is not poisoned.
+fn mutex_recover<'a, T>(m: &'a std::sync::Mutex<T>) -> std::sync::MutexGuard<'a, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Same recovery for the process-global [`RwLock`] registry (read side).
+fn rw_read_recover<T>(m: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    m.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Same recovery for the process-global [`RwLock`] registry (write side).
+fn rw_write_recover<T>(m: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    m.write().unwrap_or_else(|e| e.into_inner())
+}
+
 impl SharedState {
     fn new(config: ProxyConfig, inner: Arc<SharedInner>) -> Self {
         Self { config, inner }
@@ -212,7 +233,7 @@ impl SharedState {
 
     fn record(&self, entry: LogEntry) {
         {
-            let mut stats = self.inner.stats.lock().expect("proxy stats lock poisoned");
+            let mut stats = mutex_recover(&self.inner.stats);
             let s = stats.entry(entry.provider.clone()).or_default();
             s.calls += 1;
             s.total_latency_ms = s.total_latency_ms.saturating_add(entry.latency_ms);
@@ -223,7 +244,7 @@ impl SharedState {
             }
         }
         if self.config.log_requests {
-            let mut logs = self.inner.logs.lock().expect("proxy log lock poisoned");
+            let mut logs = mutex_recover(&self.inner.logs);
             if logs.len() >= LOG_CAP {
                 logs.pop_front();
             }
@@ -233,16 +254,12 @@ impl SharedState {
 
     /// Snapshot of per-provider stats for `GET /api/proxy/stats`.
     pub fn stats_snapshot(&self) -> HashMap<String, ProviderStats> {
-        self.inner
-            .stats
-            .lock()
-            .expect("proxy stats lock poisoned")
-            .clone()
+        mutex_recover(&self.inner.stats).clone()
     }
 
     /// Newest-first log entries for `GET /api/proxy/logs`.
     pub fn logs_snapshot(&self, limit: usize) -> Vec<LogEntry> {
-        let logs = self.inner.logs.lock().expect("proxy log lock poisoned");
+        let logs = mutex_recover(&self.inner.logs);
         logs.iter().rev().take(limit).cloned().collect()
     }
 
@@ -251,7 +268,7 @@ impl SharedState {
         if interval.is_zero() {
             return None;
         }
-        let mut rate = self.inner.rate.lock().expect("proxy rate lock poisoned");
+        let mut rate = mutex_recover(&self.inner.rate);
         rate_wait(&mut rate, provider_id, interval)
     }
 }
@@ -294,7 +311,7 @@ static CURRENT: LazyLock<RwLock<Option<Arc<SharedState>>>> =
 
 /// Shared state of the most recently wrapped client, if any.
 pub fn current_state() -> Option<Arc<SharedState>> {
-    CURRENT.read().expect("proxy registry lock poisoned").clone()
+    rw_read_recover(&CURRENT).clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +457,7 @@ pub fn wrap(inner: Box<dyn LlmClient>) -> Box<dyn LlmClient> {
     }
     let provider_id = inner.provider_id();
     let state = {
-        let mut guard = CURRENT.write().expect("proxy registry lock poisoned");
+        let mut guard = rw_write_recover(&CURRENT);
         let shared = guard
             .as_ref()
             .map(|s| s.inner.clone())
@@ -684,5 +701,34 @@ mod tests {
         assert_eq!(stats.errors, 0);
         // ... and the log ring buffer holds both entries.
         assert_eq!(shared.logs.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn poisoned_locks_recover_without_panic() {
+        // A thread that panics while holding a proxy lock must not take
+        // down later requests: the recovery helpers reclaim the guard.
+        let m = std::sync::Mutex::new(1u32);
+        let _ = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _g = m.lock().unwrap();
+                panic!("boom");
+            })
+            .join()
+        });
+        assert!(m.is_poisoned());
+        let g = mutex_recover(&m);
+        assert_eq!(*g, 1);
+
+        let rw = RwLock::new(2u32);
+        let _ = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _g = rw.write().unwrap();
+                panic!("boom");
+            })
+            .join()
+        });
+        assert!(rw.is_poisoned());
+        assert_eq!(*rw_read_recover(&rw), 2);
+        assert_eq!(*rw_write_recover(&rw), 2);
     }
 }
