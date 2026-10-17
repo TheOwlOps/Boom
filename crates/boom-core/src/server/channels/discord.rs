@@ -230,10 +230,337 @@ pub async fn poll_messages(
     parse_poll(&body)
 }
 
+// ---------------------------------------------------------------------------
+// Extended operations: embeds, message management, reactions, guild info
+// ---------------------------------------------------------------------------
+
+/// Generic request helper: method + path + optional JSON body.
+/// `Ok` → parsed body.
+async fn request(
+    api_base: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+    payload: Option<&Value>,
+) -> Result<Value, String> {
+    let url = format!("{}{}", api_base.trim_end_matches('/'), path);
+    let mut req = client()?
+        .request(
+            method.parse::<reqwest::Method>().map_err(|_| "bad http method".to_string())?,
+            &url,
+        )
+        .header("Authorization", auth(token));
+    if let Some(p) = payload {
+        req = req.json(p);
+    }
+    let resp = req.send().await.map_err(transport_error)?;
+    read_json_body(resp).await
+}
+
+/// Live send with a rich embed: `POST /channels/{id}/messages`.
+/// `Ok` → message id.
+pub async fn send_embed(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+    title: &str,
+    description: &str,
+    color: Option<i64>,
+) -> Result<String, String> {
+    let mut embed = serde_json::json!({ "title": title, "description": description });
+    if let Some(c) = color {
+        embed["color"] = serde_json::json!(c);
+    }
+    let body = request(
+        api_base,
+        token,
+        "POST",
+        &format!("/channels/{}/messages", channel_id.trim()),
+        Some(&serde_json::json!({ "embeds": [embed] })),
+    )
+    .await?;
+    parse_send(&body)
+}
+
+/// Live edit: `PATCH /channels/{channel}/messages/{message}`.
+/// `Ok` → message id.
+pub async fn edit_message(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+    message_id: &str,
+    text: &str,
+) -> Result<String, String> {
+    let body = request(
+        api_base,
+        token,
+        "PATCH",
+        &format!(
+            "/channels/{}/messages/{}",
+            channel_id.trim(),
+            message_id.trim()
+        ),
+        Some(&serde_json::json!({ "content": text })),
+    )
+    .await?;
+    parse_send(&body)
+}
+
+/// Live delete: `DELETE /channels/{channel}/messages/{message}`.
+/// Discord answers 204 with an empty body.
+pub async fn delete_message(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+    message_id: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/channels/{}/messages/{}",
+        api_base.trim_end_matches('/'),
+        channel_id.trim(),
+        message_id.trim()
+    );
+    let resp = client()?
+        .delete(&url)
+        .header("Authorization", auth(token))
+        .send()
+        .await
+        .map_err(transport_error)?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::NO_CONTENT || status.is_success() {
+        return Ok(());
+    }
+    let text = resp.text().await.unwrap_or_default();
+    let body: Value = serde_json::from_str(text.trim()).unwrap_or(Value::Null);
+    Err(describe_error(&body, "refused to delete"))
+}
+
+/// Live add reaction: `PUT /channels/{c}/messages/{m}/reactions/{emoji}/@me`.
+/// `emoji` is URL-encoded (e.g. `👍` → `%F0%9F%91%8D`).
+pub async fn add_reaction(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+    message_id: &str,
+    emoji: &str,
+) -> Result<(), String> {
+    let encoded: String = emoji
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    let body = request(
+        api_base,
+        token,
+        "PUT",
+        &format!(
+            "/channels/{}/messages/{}/reactions/{}/@me",
+            channel_id.trim(),
+            message_id.trim(),
+            encoded
+        ),
+        None,
+    )
+    .await;
+    match body {
+        Ok(_) => Ok(()),
+        Err(e) if e.contains("empty body") || e.contains("204") => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Live remove reaction: `DELETE .../reactions/{emoji}/@me`.
+pub async fn remove_reaction(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+    message_id: &str,
+    emoji: &str,
+) -> Result<(), String> {
+    let encoded: String = emoji
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    let url = format!(
+        "{}/channels/{}/messages/{}/reactions/{}/@me",
+        api_base.trim_end_matches('/'),
+        channel_id.trim(),
+        message_id.trim(),
+        encoded
+    );
+    let resp = client()?
+        .delete(&url)
+        .header("Authorization", auth(token))
+        .send()
+        .await
+        .map_err(transport_error)?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::NO_CONTENT || status.is_success() {
+        return Ok(());
+    }
+    let text = resp.text().await.unwrap_or_default();
+    let body: Value = serde_json::from_str(text.trim()).unwrap_or(Value::Null);
+    Err(describe_error(&body, "refused to remove reaction"))
+}
+
+/// Channel info from `GET /channels/{id}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: i64,
+    pub guild_id: Option<String>,
+}
+
+/// Parse a `GET /channels/{id}` response.
+pub fn parse_channel_info(body: &Value) -> Result<ChannelInfo, String> {
+    let id = body
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Discord channel response missing id".to_string())?;
+    let name = body
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let kind = body.get("type").and_then(Value::as_i64).unwrap_or(0);
+    let guild_id = body
+        .get("guild_id")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+    Ok(ChannelInfo {
+        id: id.to_string(),
+        name,
+        kind,
+        guild_id,
+    })
+}
+
+/// Live `GET /channels/{id}`.
+pub async fn get_channel_info(
+    api_base: &str,
+    token: &str,
+    channel_id: &str,
+) -> Result<ChannelInfo, String> {
+    let body = request(
+        api_base,
+        token,
+        "GET",
+        &format!("/channels/{}", channel_id.trim()),
+        None,
+    )
+    .await?;
+    parse_channel_info(&body)
+}
+
+/// Guild info from `GET /guilds/{id}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuildInfo {
+    pub id: String,
+    pub name: String,
+    pub member_count: Option<i64>,
+}
+
+/// Parse a `GET /guilds/{id}` response.
+pub fn parse_guild_info(body: &Value) -> Result<GuildInfo, String> {
+    if body.get("id").and_then(Value::as_str).is_none() {
+        return Err(describe_error(body, "could not fetch guild"));
+    }
+    let id = body.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let name = body
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let member_count = body
+        .get("approximate_member_count")
+        .and_then(Value::as_i64);
+    Ok(GuildInfo {
+        id,
+        name,
+        member_count,
+    })
+}
+
+/// Live `GET /guilds/{id}?with_counts=true`.
+pub async fn get_guild_info(
+    api_base: &str,
+    token: &str,
+    guild_id: &str,
+) -> Result<GuildInfo, String> {
+    let body = request(
+        api_base,
+        token,
+        "GET",
+        &format!("/guilds/{}?with_counts=true", guild_id.trim()),
+        None,
+    )
+    .await?;
+    parse_guild_info(&body)
+}
+
+/// One guild member from `GET /guilds/{id}/members`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuildMember {
+    pub user_id: String,
+    pub username: String,
+    pub nick: Option<String>,
+}
+
+/// Parse a `GET /guilds/{id}/members` response.
+pub fn parse_members(body: &Value) -> Result<Vec<GuildMember>, String> {
+    let arr = body.as_array().ok_or_else(|| describe_error(body, "could not list members"))?;
+    let mut out = Vec::new();
+    for m in arr {
+        let user = m.get("user");
+        let (Some(uid), Some(username)) = (
+            user.and_then(|u| u.get("id")).and_then(Value::as_str),
+            user.and_then(|u| u.get("username")).and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        out.push(GuildMember {
+            user_id: uid.to_string(),
+            username: username.to_string(),
+            nick: m.get("nick").and_then(Value::as_str).map(|s| s.to_string()),
+        });
+    }
+    Ok(out)
+}
+
+/// Live `GET /guilds/{id}/members?limit=100`.
+pub async fn list_members(
+    api_base: &str,
+    token: &str,
+    guild_id: &str,
+) -> Result<Vec<GuildMember>, String> {
+    let body = request(
+        api_base,
+        token,
+        "GET",
+        &format!("/guilds/{}/members?limit=100", guild_id.trim()),
+        None,
+    )
+    .await?;
+    parse_members(&body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::channels::mock::{closed_port_url, mock_server, GOOD_TOKEN};
+    use crate::server::channels::mock::{closed_port_url, mock_server, mock_server_n, GOOD_TOKEN};
 
     #[test]
     fn parse_verify_ok() {
@@ -371,5 +698,73 @@ mod tests {
             "req: {}",
             reqs[0]
         );
+    }
+
+    // ---------------- Extended operations ----------------
+
+    #[test]
+    fn parse_channel_info_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"id":"7","name":"general","type":0,"guild_id":"99"}"#,
+        )
+        .unwrap();
+        let c = parse_channel_info(&body).expect("must parse");
+        assert_eq!(c.id, "7");
+        assert_eq!(c.name, "general");
+        assert_eq!(c.guild_id.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn parse_guild_info_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"id":"99","name":"Boom Server","approximate_member_count":42}"#,
+        )
+        .unwrap();
+        let g = parse_guild_info(&body).expect("must parse");
+        assert_eq!(g.name, "Boom Server");
+        assert_eq!(g.member_count, Some(42));
+    }
+
+    #[test]
+    fn parse_members_ok() {
+        let body: Value = serde_json::from_str(
+            r#"[{"user":{"id":"1","username":"an"},"nick":"An"},
+                {"user":{"id":"2","username":"bot"}}]"#,
+        )
+        .unwrap();
+        let ms = parse_members(&body).expect("must parse");
+        assert_eq!(ms.len(), 2);
+        assert_eq!(ms[0].nick.as_deref(), Some("An"));
+    }
+
+    #[tokio::test]
+    async fn send_embed_posts_embeds() {
+        let (base, handle) = mock_server(200, r#"{"id":"555","content":""}"#).await;
+        let id = send_embed(&base, GOOD_TOKEN, "777", "Title", "Desc", Some(0x00ff00))
+            .await
+            .expect("send");
+        assert_eq!(id, "555");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].starts_with("POST /channels/777/messages "), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""title":"Title""#), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""embeds":"#) || reqs[0].contains("\"embeds\""), "req: {}", reqs[0]);
+    }
+
+    #[tokio::test]
+    async fn edit_and_delete_message_flow() {
+        let (base, handle) = mock_server_n(200, r#"{"id":"555"}"#, 1).await;
+        let id = edit_message(&base, GOOD_TOKEN, "777", "555", "new")
+            .await
+            .expect("edit");
+        assert_eq!(id, "555");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].starts_with("PATCH /channels/777/messages/555 "), "req: {}", reqs[0]);
+        // DELETE answers 204 with an empty body.
+        let (base2, handle2) = mock_server(204, "").await;
+        delete_message(&base2, GOOD_TOKEN, "777", "555")
+            .await
+            .expect("delete");
+        let reqs2 = handle2.await.expect("server task");
+        assert!(reqs2[0].starts_with("DELETE /channels/777/messages/555 "), "req: {}", reqs2[0]);
     }
 }

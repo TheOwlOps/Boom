@@ -22,8 +22,12 @@
 //! and unit tests drive a local mock HTTP server.
 
 pub mod discord;
+pub mod line;
 pub mod messenger;
+pub mod slack;
 pub mod telegram;
+pub mod whatsapp;
+pub mod zalo;
 
 #[cfg(test)]
 mod mock;
@@ -52,9 +56,18 @@ fn display_name(id: &str) -> &'static str {
     }
 }
 
-/// Channels with a real platform implementation (verify + send; Telegram
-/// and Discord also poll for ingress).
-const REAL_CHANNELS: &[&str] = &["telegram", "discord", "messenger"];
+/// Channels with a real platform implementation (verify + send;
+/// Telegram and Discord also poll for ingress; Messenger/WhatsApp/LINE/
+/// Zalo receive via webhooks).
+const REAL_CHANNELS: &[&str] = &[
+    "telegram",
+    "discord",
+    "messenger",
+    "slack",
+    "whatsapp",
+    "line",
+    "zalo",
+];
 
 /// One channel's stored credential.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -101,12 +114,21 @@ pub struct FileChannelRegistry {
     telegram_api: String,
     discord_api: String,
     messenger_api: String,
+    slack_api: String,
+    whatsapp_api: String,
+    line_api: String,
+    zalo_api: String,
     /// In-memory lock so concurrent connect/disconnect calls serialize
     /// their read-modify-write cycles.
     write_lock: Mutex<()>,
     /// Single-use OAuth CSRF states → creation time (Messenger login).
     /// Entries expire after [`OAUTH_STATE_TTL_SECS`].
     oauth_states: Mutex<HashMap<String, std::time::Instant>>,
+    /// Webhook ingress queue: channel id → pending inbound messages.
+    /// Webhook routes push here; `poll_updates` drains per channel.
+    webhook_queue: Mutex<HashMap<String, Vec<InboundMessage>>>,
+    /// Verify secrets for inbound webhooks (Messenger/WhatsApp `hub.verify_token`).
+    webhook_verify_tokens: Mutex<HashMap<String, String>>,
 }
 
 /// How long a minted OAuth `state` stays valid (seconds).
@@ -151,12 +173,16 @@ impl FileChannelRegistry {
             telegram::API_BASE.to_string(),
             discord::API_BASE.to_string(),
             messenger::API_BASE.to_string(),
+            slack::API_BASE.to_string(),
+            whatsapp::API_BASE.to_string(),
+            line::API_BASE.to_string(),
+            zalo::API_BASE.to_string(),
         )
     }
 
     /// Constructor with an explicit base directory and Telegram API base
-    /// (kept for compatibility; Discord/Messenger use their real bases).
-    /// Tests driving all three platforms through one mock server can use
+    /// (kept for compatibility; other platforms use their real bases).
+    /// Tests driving all platforms through one mock server can use
     /// [`FileChannelRegistry::with_base_dir_and_apis`].
     pub fn with_base_dir_and_api(base_dir: PathBuf, telegram_api: String) -> Self {
         Self::with_base_dir_and_apis(
@@ -164,16 +190,25 @@ impl FileChannelRegistry {
             telegram_api,
             discord::API_BASE.to_string(),
             messenger::API_BASE.to_string(),
+            slack::API_BASE.to_string(),
+            whatsapp::API_BASE.to_string(),
+            line::API_BASE.to_string(),
+            zalo::API_BASE.to_string(),
         )
     }
 
     /// Constructor with an explicit base directory and per-platform API
     /// bases (tests drive local mock servers through this).
+    #[allow(clippy::too_many_arguments)]
     pub fn with_base_dir_and_apis(
         base_dir: PathBuf,
         telegram_api: String,
         discord_api: String,
         messenger_api: String,
+        slack_api: String,
+        whatsapp_api: String,
+        line_api: String,
+        zalo_api: String,
     ) -> Self {
         let channels_dir = base_dir.join("channels");
         let legacy_path = base_dir.join("channels.json");
@@ -184,8 +219,14 @@ impl FileChannelRegistry {
             telegram_api,
             discord_api,
             messenger_api,
+            slack_api,
+            whatsapp_api,
+            line_api,
+            zalo_api,
             write_lock: Mutex::new(()),
             oauth_states: Mutex::new(HashMap::new()),
+            webhook_queue: Mutex::new(HashMap::new()),
+            webhook_verify_tokens: Mutex::new(HashMap::new()),
         }
     }
 
@@ -421,6 +462,15 @@ impl FileChannelRegistry {
         self.connect("messenger", &page.access_token).await?;
         Ok(page_name)
     }
+
+    /// Drain (take + clear) the webhook queue for one channel.
+    /// Inherent method so both the trait impl and tests can use it.
+    pub(crate) fn drain_webhook_queue(&self, id: &str) -> Vec<InboundMessage> {
+        self.webhook_queue
+            .lock()
+            .map(|mut q| q.remove(id).unwrap_or_default())
+            .unwrap_or_default()
+    }
 }
 
 impl Default for FileChannelRegistry {
@@ -460,6 +510,12 @@ impl ChannelRegistry for FileChannelRegistry {
                     "messenger" => {
                         "Chưa cấu hình — dán Facebook Page access token để kết nối".to_string()
                     }
+                    "slack" => "Chưa cấu hình — dán Slack Bot token (xoxb-...) để kết nối".to_string(),
+                    "whatsapp" => {
+                        "Chưa cấu hình — nhập <access_token>:<phone_number_id> để kết nối".to_string()
+                    }
+                    "line" => "Chưa cấu hình — dán LINE Channel access token để kết nối".to_string(),
+                    "zalo" => "Chưa cấu hình — dán Zalo OA access token để kết nối".to_string(),
                     _ => "Chưa cấu hình".to_string(),
                 }),
             },
@@ -473,10 +529,14 @@ impl ChannelRegistry for FileChannelRegistry {
     ) -> BoxFuture<'_, Result<ChannelConnectInfo, ChannelError>> {
         let id = id.to_string();
         let token = token.trim().to_string();
-        let (telegram_api, discord_api, messenger_api) = (
+        let (telegram_api, discord_api, messenger_api, slack_api, whatsapp_api, line_api, zalo_api) = (
             self.telegram_api.clone(),
             self.discord_api.clone(),
             self.messenger_api.clone(),
+            self.slack_api.clone(),
+            self.whatsapp_api.clone(),
+            self.line_api.clone(),
+            self.zalo_api.clone(),
         );
         Box::pin(async move {
             if !KNOWN_CHANNELS.contains(&id.as_str()) {
@@ -536,6 +596,48 @@ impl ChannelRegistry for FileChannelRegistry {
                     };
                     (Some(page.name.clone()), message)
                 }
+                "slack" => {
+                    let identity = slack::verify_token(&slack_api, &token)
+                        .await
+                        .map_err(ChannelError::upstream)?;
+                    let message = format!(
+                        "Đã kết nối Slack bot {} (team {})",
+                        identity.user_id, identity.team
+                    );
+                    (Some(identity.user_id.clone()), message)
+                }
+                "whatsapp" => {
+                    let identity = whatsapp::verify_token(&whatsapp_api, &token)
+                        .await
+                        .map_err(ChannelError::upstream)?;
+                    let message = match &identity.verified_name {
+                        Some(n) => format!("Đã kết nối WhatsApp Business \"{n}\" ({})", identity.display_phone_number),
+                        None => format!("Đã kết nối WhatsApp {}", identity.display_phone_number),
+                    };
+                    (identity.verified_name.clone(), message)
+                }
+                "line" => {
+                    let identity = line::verify_token(&line_api, &token)
+                        .await
+                        .map_err(ChannelError::upstream)?;
+                    let message = if identity.display_name.is_empty() {
+                        "Đã kết nối LINE Bot".to_string()
+                    } else {
+                        format!("Đã kết nối LINE Bot \"{}\"", identity.display_name)
+                    };
+                    (Some(identity.display_name.clone()), message)
+                }
+                "zalo" => {
+                    let identity = zalo::verify_token(&zalo_api, &token)
+                        .await
+                        .map_err(ChannelError::upstream)?;
+                    let message = if identity.name.is_empty() {
+                        "Đã kết nối Zalo OA".to_string()
+                    } else {
+                        format!("Đã kết nối Zalo OA \"{}\"", identity.name)
+                    };
+                    (Some(identity.name.clone()), message)
+                }
                 _ => unreachable!("is_supported guard above"),
             };
             let _guard = self.write_lock.lock().map_err(|_| {
@@ -585,10 +687,14 @@ impl ChannelRegistry for FileChannelRegistry {
         let id = id.to_string();
         let chat_id = chat_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         let message = message.map(|s| s.to_string());
-        let (telegram_api, discord_api, messenger_api) = (
+        let (telegram_api, discord_api, messenger_api, slack_api, whatsapp_api, line_api, zalo_api) = (
             self.telegram_api.clone(),
             self.discord_api.clone(),
             self.messenger_api.clone(),
+            self.slack_api.clone(),
+            self.whatsapp_api.clone(),
+            self.line_api.clone(),
+            self.zalo_api.clone(),
         );
         Box::pin(async move {
             if !KNOWN_CHANNELS.contains(&id.as_str()) {
@@ -631,6 +737,39 @@ impl ChannelRegistry for FileChannelRegistry {
                                 "Đã gửi tin nhắn test tới Messenger user {chat} (message {msg_id})"
                             ))
                         }
+                        "slack" => {
+                            let ts =
+                                slack::send_text(&slack_api, &stored.token, &chat, &text)
+                                    .await
+                                    .map_err(ChannelError::upstream)?;
+                            Ok(format!(
+                                "Đã gửi tin nhắn test tới Slack channel {chat} (ts {ts})"
+                            ))
+                        }
+                        "whatsapp" => {
+                            let msg_id =
+                                whatsapp::send_text(&whatsapp_api, &stored.token, &chat, &text)
+                                    .await
+                                    .map_err(ChannelError::upstream)?;
+                            Ok(format!(
+                                "Đã gửi tin nhắn test tới WhatsApp {chat} (message {msg_id})"
+                            ))
+                        }
+                        "line" => {
+                            line::send_text(&line_api, &stored.token, &chat, &text)
+                                .await
+                                .map_err(ChannelError::upstream)?;
+                            Ok(format!("Đã gửi tin nhắn test tới LINE user {chat}"))
+                        }
+                        "zalo" => {
+                            let msg_id =
+                                zalo::send_text(&zalo_api, &stored.token, &chat, &text)
+                                    .await
+                                    .map_err(ChannelError::upstream)?;
+                            Ok(format!(
+                                "Đã gửi tin nhắn test tới Zalo user {chat} (message {msg_id})"
+                            ))
+                        }
                         _ => unreachable!("is_supported guard above"),
                     }
                 }
@@ -662,6 +801,38 @@ impl ChannelRegistry for FileChannelRegistry {
                                 format!("\"{}\"", page.name)
                             }
                         }
+                        "slack" => {
+                            let identity = slack::verify_token(&slack_api, &stored.token)
+                                .await
+                                .map_err(ChannelError::upstream)?;
+                            format!("bot {} (team {})", identity.user_id, identity.team)
+                        }
+                        "whatsapp" => {
+                            let identity = whatsapp::verify_token(&whatsapp_api, &stored.token)
+                                .await
+                                .map_err(ChannelError::upstream)?;
+                            identity.display_phone_number.clone()
+                        }
+                        "line" => {
+                            let identity = line::verify_token(&line_api, &stored.token)
+                                .await
+                                .map_err(ChannelError::upstream)?;
+                            if identity.display_name.is_empty() {
+                                "Bot".to_string()
+                            } else {
+                                format!("\"{}\"", identity.display_name)
+                            }
+                        }
+                        "zalo" => {
+                            let identity = zalo::verify_token(&zalo_api, &stored.token)
+                                .await
+                                .map_err(ChannelError::upstream)?;
+                            if identity.name.is_empty() {
+                                "OA".to_string()
+                            } else {
+                                format!("\"{}\"", identity.name)
+                            }
+                        }
                         _ => unreachable!("is_supported guard above"),
                     };
                     Ok(format!("Token hợp lệ — {name} {detail} đang hoạt động"))
@@ -689,6 +860,26 @@ impl ChannelRegistry for FileChannelRegistry {
                     "{} chưa hỗ trợ trong bản này",
                     display_name(&id)
                 )));
+            }
+            // Webhook-based channels drain the in-memory ingress queue
+            // (populated by POST /api/channels/{id}/webhook).
+            if matches!(id.as_str(), "messenger" | "whatsapp" | "line" | "zalo") {
+                let _stored = self.stored_token(&id)?;
+                let mut msgs = self.drain_webhook_queue(&id);
+                if let Some(filter) = chat_id.as_deref() {
+                    msgs.retain(|m| m.chat_id == filter);
+                }
+                if let Some(cursor) = after.as_deref() {
+                    if let Some(pos) = msgs.iter().position(|m| m.id == cursor) {
+                        msgs = msgs.split_off(pos + 1);
+                    }
+                }
+                return Ok(msgs);
+            }
+            if id.as_str() == "slack" {
+                // Honest 501: Slack ingress needs Socket Mode or Events API.
+                let _stored = self.stored_token(&id)?;
+                return Err(ChannelError::new(501, slack::poll_ingress_hint()));
             }
             let stored = self.stored_token(&id)?;
             match id.as_str() {
@@ -719,18 +910,67 @@ impl ChannelRegistry for FileChannelRegistry {
                     .map_err(ChannelError::upstream)?;
                     Ok(msgs)
                 }
-                "messenger" => {
-                    // Honest 501, not "unsupported": the credential path is
-                    // real, but Messenger offers no polling API — ingress
-                    // requires a webhook subscription.
-                    Err(ChannelError::new(
-                        501,
-                        "Messenger không có API polling — nhận tin nhắn cần webhook: xem docs/channels.md",
-                    ))
-                }
                 _ => unreachable!("is_supported guard above"),
             }
         })
+    }
+
+    /// Push inbound webhook messages into the per-channel queue.
+    /// Called by the webhook routes after signature verification.
+    fn push_webhook_messages(&self, id: &str, msgs: Vec<InboundMessage>) {
+        if msgs.is_empty() {
+            return;
+        }
+        if let Ok(mut q) = self.webhook_queue.lock() {
+            let entry = q.entry(id.to_string()).or_default();
+            entry.extend(msgs);
+            // Cap the queue so a forgotten webhook can't grow unbounded.
+            const MAX_QUEUE: usize = 500;
+            if entry.len() > MAX_QUEUE {
+                let excess = entry.len() - MAX_QUEUE;
+                entry.drain(..excess);
+            }
+        }
+    }
+
+    /// Set the verify token used to validate inbound webhook requests
+    /// (`hub.verify_token` for Messenger/WhatsApp). Stored in memory only.
+    fn set_webhook_verify_token(&self, id: &str, token: &str) {
+        if let Ok(mut m) = self.webhook_verify_tokens.lock() {
+            if token.trim().is_empty() {
+                m.remove(id);
+            } else {
+                m.insert(id.to_string(), token.trim().to_string());
+            }
+        }
+    }
+
+    /// Get the configured webhook verify token for a channel, if any.
+    fn webhook_verify_token(&self, id: &str) -> Option<String> {
+        self.webhook_verify_tokens
+            .lock()
+            .map(|m| m.get(id).cloned())
+            .unwrap_or(None)
+    }
+
+    /// Get the stored raw token for a channel (for operation dispatch).
+    /// Returns a ChannelError when not connected.
+    fn channel_token(&self, id: &str) -> Result<String, ChannelError> {
+        Ok(self.stored_token(id)?.token)
+    }
+
+    /// API base override for a channel (used by bot tools).
+    fn channel_api_base(&self, id: &str) -> String {
+        match id {
+            "telegram" => self.telegram_api.clone(),
+            "discord" => self.discord_api.clone(),
+            "messenger" => self.messenger_api.clone(),
+            "slack" => self.slack_api.clone(),
+            "whatsapp" => self.whatsapp_api.clone(),
+            "line" => self.line_api.clone(),
+            "zalo" => self.zalo_api.clone(),
+            _ => String::new(),
+        }
     }
 
     fn messenger_oauth_config(&self) -> Option<MessengerOAuthConfig> {
@@ -794,6 +1034,10 @@ mod tests {
             base.to_string(),
             base.to_string(),
             base.to_string(),
+            base.to_string(),
+            base.to_string(),
+            base.to_string(),
+            base.to_string(),
         );
         (dir, reg)
     }
@@ -801,7 +1045,15 @@ mod tests {
     #[test]
     fn supported_channels_are_real() {
         let (_dir, reg) = test_registry("http://127.0.0.1:1");
-        for id in ["telegram", "discord", "messenger"] {
+        for id in [
+            "telegram",
+            "discord",
+            "messenger",
+            "slack",
+            "whatsapp",
+            "line",
+            "zalo",
+        ] {
             let info = reg.info(id);
             assert!(info.supported, "id: {id}");
             assert_eq!(info.status, "not-configured", "id: {id}");
@@ -812,7 +1064,7 @@ mod tests {
     #[test]
     fn remaining_channels_are_honest() {
         let (_dir, reg) = test_registry("http://127.0.0.1:1");
-        for id in ["slack", "whatsapp", "line", "feishu", "zalo"] {
+        for id in ["feishu"] {
             let info = reg.info(id);
             assert_eq!(info.status, "unsupported", "id: {id}");
             assert!(!info.supported, "id: {id}");
@@ -843,7 +1095,8 @@ mod tests {
     #[tokio::test]
     async fn connect_rejects_unsupported_channel() {
         let (_dir, reg) = test_registry("http://127.0.0.1:1");
-        let err = reg.connect("slack", GOOD_TOKEN).await.unwrap_err();
+        // feishu remains unimplemented.
+        let err = reg.connect("feishu", GOOD_TOKEN).await.unwrap_err();
         assert_eq!(err.status, 400);
         assert!(err.message.contains("chưa hỗ trợ"), "msg: {}", err.message);
     }
@@ -965,7 +1218,9 @@ mod tests {
         assert!(!dir.path().join("channels").join("telegram.json").exists());
         // Second disconnect still succeeds.
         reg.disconnect("telegram").expect("idempotent disconnect");
-        assert!(reg.disconnect("slack").is_err());
+        // Disconnecting an unconnected but supported channel still succeeds.
+        reg.disconnect("slack").expect("idempotent disconnect");
+        assert!(reg.disconnect("feishu").is_err());
     }
 
     #[tokio::test]
@@ -1224,7 +1479,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn messenger_poll_is_honest_501_not_unsupported() {
+    async fn messenger_poll_drains_webhook_queue() {
         let (base, _handle) = mock_server(
             200,
             r#"{"id":"987","name":"P"}"#,
@@ -1232,10 +1487,41 @@ mod tests {
         .await;
         let (_dir, reg) = test_registry_all(&base);
         reg.connect("messenger", "PAGETOKEN").await.expect("connect");
-        let err = reg.poll_updates("messenger", Some("111"), None).await.unwrap_err();
+        // Empty queue → empty result (no more fake 501).
+        let msgs = reg.poll_updates("messenger", None, None).await.expect("poll");
+        assert!(msgs.is_empty());
+        // Push via webhook → poll drains.
+        reg.push_webhook_messages(
+            "messenger",
+            vec![InboundMessage {
+                id: "mid.1".to_string(),
+                chat_id: "PAGE1:USER1".to_string(),
+                sender: Some("USER1".to_string()),
+                text: "hello".to_string(),
+                ts: None,
+            }],
+        );
+        let msgs = reg.poll_updates("messenger", None, None).await.expect("poll");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "hello");
+        // Queue drained — second poll is empty.
+        let msgs = reg.poll_updates("messenger", None, None).await.expect("poll");
+        assert!(msgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn slack_poll_is_honest_501_not_unsupported() {
+        let (base, _handle) = mock_server(
+            200,
+            r#"{"ok":true,"user_id":"U1","team":"T"}"#,
+        )
+        .await;
+        let (_dir, reg) = test_registry_all(&base);
+        reg.connect("slack", "xoxb-test").await.expect("connect");
+        let err = reg.poll_updates("slack", None, None).await.unwrap_err();
         // 501 with webhook guidance — NOT a fake "unsupported".
         assert_eq!(err.status, 501);
-        assert!(err.message.contains("webhook"), "msg: {}", err.message);
+        assert!(err.message.contains("Socket Mode"), "msg: {}", err.message);
         assert!(!err.message.contains("chưa hỗ trợ"), "msg: {}", err.message);
     }
 
@@ -1352,6 +1638,10 @@ mod tests {
             "http://127.0.0.1:1".to_string(),
             "http://127.0.0.1:1".to_string(),
             base.to_string(),
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:1".to_string(),
         );
         (dir, reg)
     }

@@ -275,6 +275,285 @@ pub async fn send_text(
     parse_send(&body)
 }
 
+// ---------------------------------------------------------------------------
+// Extended operations: media, quick replies, templates, profile, typing
+// ---------------------------------------------------------------------------
+
+/// Generic `POST /me/messages` helper with an arbitrary message payload.
+/// `Ok` → Graph message id.
+async fn post_message(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+    message: &Value,
+) -> Result<String, String> {
+    let url = format!(
+        "{}/me/messages?access_token={}",
+        api_base.trim_end_matches('/'),
+        page_token
+    );
+    let resp = client()?
+        .post(&url)
+        .json(&serde_json::json!({
+            "recipient": { "id": psid },
+            "messaging_type": "RESPONSE",
+            "message": message,
+        }))
+        .send()
+        .await
+        .map_err(transport_error)?;
+    let body = read_json_body(resp).await?;
+    parse_send(&body)
+}
+
+/// Live send image: `image_url` must be a public HTTPS URL.
+/// `Ok` → Graph message id.
+pub async fn send_image(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+    image_url: &str,
+) -> Result<String, String> {
+    post_message(
+        api_base,
+        page_token,
+        psid,
+        &serde_json::json!({
+            "attachment": {
+                "type": "image",
+                "payload": { "url": image_url, "is_reusable": true },
+            },
+        }),
+    )
+    .await
+}
+
+/// One quick-reply button: `{"title": ..., "payload": ...}`.
+fn quick_reply(title: &str, payload: &str) -> Value {
+    serde_json::json!({
+        "content_type": "text",
+        "title": title,
+        "payload": payload,
+    })
+}
+
+/// Live send quick replies: up to 13 buttons.
+/// `Ok` → Graph message id.
+pub async fn send_quick_replies(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+    text: &str,
+    buttons: &[(String, String)],
+) -> Result<String, String> {
+    let replies: Vec<Value> = buttons
+        .iter()
+        .take(13)
+        .map(|(t, p)| quick_reply(t, p))
+        .collect();
+    post_message(
+        api_base,
+        page_token,
+        psid,
+        &serde_json::json!({ "text": text, "quick_replies": replies }),
+    )
+    .await
+}
+
+/// Live send button template: title + up to 3 postback buttons.
+/// `Ok` → Graph message id.
+pub async fn send_buttons(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+    title: &str,
+    buttons: &[(String, String)],
+) -> Result<String, String> {
+    let btns: Vec<Value> = buttons
+        .iter()
+        .take(3)
+        .map(|(t, p)| {
+            serde_json::json!({ "type": "postback", "title": t, "payload": p })
+        })
+        .collect();
+    post_message(
+        api_base,
+        page_token,
+        psid,
+        &serde_json::json!({
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "button",
+                    "text": title,
+                    "buttons": btns,
+                },
+            },
+        }),
+    )
+    .await
+}
+
+/// Sender profile from the webhook / User Profile API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SenderProfile {
+    pub psid: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub profile_pic: Option<String>,
+}
+
+/// Parse a `GET /{psid}?fields=first_name,last_name,profile_pic` response.
+pub fn parse_user_profile(psid: &str, body: &Value) -> Result<SenderProfile, String> {
+    if let Some(err) = body.get("error") {
+        return Err(describe_graph_error(err));
+    }
+    let first_name = body
+        .get("first_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok(SenderProfile {
+        psid: psid.to_string(),
+        first_name,
+        last_name: body
+            .get("last_name")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()),
+        profile_pic: body
+            .get("profile_pic")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()),
+    })
+}
+
+/// Live fetch: `GET /{psid}?fields=first_name,last_name,profile_pic`.
+pub async fn get_user_profile(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+) -> Result<SenderProfile, String> {
+    let url = format!(
+        "{}/{}?fields=first_name,last_name,profile_pic&access_token={}",
+        api_base.trim_end_matches('/'),
+        psid.trim(),
+        page_token
+    );
+    let resp = client()?.get(&url).send().await.map_err(transport_error)?;
+    let body = read_json_body(resp).await?;
+    parse_user_profile(psid, &body)
+}
+
+/// Live typing indicator: `POST /me/messages` with `sender_action`.
+/// `action` is `typing_on`, `typing_off`, or `mark_seen`.
+pub async fn set_typing(
+    api_base: &str,
+    page_token: &str,
+    psid: &str,
+    action: &str,
+) -> Result<(), String> {
+    let action = match action {
+        "typing_on" | "typing_off" | "mark_seen" => action,
+        _ => "typing_on",
+    };
+    let url = format!(
+        "{}/me/messages?access_token={}",
+        api_base.trim_end_matches('/'),
+        page_token
+    );
+    let resp = client()?
+        .post(&url)
+        .json(&serde_json::json!({
+            "recipient": { "id": psid },
+            "sender_action": action,
+        }))
+        .send()
+        .await
+        .map_err(transport_error)?;
+    let body = read_json_body(resp).await?;
+    // Typing actions answer {"recipient_id": ...} with no message_id.
+    if body.get("error").is_some() {
+        return Err(describe_graph_error(&body["error"]));
+    }
+    Ok(())
+}
+
+/// Parse a Messenger webhook event body into inbound messages.
+/// Handles `messages` webhooks: `entry[].messaging[]` with
+/// `message.text` (skips echoes and non-text).
+pub fn parse_webhook(body: &Value) -> Vec<super::InboundMessage> {
+    let mut out = Vec::new();
+    if body.get("object").and_then(Value::as_str) != Some("page") {
+        return out;
+    }
+    let entries = body
+        .get("entry")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entry in entries {
+        let page_id = entry
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let messaging = entry
+            .get("messaging")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for m in messaging {
+            // Postback payloads arrive without a `message` object.
+            let postback_payload = m
+                .get("postback")
+                .and_then(|p| p.get("payload"))
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            let msg = m.get("message");
+            // Skip echoes of our own sends.
+            if msg
+                .and_then(|x| x.get("is_echo"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let text = msg
+                .and_then(|x| x.get("text"))
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+                .or(postback_payload)
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                continue;
+            }
+            let sender = m
+                .get("sender")
+                .and_then(|s| s.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let id = msg
+                .and_then(|x| x.get("mid"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let ts = m
+                .get("timestamp")
+                .and_then(Value::as_i64)
+                .map(|n| n.to_string());
+            out.push(super::InboundMessage {
+                id,
+                chat_id: if page_id.is_empty() { sender.clone() } else { format!("{page_id}:{sender}") },
+                sender: if sender.is_empty() { None } else { Some(sender) },
+                text,
+                ts,
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +779,94 @@ mod tests {
             "req: {}",
             reqs[0]
         );
+    }
+
+    // ---------------- Extended operations ----------------
+
+    #[test]
+    fn parse_user_profile_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"first_name":"An","last_name":"Nguyen","profile_pic":"https://x/y.jpg"}"#,
+        )
+        .unwrap();
+        let p = parse_user_profile("PSID1", &body).expect("must parse");
+        assert_eq!(p.first_name, "An");
+        assert_eq!(p.last_name.as_deref(), Some("Nguyen"));
+        assert_eq!(p.psid, "PSID1");
+    }
+
+    #[test]
+    fn parse_webhook_message_events() {
+        let body: Value = serde_json::from_str(
+            r#"{"object":"page","entry":[{"id":"PAGE1","time":1729,"messaging":[
+                {"sender":{"id":"USER1"},"recipient":{"id":"PAGE1"},"timestamp":1729000000000,
+                 "message":{"mid":"mid.1","text":"xin chào"}},
+                {"sender":{"id":"USER1"},"recipient":{"id":"PAGE1"},"timestamp":1729000000001,
+                 "message":{"mid":"mid.2","text":"bot nói","is_echo":true}},
+                {"sender":{"id":"USER2"},"recipient":{"id":"PAGE1"},"timestamp":1729000000002,
+                 "postback":{"payload":"START"}}
+            ]}]}"#,
+        )
+        .unwrap();
+        let msgs = parse_webhook(&body);
+        // Echo skipped; postback payload becomes text.
+        assert_eq!(msgs.len(), 2, "msgs: {msgs:?}");
+        assert_eq!(msgs[0].text, "xin chào");
+        assert_eq!(msgs[0].sender.as_deref(), Some("USER1"));
+        assert_eq!(msgs[1].text, "START");
+    }
+
+    #[test]
+    fn parse_webhook_ignores_non_page() {
+        let body: Value = serde_json::from_str(r#"{"object":"user"}"#).unwrap();
+        assert!(parse_webhook(&body).is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_image_posts_attachment() {
+        let (base, handle) = mock_server(
+            200,
+            r#"{"recipient_id":"111","message_id":"mid.img"}"#,
+        )
+        .await;
+        let id = send_image(&base, GOOD_TOKEN, "111", "https://x/y.png")
+            .await
+            .expect("send");
+        assert_eq!(id, "mid.img");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].starts_with("POST /me/messages?access_token="), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""type":"image""#), "req: {}", reqs[0]);
+    }
+
+    #[tokio::test]
+    async fn send_quick_replies_posts_buttons() {
+        let (base, handle) = mock_server(
+            200,
+            r#"{"recipient_id":"111","message_id":"mid.qr"}"#,
+        )
+        .await;
+        let id = send_quick_replies(
+            &base,
+            GOOD_TOKEN,
+            "111",
+            "Chọn đi",
+            &[("A".to_string(), "PA".to_string()), ("B".to_string(), "PB".to_string())],
+        )
+        .await
+        .expect("send");
+        assert_eq!(id, "mid.qr");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].contains("quick_replies"), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""title":"A""#), "req: {}", reqs[0]);
+    }
+
+    #[tokio::test]
+    async fn set_typing_posts_sender_action() {
+        let (base, handle) = mock_server(200, r#"{"recipient_id":"111"}"#).await;
+        set_typing(&base, GOOD_TOKEN, "111", "typing_on")
+            .await
+            .expect("typing");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].contains(r#""sender_action":"typing_on""#), "req: {}", reqs[0]);
     }
 }

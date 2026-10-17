@@ -342,3 +342,491 @@ pub async fn messenger_oauth_callback(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Webhook ingress: Messenger / WhatsApp / LINE / Zalo
+//
+// Platforms without a polling API deliver inbound messages to a webhook
+// URL the user registers on their developer console. Boom exposes one
+// endpoint per platform; verified events are parsed into InboundMessage
+// and pushed to the registry's webhook queue, which
+// `GET /api/channels/{id}/updates` drains.
+// ---------------------------------------------------------------------------
+
+/// Query params for Meta webhook verification (`hub.mode`,
+/// `hub.verify_token`, `hub.challenge`).
+#[derive(Debug, Deserialize)]
+pub struct WebhookVerifyQuery {
+    #[serde(default, rename = "hub.mode")]
+    pub hub_mode: Option<String>,
+    #[serde(default, rename = "hub.verify_token")]
+    pub hub_verify_token: Option<String>,
+    #[serde(default, rename = "hub.challenge")]
+    pub hub_challenge: Option<String>,
+}
+
+/// Shared Meta (Messenger/WhatsApp) webhook verification: Facebook sends
+/// `GET ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...`.
+/// We echo the challenge only when the verify token matches the one the
+/// user configured (via `POST /api/channels/{id}/webhook/verify-token`).
+fn verify_meta_webhook(
+    registry: &dyn super::super::state::ChannelRegistry,
+    id: &str,
+    q: &WebhookVerifyQuery,
+) -> Result<String, ApiError> {
+    let mode_ok = q.hub_mode.as_deref() == Some("subscribe");
+    let challenge = q.hub_challenge.as_deref().filter(|s| !s.is_empty());
+    let provided = q.hub_verify_token.as_deref().unwrap_or("");
+    let expected = registry.webhook_verify_token(id);
+    match (mode_ok, challenge, expected) {
+        (true, Some(c), Some(exp)) if provided == exp => Ok(c.to_string()),
+        (true, Some(_), Some(_)) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "webhook verify_token mismatch",
+        )),
+        (true, Some(_), None) => Err(ApiError::bad_request(
+            "webhook verify token chưa được cấu hình — POST /api/channels/{id}/webhook/verify-token trước",
+        )),
+        _ => Err(ApiError::bad_request("invalid webhook verification request")),
+    }
+}
+
+/// `GET /api/channels/messenger/webhook` — Meta verification handshake.
+pub async fn messenger_webhook_verify(
+    State(state): State<AppState>,
+    Query(q): Query<WebhookVerifyQuery>,
+) -> Result<String, ApiError> {
+    verify_meta_webhook(state.channels.as_ref(), "messenger", &q)
+}
+
+/// `POST /api/channels/messenger/webhook` — receive Messenger events.
+pub async fn messenger_webhook_receive(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    // Only accept events for a connected channel.
+    if state.channels.info("messenger").status != "connected" {
+        return Err(ApiError::bad_request("messenger chưa được kết nối"));
+    }
+    let msgs = super::super::channels::messenger::parse_webhook(&Value::Object(body));
+    let count = msgs.len();
+    state.channels.push_webhook_messages("messenger", msgs);
+    Ok(Json(json!({ "ok": true, "received": count })))
+}
+
+/// `GET /api/channels/whatsapp/webhook` — Meta verification handshake
+/// (same scheme as Messenger).
+pub async fn whatsapp_webhook_verify(
+    State(state): State<AppState>,
+    Query(q): Query<WebhookVerifyQuery>,
+) -> Result<String, ApiError> {
+    verify_meta_webhook(state.channels.as_ref(), "whatsapp", &q)
+}
+
+/// `POST /api/channels/whatsapp/webhook` — receive WhatsApp events.
+pub async fn whatsapp_webhook_receive(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    if state.channels.info("whatsapp").status != "connected" {
+        return Err(ApiError::bad_request("whatsapp chưa được kết nối"));
+    }
+    let msgs = super::super::channels::whatsapp::parse_webhook(&Value::Object(body));
+    let count = msgs.len();
+    state.channels.push_webhook_messages("whatsapp", msgs);
+    Ok(Json(json!({ "ok": true, "received": count })))
+}
+
+/// `POST /api/channels/line/webhook` — receive LINE events.
+/// (Signature verification with the channel secret is recommended in
+/// production; this endpoint parses the body and queues text messages.)
+pub async fn line_webhook_receive(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    if state.channels.info("line").status != "connected" {
+        return Err(ApiError::bad_request("line chưa được kết nối"));
+    }
+    let msgs = super::super::channels::line::parse_webhook(&Value::Object(body));
+    let count = msgs.len();
+    state.channels.push_webhook_messages("line", msgs);
+    // LINE expects a fast 200; the body is ignored.
+    Ok(Json(json!({ "ok": true, "received": count })))
+}
+
+/// `POST /api/channels/zalo/webhook` — receive Zalo OA events.
+pub async fn zalo_webhook_receive(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    if state.channels.info("zalo").status != "connected" {
+        return Err(ApiError::bad_request("zalo chưa được kết nối"));
+    }
+    let msgs = super::super::channels::zalo::parse_webhook(&Value::Object(body));
+    let count = msgs.len();
+    state.channels.push_webhook_messages("zalo", msgs);
+    Ok(Json(json!({ "ok": true, "received": count })))
+}
+
+/// `POST /api/channels/{id}/webhook/verify-token` — body `{token}` →
+/// `{ok: true}`. Stores the verify token used to validate the Meta
+/// webhook handshake (in-memory only, never persisted).
+pub async fn set_webhook_verify_token(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    let token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !["messenger", "whatsapp"].contains(&id.as_str()) {
+        return Err(ApiError::bad_request(
+            "verify token chỉ dùng cho messenger/whatsapp",
+        ));
+    }
+    state.channels.set_webhook_verify_token(&id, &token);
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+// ---------------------------------------------------------------------------
+// Generic channel operations: POST /api/channels/{id}/{operation}
+//
+// Each operation maps to a real platform API call. Body carries the
+// operation's parameters as JSON. The channel must be connected.
+// ---------------------------------------------------------------------------
+
+/// `POST /api/channels/{id}/{operation}` — body varies per operation →
+/// 200 `{ok: true, ...result}`.
+///
+/// Supported operations:
+/// - telegram: send_photo, send_document, send_sticker, edit_message,
+///   delete_message, get_chat_info, get_chat_members, pin_message,
+///   unpin_message
+/// - discord: send_embed, edit_message, delete_message, add_reaction,
+///   remove_reaction, get_channel_info, get_guild_info, list_members
+/// - messenger: send_image, send_quick_replies, send_buttons,
+///   get_user_profile, set_typing
+/// - slack: send_blocks, update_message, delete_message, list_channels,
+///   get_user_info
+/// - whatsapp: send_text
+/// - line: send_text
+/// - zalo: send_text
+pub async fn channel_operation(
+    State(state): State<AppState>,
+    Path((id, operation)): Path<(String, String)>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    use super::super::channels as ch;
+
+    let token = state
+        .channels
+        .channel_token(&id)
+        .map_err(channel_error)?;
+    let api = |channel: &str| state.channels.channel_api_base(channel);
+    let req_str = |key: &str| {
+        body.get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string())
+    };
+    let req_i64 = |key: &str| body.get(key).and_then(Value::as_i64);
+    let op_err = |e: String| channel_error(ChannelError::upstream(e));
+
+    let result: Value = match (id.as_str(), operation.as_str()) {
+        // ---------------- Telegram ----------------
+        ("telegram", "send_photo") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let photo = req_str("photo").ok_or_else(|| ApiError::bad_request("photo is required"))?;
+            let caption = req_str("caption");
+            let mid = ch::telegram::send_photo(&api("telegram"), &token, &chat, &photo, caption.as_deref())
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("telegram", "send_document") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let doc = req_str("document").ok_or_else(|| ApiError::bad_request("document is required"))?;
+            let caption = req_str("caption");
+            let mid = ch::telegram::send_document(&api("telegram"), &token, &chat, &doc, caption.as_deref())
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("telegram", "send_sticker") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let sticker = req_str("sticker").ok_or_else(|| ApiError::bad_request("sticker is required"))?;
+            let mid = ch::telegram::send_sticker(&api("telegram"), &token, &chat, &sticker)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("telegram", "edit_message") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let mid = req_i64("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let new_mid = ch::telegram::edit_message(&api("telegram"), &token, &chat, mid, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": new_mid })
+        }
+        ("telegram", "delete_message") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let mid = req_i64("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            ch::telegram::delete_message(&api("telegram"), &token, &chat, mid)
+                .await
+                .map_err(op_err)?;
+            json!({ "deleted": true })
+        }
+        ("telegram", "get_chat_info") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let info = ch::telegram::get_chat_info(&api("telegram"), &token, &chat)
+                .await
+                .map_err(op_err)?;
+            json!({ "id": info.id, "title": info.title, "type": info.kind })
+        }
+        ("telegram", "get_chat_members") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let members = ch::telegram::get_chat_members(&api("telegram"), &token, &chat)
+                .await
+                .map_err(op_err)?;
+            json!({ "members": members.iter().map(|m| json!({
+                "user_id": m.user_id, "username": m.username,
+                "first_name": m.first_name, "status": m.status,
+            })).collect::<Vec<_>>() })
+        }
+        ("telegram", "pin_message") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let mid = req_i64("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            ch::telegram::pin_message(&api("telegram"), &token, &chat, mid)
+                .await
+                .map_err(op_err)?;
+            json!({ "pinned": true })
+        }
+        ("telegram", "unpin_message") => {
+            let chat = req_str("chat_id").ok_or_else(|| ApiError::bad_request("chat_id is required"))?;
+            let mid = req_i64("message_id");
+            ch::telegram::unpin_message(&api("telegram"), &token, &chat, mid)
+                .await
+                .map_err(op_err)?;
+            json!({ "unpinned": true })
+        }
+        // ---------------- Discord ----------------
+        ("discord", "send_embed") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let title = req_str("title").unwrap_or_default();
+            let desc = req_str("description").unwrap_or_default();
+            let color = req_i64("color");
+            let mid = ch::discord::send_embed(&api("discord"), &token, &channel, &title, &desc, color)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("discord", "edit_message") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let mid = req_str("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let new_mid = ch::discord::edit_message(&api("discord"), &token, &channel, &mid, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": new_mid })
+        }
+        ("discord", "delete_message") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let mid = req_str("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            ch::discord::delete_message(&api("discord"), &token, &channel, &mid)
+                .await
+                .map_err(op_err)?;
+            json!({ "deleted": true })
+        }
+        ("discord", "add_reaction") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let mid = req_str("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            let emoji = req_str("emoji").ok_or_else(|| ApiError::bad_request("emoji is required"))?;
+            ch::discord::add_reaction(&api("discord"), &token, &channel, &mid, &emoji)
+                .await
+                .map_err(op_err)?;
+            json!({ "reacted": true })
+        }
+        ("discord", "remove_reaction") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let mid = req_str("message_id").ok_or_else(|| ApiError::bad_request("message_id is required"))?;
+            let emoji = req_str("emoji").ok_or_else(|| ApiError::bad_request("emoji is required"))?;
+            ch::discord::remove_reaction(&api("discord"), &token, &channel, &mid, &emoji)
+                .await
+                .map_err(op_err)?;
+            json!({ "removed": true })
+        }
+        ("discord", "get_channel_info") => {
+            let channel = req_str("channel_id").ok_or_else(|| ApiError::bad_request("channel_id is required"))?;
+            let info = ch::discord::get_channel_info(&api("discord"), &token, &channel)
+                .await
+                .map_err(op_err)?;
+            json!({ "id": info.id, "name": info.name, "type": info.kind, "guild_id": info.guild_id })
+        }
+        ("discord", "get_guild_info") => {
+            let guild = req_str("guild_id").ok_or_else(|| ApiError::bad_request("guild_id is required"))?;
+            let info = ch::discord::get_guild_info(&api("discord"), &token, &guild)
+                .await
+                .map_err(op_err)?;
+            json!({ "id": info.id, "name": info.name, "member_count": info.member_count })
+        }
+        ("discord", "list_members") => {
+            let guild = req_str("guild_id").ok_or_else(|| ApiError::bad_request("guild_id is required"))?;
+            let members = ch::discord::list_members(&api("discord"), &token, &guild)
+                .await
+                .map_err(op_err)?;
+            json!({ "members": members.iter().map(|m| json!({
+                "user_id": m.user_id, "username": m.username, "nick": m.nick,
+            })).collect::<Vec<_>>() })
+        }
+        // ---------------- Messenger ----------------
+        ("messenger", "send_image") => {
+            let psid = req_str("psid").ok_or_else(|| ApiError::bad_request("psid is required"))?;
+            let url = req_str("image_url").ok_or_else(|| ApiError::bad_request("image_url is required"))?;
+            let mid = ch::messenger::send_image(&api("messenger"), &token, &psid, &url)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("messenger", "send_quick_replies") => {
+            let psid = req_str("psid").ok_or_else(|| ApiError::bad_request("psid is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let buttons: Vec<(String, String)> = body
+                .get("buttons")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|b| {
+                            let t = b.get("title")?.as_str()?.to_string();
+                            let p = b.get("payload")?.as_str()?.to_string();
+                            Some((t, p))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if buttons.is_empty() {
+                return Err(ApiError::bad_request("buttons (array of {title, payload}) is required"));
+            }
+            let mid = ch::messenger::send_quick_replies(&api("messenger"), &token, &psid, &text, &buttons)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("messenger", "send_buttons") => {
+            let psid = req_str("psid").ok_or_else(|| ApiError::bad_request("psid is required"))?;
+            let title = req_str("title").ok_or_else(|| ApiError::bad_request("title is required"))?;
+            let buttons: Vec<(String, String)> = body
+                .get("buttons")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|b| {
+                            let t = b.get("title")?.as_str()?.to_string();
+                            let p = b.get("payload")?.as_str()?.to_string();
+                            Some((t, p))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if buttons.is_empty() {
+                return Err(ApiError::bad_request("buttons (array of {title, payload}) is required"));
+            }
+            let mid = ch::messenger::send_buttons(&api("messenger"), &token, &psid, &title, &buttons)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("messenger", "get_user_profile") => {
+            let psid = req_str("psid").ok_or_else(|| ApiError::bad_request("psid is required"))?;
+            let p = ch::messenger::get_user_profile(&api("messenger"), &token, &psid)
+                .await
+                .map_err(op_err)?;
+            json!({ "psid": p.psid, "first_name": p.first_name, "last_name": p.last_name, "profile_pic": p.profile_pic })
+        }
+        ("messenger", "set_typing") => {
+            let psid = req_str("psid").ok_or_else(|| ApiError::bad_request("psid is required"))?;
+            let action = req_str("action").unwrap_or_else(|| "typing_on".to_string());
+            ch::messenger::set_typing(&api("messenger"), &token, &psid, &action)
+                .await
+                .map_err(op_err)?;
+            json!({ "ok": true })
+        }
+        // ---------------- Slack ----------------
+        ("slack", "send_blocks") => {
+            let channel = req_str("channel").ok_or_else(|| ApiError::bad_request("channel is required"))?;
+            let text = req_str("text").unwrap_or_else(|| " ".to_string());
+            let blocks = body.get("blocks").cloned();
+            let ts = ch::slack::send_blocks(&api("slack"), &token, &channel, &text, blocks.as_ref())
+                .await
+                .map_err(op_err)?;
+            json!({ "ts": ts })
+        }
+        ("slack", "update_message") => {
+            let channel = req_str("channel").ok_or_else(|| ApiError::bad_request("channel is required"))?;
+            let ts = req_str("ts").ok_or_else(|| ApiError::bad_request("ts is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let new_ts = ch::slack::update_message(&api("slack"), &token, &channel, &ts, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "ts": new_ts })
+        }
+        ("slack", "delete_message") => {
+            let channel = req_str("channel").ok_or_else(|| ApiError::bad_request("channel is required"))?;
+            let ts = req_str("ts").ok_or_else(|| ApiError::bad_request("ts is required"))?;
+            ch::slack::delete_message(&api("slack"), &token, &channel, &ts)
+                .await
+                .map_err(op_err)?;
+            json!({ "deleted": true })
+        }
+        ("slack", "list_channels") => {
+            let channels = ch::slack::list_channels(&api("slack"), &token)
+                .await
+                .map_err(op_err)?;
+            json!({ "channels": channels.iter().map(|c| json!({
+                "id": c.id, "name": c.name, "is_private": c.is_private,
+            })).collect::<Vec<_>>() })
+        }
+        ("slack", "get_user_info") => {
+            let user = req_str("user_id").ok_or_else(|| ApiError::bad_request("user_id is required"))?;
+            let u = ch::slack::get_user_info(&api("slack"), &token, &user)
+                .await
+                .map_err(op_err)?;
+            json!({ "id": u.id, "name": u.name, "real_name": u.real_name })
+        }
+        // ---------------- WhatsApp / LINE / Zalo (send_text) ----------------
+        ("whatsapp", "send_text") => {
+            let to = req_str("to").ok_or_else(|| ApiError::bad_request("to is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let mid = ch::whatsapp::send_text(&api("whatsapp"), &token, &to, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        ("line", "send_text") => {
+            let to = req_str("to").ok_or_else(|| ApiError::bad_request("to is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            ch::line::send_text(&api("line"), &token, &to, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "sent": true })
+        }
+        ("zalo", "send_text") => {
+            let user = req_str("user_id").ok_or_else(|| ApiError::bad_request("user_id is required"))?;
+            let text = req_str("text").ok_or_else(|| ApiError::bad_request("text is required"))?;
+            let mid = ch::zalo::send_text(&api("zalo"), &token, &user, &text)
+                .await
+                .map_err(op_err)?;
+            json!({ "message_id": mid })
+        }
+        _ => {
+            return Err(ApiError::bad_request(format!(
+                "unknown operation '{operation}' for channel '{id}'"
+            )))
+        }
+    };
+
+    Ok(Json(json!({ "ok": true, "id": id, "operation": operation, "result": result })))
+}

@@ -617,6 +617,32 @@ pub trait ChannelRegistry: Send + Sync {
             ))
         })
     }
+    /// Push inbound webhook messages into the per-channel ingress queue.
+    /// Called by webhook routes after verification. Default: no-op.
+    fn push_webhook_messages(&self, id: &str, msgs: Vec<InboundMessage>) {
+        let _ = (id, msgs);
+    }
+    /// Set the verify token used to validate inbound webhook requests
+    /// (`hub.verify_token`). In-memory only. Default: no-op.
+    fn set_webhook_verify_token(&self, id: &str, token: &str) {
+        let _ = (id, token);
+    }
+    /// Get the configured webhook verify token for a channel, if any.
+    fn webhook_verify_token(&self, id: &str) -> Option<String> {
+        let _ = id;
+        None
+    }
+    /// Raw stored token for a channel (for operation dispatch by bot
+    /// tools). `Err` when the channel is not connected.
+    fn channel_token(&self, id: &str) -> Result<String, ChannelError> {
+        let _ = id;
+        Err(ChannelError::bad_request("not supported by this registry"))
+    }
+    /// API base override for a channel (used by bot tools).
+    fn channel_api_base(&self, id: &str) -> String {
+        let _ = id;
+        String::new()
+    }
 }
 
 /// `$BOOM_HOME`, else `~/.boom` (Python: `os.environ.get("BOOM_HOME", ...)`

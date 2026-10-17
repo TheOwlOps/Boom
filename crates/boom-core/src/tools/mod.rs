@@ -11,6 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
+pub mod channels;
 pub mod data;
 pub mod fs;
 pub mod http;
@@ -113,6 +114,8 @@ impl ToolRegistry {
         // Shared workspace (multi-agent groups)
         reg.register("shared", shared::SharedWrite);
         reg.register("shared", shared::SharedRead);
+        // Channel operations (Telegram, Discord, Messenger, Slack)
+        channels::register_all(&mut reg);
         reg
     }
 
@@ -388,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn registry_dispatch_unknown_tool_errors() {
         let reg = ToolRegistry::with_builtins();
-        assert_eq!(reg.tool_names().len(), 32);
+        assert_eq!(reg.tool_names().len(), 57);
         let out = reg.dispatch("nope", serde_json::json!({})).await;
         assert!(out.get("error").is_some());
     }
@@ -397,14 +400,14 @@ mod tests {
     async fn function_definitions_cover_all_tools() {
         let reg = ToolRegistry::with_builtins();
         let defs = reg.function_definitions();
-        assert_eq!(defs.len(), 32);
+        assert_eq!(defs.len(), 57);
         assert!(defs.iter().all(|d| d.get("parameters").is_some()));
     }
 
     #[test]
     fn all_tools_have_valid_tool_info_and_schemas() {
         let reg = ToolRegistry::with_builtins();
-        assert_eq!(reg.tool_names().len(), 32);
+        assert_eq!(reg.tool_names().len(), 57);
         for name in reg.tool_names() {
             let tool = reg.get(&name).unwrap_or_else(|| panic!("tool '{name}' missing"));
             assert!(!tool.name().is_empty(), "empty name");

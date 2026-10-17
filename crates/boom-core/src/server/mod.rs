@@ -226,6 +226,34 @@ pub fn router(state: AppState) -> Router {
             "/api/channels/messenger/oauth/callback",
             get(routes::channels::messenger_oauth_callback),
         )
+        // Webhook ingress for platforms without a polling API.
+        .route(
+            "/api/channels/messenger/webhook",
+            get(routes::channels::messenger_webhook_verify)
+                .post(routes::channels::messenger_webhook_receive),
+        )
+        .route(
+            "/api/channels/whatsapp/webhook",
+            get(routes::channels::whatsapp_webhook_verify)
+                .post(routes::channels::whatsapp_webhook_receive),
+        )
+        .route(
+            "/api/channels/line/webhook",
+            post(routes::channels::line_webhook_receive),
+        )
+        .route(
+            "/api/channels/zalo/webhook",
+            post(routes::channels::zalo_webhook_receive),
+        )
+        .route(
+            "/api/channels/{id}/webhook/verify-token",
+            post(routes::channels::set_webhook_verify_token),
+        )
+        // Generic channel operations: POST /api/channels/{id}/ops/{operation}.
+        .route(
+            "/api/channels/{id}/ops/{operation}",
+            post(routes::channels::channel_operation),
+        )
         .route("/api/channels/status", get(misc::channels_status))
         .route(
             "/api/channels/zalo-personal/status",

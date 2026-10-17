@@ -260,10 +260,262 @@ pub async fn get_updates(
     parse_updates(&body, chat_filter)
 }
 
+// ---------------------------------------------------------------------------
+// Extended operations: media, message management, chat info
+// ---------------------------------------------------------------------------
+
+/// Generic `ok:true` response check for methods that return no payload.
+fn parse_ok(body: &Value, action: &str) -> Result<(), String> {
+    if body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        Ok(())
+    } else {
+        Err(describe_api_error(body, action))
+    }
+}
+
+/// Parse a media-send response (`sendPhoto`/`sendDocument`/`sendSticker`).
+/// `Ok` → sent message id.
+fn parse_media_send(body: &Value) -> Result<i64, String> {
+    parse_send_message(body)
+}
+
+/// POST helper for Bot API methods with a JSON body. `Ok` → parsed body.
+async fn post_method(
+    api_base: &str,
+    token: &str,
+    method: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let url = format!(
+        "{}/bot{}/{}",
+        api_base.trim_end_matches('/'),
+        token,
+        method
+    );
+    let resp = client(SEND_TIMEOUT)?
+        .post(&url)
+        .json(payload)
+        .send()
+        .await
+        .map_err(transport_error)?;
+    read_json_body(resp).await
+}
+
+/// Live `sendPhoto`: `photo` is a URL or file_id. `Ok` → message id.
+pub async fn send_photo(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    photo: &str,
+    caption: Option<&str>,
+) -> Result<i64, String> {
+    let mut payload = serde_json::json!({ "chat_id": chat_id, "photo": photo });
+    if let Some(c) = caption.filter(|s| !s.trim().is_empty()) {
+        payload["caption"] = serde_json::json!(c);
+    }
+    let body = post_method(api_base, token, "sendPhoto", &payload).await?;
+    parse_media_send(&body)
+}
+
+/// Live `sendDocument`: `document` is a URL or file_id. `Ok` → message id.
+pub async fn send_document(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    document: &str,
+    caption: Option<&str>,
+) -> Result<i64, String> {
+    let mut payload = serde_json::json!({ "chat_id": chat_id, "document": document });
+    if let Some(c) = caption.filter(|s| !s.trim().is_empty()) {
+        payload["caption"] = serde_json::json!(c);
+    }
+    let body = post_method(api_base, token, "sendDocument", &payload).await?;
+    parse_media_send(&body)
+}
+
+/// Live `sendSticker`: `sticker` is a file_id or sticker set name.
+/// `Ok` → message id.
+pub async fn send_sticker(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    sticker: &str,
+) -> Result<i64, String> {
+    let payload = serde_json::json!({ "chat_id": chat_id, "sticker": sticker });
+    let body = post_method(api_base, token, "sendSticker", &payload).await?;
+    parse_media_send(&body)
+}
+
+/// Live `editMessageText`. `Ok` → edited message id.
+pub async fn edit_message(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    message_id: i64,
+    text: &str,
+) -> Result<i64, String> {
+    let payload = serde_json::json!({
+        "chat_id": chat_id, "message_id": message_id, "text": text
+    });
+    let body = post_method(api_base, token, "editMessageText", &payload).await?;
+    parse_send_message(&body)
+}
+
+/// Live `deleteMessage`.
+pub async fn delete_message(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    message_id: i64,
+) -> Result<(), String> {
+    let payload = serde_json::json!({ "chat_id": chat_id, "message_id": message_id });
+    let body = post_method(api_base, token, "deleteMessage", &payload).await?;
+    parse_ok(&body, "failed to delete message")
+}
+
+/// Chat info from `getChat`: id, title/name, type, member count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatInfo {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub member_count: Option<i64>,
+}
+
+/// Parse a `getChat` response.
+pub fn parse_chat_info(body: &Value) -> Result<ChatInfo, String> {
+    if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(describe_api_error(body, "getChat failed"));
+    }
+    let r = body.get("result").ok_or_else(|| {
+        "Telegram getChat response missing result".to_string()
+    })?;
+    let id = r
+        .get("id")
+        .and_then(Value::as_i64)
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+    let title = r
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| r.get("first_name").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let kind = r
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok(ChatInfo {
+        id,
+        title,
+        kind,
+        member_count: None,
+    })
+}
+
+/// Live `getChat`.
+pub async fn get_chat_info(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+) -> Result<ChatInfo, String> {
+    let payload = serde_json::json!({ "chat_id": chat_id });
+    let body = post_method(api_base, token, "getChat", &payload).await?;
+    parse_chat_info(&body)
+}
+
+/// One chat member from `getChatAdministrators` / `getChatMember`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMember {
+    pub user_id: i64,
+    pub username: Option<String>,
+    pub first_name: String,
+    pub status: String,
+}
+
+/// Parse a `getChatAdministrators` response.
+pub fn parse_chat_members(body: &Value) -> Result<Vec<ChatMember>, String> {
+    if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(describe_api_error(body, "getChatAdministrators failed"));
+    }
+    let arr = body
+        .get("result")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for entry in arr {
+        let user = entry.get("user");
+        let (Some(uid), status) = (
+            user.and_then(|u| u.get("id")).and_then(Value::as_i64),
+            entry
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        ) else {
+            continue;
+        };
+        out.push(ChatMember {
+            user_id: uid,
+            username: user
+                .and_then(|u| u.get("username"))
+                .and_then(Value::as_str)
+                .map(|s| s.to_string()),
+            first_name: user
+                .and_then(|u| u.get("first_name"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            status,
+        });
+    }
+    Ok(out)
+}
+
+/// Live `getChatAdministrators` (member listing for groups/channels).
+pub async fn get_chat_members(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+) -> Result<Vec<ChatMember>, String> {
+    let payload = serde_json::json!({ "chat_id": chat_id });
+    let body = post_method(api_base, token, "getChatAdministrators", &payload).await?;
+    parse_chat_members(&body)
+}
+
+/// Live `pinChatMessage`.
+pub async fn pin_message(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    message_id: i64,
+) -> Result<(), String> {
+    let payload = serde_json::json!({ "chat_id": chat_id, "message_id": message_id });
+    let body = post_method(api_base, token, "pinChatMessage", &payload).await?;
+    parse_ok(&body, "failed to pin message")
+}
+
+/// Live `unpinChatMessage`.
+pub async fn unpin_message(
+    api_base: &str,
+    token: &str,
+    chat_id: &str,
+    message_id: Option<i64>,
+) -> Result<(), String> {
+    let mut payload = serde_json::json!({ "chat_id": chat_id });
+    if let Some(mid) = message_id {
+        payload["message_id"] = serde_json::json!(mid);
+    }
+    let body = post_method(api_base, token, "unpinChatMessage", &payload).await?;
+    parse_ok(&body, "failed to unpin message")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::channels::mock::{closed_port_url, mock_server, GOOD_TOKEN};
+    use crate::server::channels::mock::{closed_port_url, mock_server, mock_server_n, GOOD_TOKEN};
 
     #[test]
     fn token_format_validation() {
@@ -478,5 +730,84 @@ mod tests {
             reqs[0]
         );
         assert!(!reqs[0].contains("TESTTOKEN ") || reqs[0].contains("/bot123456:TESTTOKEN/"));
+    }
+
+    // ---------------- Extended operations ----------------
+
+    #[test]
+    fn parse_chat_info_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"ok":true,"result":{"id":-100123,"title":"Boom Group","type":"supergroup"}}"#,
+        )
+        .unwrap();
+        let info = parse_chat_info(&body).expect("must parse");
+        assert_eq!(info.id, "-100123");
+        assert_eq!(info.title, "Boom Group");
+        assert_eq!(info.kind, "supergroup");
+    }
+
+    #[test]
+    fn parse_chat_members_ok() {
+        let body: Value = serde_json::from_str(
+            r#"{"ok":true,"result":[
+                {"user":{"id":1,"first_name":"An","username":"an_dev"},"status":"creator"},
+                {"user":{"id":2,"first_name":"Boomi"},"status":"administrator"}
+            ]}"#,
+        )
+        .unwrap();
+        let members = parse_chat_members(&body).expect("must parse");
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].username.as_deref(), Some("an_dev"));
+        assert_eq!(members[0].status, "creator");
+        assert_eq!(members[1].user_id, 2);
+    }
+
+    #[tokio::test]
+    async fn send_photo_posts_json() {
+        let (base, handle) = mock_server(
+            200,
+            r#"{"ok":true,"result":{"message_id":55}}"#,
+        )
+        .await;
+        let mid = send_photo(&base, GOOD_TOKEN, "99", "https://x/y.png", Some("cap"))
+            .await
+            .expect("send");
+        assert_eq!(mid, 55);
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].starts_with("POST /bot123456:TESTTOKEN/sendPhoto "), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""photo":"https://x/y.png""#), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""caption":"cap""#), "req: {}", reqs[0]);
+    }
+
+    #[tokio::test]
+    async fn edit_and_delete_message() {
+        let (base, handle) = mock_server_n(
+            200,
+            r#"{"ok":true,"result":{"message_id":7}}"#,
+            2,
+        )
+        .await;
+        let mid = edit_message(&base, GOOD_TOKEN, "99", 7, "new text")
+            .await
+            .expect("edit");
+        assert_eq!(mid, 7);
+        // delete answers {"ok":true,"result":true}
+        delete_message(&base, GOOD_TOKEN, "99", 7)
+            .await
+            .expect("delete");
+        let reqs = handle.await.expect("server task");
+        assert_eq!(reqs.len(), 2);
+        assert!(reqs[0].contains("/editMessageText "), "req: {}", reqs[0]);
+        assert!(reqs[1].contains("/deleteMessage "), "req: {}", reqs[1]);
+    }
+
+    #[tokio::test]
+    async fn pin_and_unpin_message() {
+        let (base, handle) = mock_server_n(200, r#"{"ok":true,"result":true}"#, 2).await;
+        pin_message(&base, GOOD_TOKEN, "99", 7).await.expect("pin");
+        unpin_message(&base, GOOD_TOKEN, "99", None).await.expect("unpin");
+        let reqs = handle.await.expect("server task");
+        assert!(reqs[0].contains("/pinChatMessage "), "req: {}", reqs[0]);
+        assert!(reqs[1].contains("/unpinChatMessage "), "req: {}", reqs[1]);
     }
 }
