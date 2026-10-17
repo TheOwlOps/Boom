@@ -1,0 +1,14 @@
+// Cron job mẫu cho skill feature-watch.
+// LƯU Ý: thay "<chat id>" bằng chat id thật của user trước khi gọi cron_add.
+// Shape tương ứng tham số cron_add(cron, prompt, job_id=None, deliver_to=None),
+// trong đó deliver_to phải là dict {"channel": ..., "target": ...} non-empty
+// (điều kiện kiểm tra trong _checked_deliver_to của cronjob_tool.py).
+{
+  "cron": "0 8 * * *",
+  "job_id": "feature-watch-daily",
+  "prompt": "Load the feature-watch skill and run the daily tick. Only report verifiable new AI agent features/releases with URLs; update memories/feature-watch.json with reported URLs.",
+  "deliver_to": {
+    "channel": "telegram",
+    "target": "<chat id>"
+  }
+}

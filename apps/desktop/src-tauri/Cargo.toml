@@ -1,0 +1,55 @@
+[package]
+name = "boom_desktop"
+version = "0.3.4"
+description = "Boom Agent Harness Desktop App"
+authors = ["TheOwlOps"]
+license = "MIT"
+repository = "https://github.com/TheOwlOps/Boom"
+edition = "2021"
+
+[[bin]]
+name = "boom-desktop"
+path = "src/main.rs"
+
+[lib]
+name = "boom_desktop_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3" }
+
+[dependencies]
+# In-process Rust backend (replaces the Python/PyInstaller sidecar):
+# boom-core serves the same /api/* surface as gateway/api.py from inside the
+# Tauri process via boom_core::server::spawn_server.
+boom-core = { path = "../../../crates/boom-core" }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.4" }
+tauri-plugin-log = "2"
+# Phase 1 wiring: default features are disabled because the plugin's `zip`
+# optional dependency (zip 2.x/4.x) is entirely yanked on crates.io, which
+# breaks version resolution. `rustls-tls` is kept so update checks over HTTPS
+# work via the JS API; bundle extraction (the `zip` feature) stays off until
+# a non-yanked zip release is available, and will be re-enabled in a later phase.
+# Phase 2 re-check (2026-10-16): zip itself is healthy again (9.0.3, not yanked),
+# but tauri-plugin-updater 2.14.0 (latest 2.x) still pins `zip = "^4"` and every
+# zip 4.x release is yanked, so enabling default features still fails resolution.
+# Kept as-is until Tauri upstream migrates the plugin to a non-yanked zip.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-process = "2"
+# NOTE: tauri-plugin-shell was removed with the Python sidecar (2026-10-16):
+# the backend is now boom-core in-process, so nothing spawns a sidecar.
+# Pure Rust backend (replaces Python/PyInstaller): axum HTTP server serving
+# the same /api/* surface as gateway/api.py, spawned in-process by Tauri.
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+# HTTP client for LLM provider calls (chat endpoint). default-features=false
+# drops native-tls (no system OpenSSL needed); rustls is pure Rust.
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+
+[dev-dependencies]
+# Needed by backend endpoint tests (tower::ServiceExt::oneshot).
+tower = { version = "0.4", features = ["util"] }

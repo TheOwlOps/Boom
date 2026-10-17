@@ -1,0 +1,106 @@
+/* accessibility.css — keyboard + screen-reader polish for the Boom desktop UI.
+ *
+ * Monochrome only: focus rings resolve through --accent (#ffffff on the dark
+ * theme, #09090b on the light theme), so the ring is white-on-dark and
+ * black-on-light — high contrast without any hue.
+ *
+ * Imported last in main.tsx so these rules win over component styles.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Strong :focus-visible ring (keyboard users). Never remove outlines; */
+/* replace them with a 2px high-contrast monochrome ring instead.      */
+/* ------------------------------------------------------------------ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Some buttons reset outline via `focus:outline-none` in Tailwind classes;
+   re-assert the ring there too (specificity: class + pseudo beats the
+   utility). */
+.focus\:outline-none:focus-visible,
+[class*="focus:outline-none"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Inputs keep the accent border AND get the ring for keyboard parity. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Skip-to-content link: visually hidden until it receives focus, then  */
+/* pinned to the top-left above everything (z-index above modals).      */
+/* ------------------------------------------------------------------ */
+.skip-link {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 8px 16px;
+  border-radius: 0 0 8px 0;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 150ms ease-out;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen-reader-only utility (for labelled-but-visually-hidden text).  */
+/* ------------------------------------------------------------------ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion: already handled per-file; this is the global guard   */
+/* for any animation class that forgot its own media query.            */
+/* ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .msg-appear,
+  .msg-enter,
+  .typing-word,
+  .typing-caret,
+  .fade-in,
+  .panel-slide-in-left {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Forced-colors (Windows high contrast) adjustments: keep the focus   */
+/* ring and selected states visible when the OS overrides colors.      */
+/* ------------------------------------------------------------------ */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid ButtonText;
+  }
+  [aria-selected="true"] {
+    outline: 2px solid SelectedItem;
+  }
+}

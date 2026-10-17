@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/boom-core",
+    "crates/gateway",
+    "crates/cli",
+    "crates/perf/search",
+    "crates/perf/chunker",
+    "crates/perf/hasher",
+    "crates/perf/textutil",
+    "apps/desktop/src-tauri"
+]
+resolver = "2"

@@ -1,0 +1,113 @@
+/* BotAvatar.css — Grokbot-style animated per-bot avatars.
+ *
+ * The tile itself is colorful (deterministic hue per bot id); everything
+ * around it stays monochrome. Motion uses transform/opacity only.
+ */
+
+.bot-avatar {
+  --bot-from: hsl(210, 78%, 62%);
+  --bot-to: hsl(238, 72%, 44%);
+  --bot-glow: hsla(210, 85%, 60%, 0.45);
+
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 28%;
+  background: linear-gradient(135deg, var(--bot-from), var(--bot-to));
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Soft top-light sheen for depth. */
+.bot-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 45%);
+  pointer-events: none;
+}
+
+.bot-avatar-glyph {
+  position: relative;
+  z-index: 1;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+
+/* --- status variants ------------------------------------------- */
+
+/* Online: gentle float + accent glow. */
+.bot-avatar--online {
+  animation: bot-float 4.5s ease-in-out infinite;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+    0 0 12px var(--bot-glow),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+@keyframes bot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+/* Thinking: pulsing glow — the bot is working. */
+.bot-avatar--thinking {
+  animation: bot-think 1.6s ease-in-out infinite;
+}
+
+@keyframes bot-think {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.35),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+      0 0 6px var(--bot-glow);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.35),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+      0 0 18px var(--bot-glow),
+      0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Offline: desaturated, no motion. */
+.bot-avatar--offline {
+  filter: grayscale(0.92) brightness(0.72);
+}
+
+/* Idle / static: no animation, plain tile. */
+.bot-avatar--static {
+  /* intentional: no keyframes */
+}
+
+/* --- accessibility ---------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-avatar--online,
+  .bot-avatar--thinking {
+    animation: none;
+  }
+  .bot-avatar--online {
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.35),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+      0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+}

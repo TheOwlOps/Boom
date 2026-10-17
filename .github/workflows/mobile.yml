@@ -1,0 +1,180 @@
+# Boom Android CI
+#
+# Builds the Boom Android app (Kotlin/Compose, AGP 8.5.2) on pushes that
+# touch apps/mobile/**, and attaches a release APK to published releases.
+# Deliberately separate from .github/workflows/desktop.yml (no shared jobs).
+
+name: Android Build
+
+on:
+  # Only run on main when mobile sources actually changed.
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+  # Manual runs from the Actions tab.
+  workflow_dispatch:
+  # Attach the release APK to the GitHub release that triggered this.
+  release:
+    types: [published]
+
+jobs:
+  # Debug build + artifact, runs on every trigger (push / dispatch / release).
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          # Accept licenses and ensure required packages are present.
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/mobile/android/**/*.gradle.kts', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # The repo does NOT ship a Gradle wrapper (no gradlew, no gradle/wrapper/).
+      # gradle/actions/setup-gradle@v3 can bootstrap a pinned distribution
+      # without a wrapper; we then generate the wrapper so the rest of this
+      # workflow uses ./gradlew and the build is reproducible.
+      # AGP 8.5.x requires Gradle >= 8.7 -> pin 8.9.
+      - name: Set up Gradle (bootstrap, no wrapper in repo yet)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.9"
+          add-job-summary: never
+
+      - name: Generate Gradle wrapper
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          if [ -f gradlew ]; then
+            echo "gradlew already present; skipping generation."
+          else
+            gradle wrapper --gradle-version 8.9 --distribution-type bin
+            ls -la gradlew gradle/wrapper/
+          fi
+
+      - name: Make gradlew executable
+        working-directory: apps/mobile/android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-android-debug.apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+  # Release build + attach to the triggering GitHub release. Runs only when
+  # this workflow was triggered by a published release.
+  release-apk:
+    name: Attach release APK to GitHub release
+    if: github.event_name == 'release'
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          # Accept licenses and ensure required packages are present.
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('apps/mobile/android/**/*.gradle.kts', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Same wrapper bootstrap as the build job (see comment there).
+      - name: Set up Gradle (bootstrap, no wrapper in repo yet)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.9"
+          add-job-summary: never
+
+      - name: Generate Gradle wrapper
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          if [ -f gradlew ]; then
+            echo "gradlew already present; skipping generation."
+          else
+            gradle wrapper --gradle-version 8.9 --distribution-type bin
+            ls -la gradlew gradle/wrapper/
+          fi
+
+      - name: Make gradlew executable
+        working-directory: apps/mobile/android
+        run: chmod +x gradlew
+
+      # NOTE: assembleRelease is unsigned (no keystore configured). The APK
+      # works for direct install testing but is NOT ready for Play Store
+      # upload; add a signingConfig before publishing anywhere.
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Rename release APK to Boom-android-<tag>.apk
+        id: rename
+        run: |
+          set -euo pipefail
+          SRC="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          DST="Boom-android-${{ github.event.release.tag_name }}.apk"
+          cp "$SRC" "$DST"
+          sha256sum "$DST"
+          echo "apk=$DST" >> "$GITHUB_OUTPUT"
+
+      - name: Attach APK to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.rename.outputs.apk }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

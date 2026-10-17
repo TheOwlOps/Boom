@@ -1,0 +1,53 @@
+-- Boom desktop core — SQLite schema.
+--
+-- Applied with CREATE TABLE IF NOT EXISTS on every Storage::open, so
+-- migrations are additive and opening an older database never fails.
+-- All timestamps are Unix epoch seconds (i64).
+
+-- Chat sessions (conversations).
+CREATE TABLE IF NOT EXISTS sessions (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- Messages belonging to a session, in insertion order.
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+
+-- Provider configurations (API keys, model, base URL) as JSON blobs.
+CREATE TABLE IF NOT EXISTS providers (
+    name        TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    updated_at  INTEGER NOT NULL
+);
+
+-- User-defined custom bots (Grok-style). Exactly one row may be active;
+-- BotStore::set_active enforces that in a transaction.
+CREATE TABLE IF NOT EXISTS bots (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    model         TEXT NOT NULL DEFAULT '',
+    provider      TEXT NOT NULL DEFAULT '',
+    active        INTEGER NOT NULL DEFAULT 0
+);
+
+-- Generic key-value store. Namespaced by key prefix, by convention:
+--   marketplace.installed.<plugin_id>  installed marketplace items
+--   groups.policy.<group_id>           group policy JSON
+--   groups.muted.<group_id>            group mute flag ("1"/"0")
+--   settings.*                         app settings
+--   provider.active                    id of the active provider
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);

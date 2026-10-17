@@ -1,0 +1,375 @@
+name: Desktop Build
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.2.0, without the 'v' prefix)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundle: appimage
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle: msi
+          # macOS builds BOTH app and dmg: the v2 updater installs the
+          # .app.tar.gz updater archive (it cannot install a .dmg), and the
+          # bundler only creates that archive when MacOsBundle is one of the
+          # requested package types. The raw .app is dropped after the build
+          # to keep artifacts small.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundle: app,dmg
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundle: app,dmg
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm install --no-audit --no-fund
+
+      # Desktop backend is now pure Rust (crates/boom-core), built in-process
+      # by Tauri. No Python/PyInstaller sidecar needed.
+
+      # The Tauri updater cannot be disabled and every update is verified
+      # against the pubkey in tauri.conf.json: without TAURI_SIGNING_PRIVATE_KEY
+      # the build writes no .sig files and auto-update stays broken. Fail here
+      # with a clear message instead of shipping unsigned artifacts.
+      - name: Verify updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY secret is not set - auto-update will be disabled in this build." >&2
+            echo "To enable auto-update: run 'tauri signer generate' on a trusted machine," >&2
+            echo "store the private key as the TAURI_SIGNING_PRIVATE_KEY secret, and put" >&2
+            echo "the public key in apps/desktop/src-tauri/tauri.conf.json under plugins.updater.pubkey." >&2
+            echo "UPDATER_UNSIGNED=1" >> "$GITHUB_ENV"
+          else
+            echo "Updater signing key is configured."
+          fi
+
+      - name: Build Tauri
+        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      # With --bundles app,dmg the raw .app survives in bundle/macos/ (the
+      # bundler only cleans it when MacOsBundle is not a requested target).
+      # The .app.tar.gz updater archive and the .dmg are already built, so
+      # drop the .app directory to keep the artifact small. The *.app glob
+      # cannot match Boom.app.tar.gz.
+      - name: Drop raw .app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: rm -rf "target/${{ matrix.target }}/release/bundle/macos/"*.app
+
+      # Bundle output lives under the Tauri project dir, not the repo root:
+      - name: Upload artifacts
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-desktop-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/
+          retention-days: 30
+
+      # SignPath opt-in gate. GitHub forbids the `secrets` context in step
+      # `if:` conditions (the whole run fails workflow validation), so token
+      # presence is probed once here and consumed via step outputs below.
+      # Runs only on the Windows matrix leg; skipped everywhere else.
+      - name: Check SignPath configuration
+        id: signpath
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "${SIGNPATH_API_TOKEN:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Authenticode-sign the Windows installer via SignPath (free code signing
+      # for open source). Skipped silently unless the SIGNPATH_* secrets are
+      # configured, so builds without signing keep working exactly as before.
+      # SignPath only accepts an already-uploaded GitHub artifact, so this
+      # step runs AFTER the upload above; the signed files land in signed/
+      # and are re-uploaded in the next step.
+      - name: Sign Windows installer (SignPath)
+        if: steps.signpath.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/
+
+      # Re-upload the signed installer under a "-signed" artifact name so the
+      # release job can pick it up and prefer it over the unsigned build.
+      - name: Upload signed artifacts
+        if: steps.signpath.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: boom-desktop-${{ matrix.target }}-signed
+          path: signed/
+          retention-days: 30
+
+  # Publish installers + Tauri updater v2 `latest.json` to a GitHub release.
+  # Runs after all 4 build jobs succeed. Idempotent: if the release already
+  # exists, assets are re-uploaded with --clobber instead of failing.
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            # Tag trigger: desktop-v<version> -> strip the "desktop-v" prefix.
+            RAW_VERSION="${GITHUB_REF_NAME#desktop-v}"
+          fi
+          VERSION="${RAW_VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "error: resolved version '$VERSION' does not look like X.Y.Z" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      # NOTE: deliberately no merge-multiple here. Both macOS legs produce
+      # bundle/macos/Boom.app.tar.gz with the SAME basename (the updater
+      # archive is named after the .app, without an arch suffix); merging
+      # would let one arch silently overwrite the other. Per-artifact
+      # directories keep them apart until the flatten step renames them.
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: boom-desktop-*
+          path: dist/
+
+      - name: Locate installers and updater bundles
+        id: files
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          LINUX_DIR="dist/boom-desktop-x86_64-unknown-linux-gnu"
+          WIN_DIR="dist/boom-desktop-x86_64-pc-windows-msvc"
+          WIN_SIGNED_DIR="dist/boom-desktop-x86_64-pc-windows-msvc-signed"
+          MAC_X64_DIR="dist/boom-desktop-x86_64-apple-darwin"
+          MAC_ARM64_DIR="dist/boom-desktop-aarch64-apple-darwin"
+
+          # Exactly one file must match; anything else is a hard failure so a
+          # half-built release can never ship a broken updater manifest.
+          require_one() {
+            local desc="$1"; shift
+            if [ "$#" -ne 1 ]; then
+              echo "error: expected exactly 1 $desc, found $#: $*" >&2
+              find dist -maxdepth 4 | head -50 >&2
+              exit 1
+            fi
+            printf '%s' "$1"
+          }
+
+          APPIMAGE="$(require_one "linux AppImage" "$LINUX_DIR"/appimage/*.AppImage)"
+          # Prefer the SignPath-signed MSI when signing ran; its Authenticode
+          # signature changes the file bytes, so the tauri .sig is regenerated
+          # for the exact shipped file in a later step.
+          MSI_CANDIDATES=( "$WIN_SIGNED_DIR"/*.msi )
+          if [ "${#MSI_CANDIDATES[@]}" -eq 0 ]; then
+            MSI_CANDIDATES=( "$WIN_DIR"/msi/*.msi )
+          fi
+          MSI="$(require_one "windows MSI" "${MSI_CANDIDATES[@]}")"
+          DMG_X64="$(require_one "macOS x64 dmg" "$MAC_X64_DIR"/dmg/*.dmg)"
+          DMG_AARCH64="$(require_one "macOS aarch64 dmg" "$MAC_ARM64_DIR"/dmg/*.dmg)"
+          # Tauri v2 updater bundles: linux/windows installers are installed
+          # directly by the updater, macOS is always archived as .app.tar.gz
+          # (the updater cannot install a .dmg).
+          UPDATER_MAC_X64="$(require_one "macOS x64 updater bundle" "$MAC_X64_DIR"/macos/*.app.tar.gz)"
+          UPDATER_MAC_ARM64="$(require_one "macOS aarch64 updater bundle" "$MAC_ARM64_DIR"/macos/*.app.tar.gz)"
+
+          {
+            echo "appimage_path=$APPIMAGE"
+            echo "msi_path=$MSI"
+            echo "dmg_x64_path=$DMG_X64"
+            echo "dmg_aarch64_path=$DMG_AARCH64"
+            echo "updater_mac_x64_path=$UPDATER_MAC_X64"
+            echo "updater_mac_arm64_path=$UPDATER_MAC_ARM64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release if missing (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; assets will be re-uploaded with --clobber."
+          else
+            gh release create "$TAG" \
+              --title "Boom Desktop v${{ steps.version.outputs.version }}" \
+              --target "$GITHUB_SHA" \
+              --generate-notes
+          fi
+
+      # Assemble the exact file set attached to the release in dist/flat/:
+      # updater bundles (+ their .sig files) and manual-download installers.
+      # macOS updater archives are renamed with an arch suffix because both
+      # arches build the same Boom.app.tar.gz basename. Minisign signatures
+      # cover file bytes, not names, so renaming never invalidates a .sig.
+      - name: Flatten release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist/flat
+
+          cp "${{ steps.files.outputs.appimage_path }}" dist/flat/
+          cp "${{ steps.files.outputs.appimage_path }}.sig" dist/flat/
+
+          cp "${{ steps.files.outputs.msi_path }}" dist/flat/
+          # The MSI's .sig is (re)generated in the next step: when the
+          # SignPath-signed MSI is shipped, the build-time .sig describes
+          # different bytes and the updater would reject the update.
+
+          MAC_X64_BASE="Boom_${VERSION}_x64.app.tar.gz"
+          MAC_ARM64_BASE="Boom_${VERSION}_aarch64.app.tar.gz"
+          cp "${{ steps.files.outputs.updater_mac_x64_path }}" "dist/flat/${MAC_X64_BASE}"
+          cp "${{ steps.files.outputs.updater_mac_x64_path }}.sig" "dist/flat/${MAC_X64_BASE}.sig"
+          cp "${{ steps.files.outputs.updater_mac_arm64_path }}" "dist/flat/${MAC_ARM64_BASE}"
+          cp "${{ steps.files.outputs.updater_mac_arm64_path }}.sig" "dist/flat/${MAC_ARM64_BASE}.sig"
+
+          # DMGs stay as manual-download installers (the updater cannot use them).
+          cp "${{ steps.files.outputs.dmg_x64_path }}" dist/flat/
+          cp "${{ steps.files.outputs.dmg_aarch64_path }}" dist/flat/
+          ls -la dist/flat/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # (Re)sign the exact MSI attached to the release. When SignPath replaced
+      # the installer, the build-time .sig describes different bytes and the
+      # updater would reject the update. Re-signing an unchanged file is a
+      # no-op semantically; --app-version mirrors what `tauri build` embeds
+      # automatically when it signs.
+      - name: Sign Windows updater bundle
+        if: env.UPDATER_UNSIGNED != '1'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          MSI_BASENAME="$(basename "${{ steps.files.outputs.msi_path }}")"
+          npx --yes @tauri-apps/cli@2 signer sign \
+            --app-version "${{ steps.version.outputs.version }}" \
+            "dist/flat/${MSI_BASENAME}"
+          cat "dist/flat/${MSI_BASENAME}.sig"
+
+      - name: Generate latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIG_DIR: dist/flat
+          # Empty when signing key configured (strict check); "1" when unsigned.
+          ALLOW_EMPTY_SIGNATURES: ${{ env.UPDATER_UNSIGNED }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release view "${{ steps.version.outputs.tag }}" --json body -q .body > /tmp/release-notes.md
+          export APPIMAGE_FILE MSI_FILE MACOS_X64_FILE MACOS_AARCH64_FILE
+          APPIMAGE_FILE="$(basename "${{ steps.files.outputs.appimage_path }}")"
+          MSI_FILE="$(basename "${{ steps.files.outputs.msi_path }}")"
+          MACOS_X64_FILE="Boom_${VERSION}_x64.app.tar.gz"
+          MACOS_AARCH64_FILE="Boom_${VERSION}_aarch64.app.tar.gz"
+          bash scripts/generate-latest-json.sh "$VERSION" /tmp/release-notes.md -o dist/flat/latest.json
+          jq -e '.platforms | length == 4' dist/flat/latest.json > /dev/null && echo "latest.json valid: $(jq -r .version dist/flat/latest.json)"
+
+      # Checksums for every release asset, so users can verify installer
+      # integrity. Scans dist/flat/ only: it holds exactly the files attached
+      # to the release (the checksum script aborts on same-basename conflicts,
+      # which cannot happen here by construction).
+      - name: Generate SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          bash scripts/generate-checksums.sh dist/flat/
+
+      - name: Upload installers, signatures, latest.json and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          ASSETS=(dist/flat/*)
+          ls -la "${ASSETS[@]}"
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          echo "Uploaded ${#ASSETS[@]} assets to $TAG"
+
+      # The updater endpoint is a static URL; it must keep working no matter
+      # which release GitHub considers "latest" (release.yml also creates
+      # vX.Y.Z releases, which would steal the /releases/latest/ redirect).
+      # A floating `desktop-latest` tag+release hosts only latest.json; the
+      # manifest's asset URLs still point at the versioned vX.Y.Z release.
+      - name: Publish floating desktop-latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          FLOAT_TAG="desktop-latest"
+          git tag -f "$FLOAT_TAG"
+          git push -f origin "$FLOAT_TAG"
+          if gh release view "$FLOAT_TAG" >/dev/null 2>&1; then
+            gh release upload "$FLOAT_TAG" dist/flat/latest.json --clobber
+          else
+            gh release create "$FLOAT_TAG" \
+              --title "Boom Desktop (latest)" \
+              --prerelease \
+              --notes "Floating release hosting the Tauri updater manifest (latest.json). Updated automatically by the Desktop Build workflow; installers live on the versioned vX.Y.Z releases." \
+              dist/flat/latest.json
+          fi
+          echo "Updater endpoint: https://github.com/TheOwlOps/Boom/releases/download/$FLOAT_TAG/latest.json"

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  desktop:
+    name: Desktop UI build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package.json
+      - name: Install
+        working-directory: apps/desktop
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: apps/desktop
+        run: npx tsc --noEmit
+      - name: Build
+        working-directory: apps/desktop
+        run: npm run build
+
+  rust:
+    name: Rust (fmt + clippy + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+      - name: cargo audit (advisory scan, non-blocking)
+        continue-on-error: true
+        run: |
+          cargo install --quiet cargo-audit 2>/dev/null || true
+          cargo audit || echo "cargo audit unavailable or advisories found"

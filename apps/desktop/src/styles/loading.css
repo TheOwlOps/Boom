@@ -1,0 +1,65 @@
+/* ------------------------------------------------------------------
+ * loading.css — skeleton loading primitives.
+ *
+ * Monochrome shimmer (black / white / grays only), driven by the
+ * design tokens in ../tokens/theme.css. Imported once from main.tsx
+ * so every view can render skeleton states without extra imports.
+ *
+ * Keyframe: `skeleton-shimmer` — a highlight sweeps left→right across
+ * the element by animating background-position.
+ * ------------------------------------------------------------------ */
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/**
+ * Base shimmer block. Pair with a sizing/layout class or inline style
+ * (width/height/border-radius). Decorative only — parent regions carry
+ * the accessible label (role="status" / aria-busy).
+ */
+.sk-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2, #262626) 25%,
+    color-mix(in srgb, var(--surface-2, #262626) 50%, var(--muted, #71717a) 50%)
+      50%,
+    var(--surface-2, #262626) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s linear infinite;
+  border-radius: 6px;
+  color: transparent !important;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ---------- layout helpers ---------- */
+
+/** Vertical stack of skeleton blocks. */
+.sk-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/** Horizontal row of skeleton blocks (e.g. avatar + text). */
+.sk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---------- reduced motion: static gray, no sweep ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-shimmer {
+    animation: none;
+    background: var(--surface-2, #262626);
+  }
+}

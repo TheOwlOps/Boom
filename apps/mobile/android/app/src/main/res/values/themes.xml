@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Activity/window theme. The Compose UI itself is styled by
+         com.theowlops.boom.ui.theme.BoomTheme; this XML theme only styles
+         the window chrome (status/navigation bars) to match. -->
+    <style name="Theme.Boom" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:statusBarColor">#0D1117</item>
+        <item name="android:navigationBarColor">#0D1117</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

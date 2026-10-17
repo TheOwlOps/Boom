@@ -1,0 +1,248 @@
+/* ------------------------------------------------------------------
+ * responsive.css — responsive layout polish for Boom desktop.
+ *
+ * CSS ONLY: additive rules + media queries on top of the existing
+ * stylesheets. Nothing here removes or alters any base rule's default
+ * (wide-window) behaviour — every override lives inside a media query
+ * or uses min()/max() so it only kicks in when the window shrinks.
+ *
+ * Breakpoints:
+ *   <1100px  narrow   — sidebar auto-collapses to the 68px rail
+ *   <800px   compact  — headers condense, composer shrinks
+ *   <560px   mini     — bubbles go near full-width, paddings tighten
+ *
+ * Palette: monochrome only (theme vars). No new dependencies.
+ * Imported LAST in main.tsx so these rules win over Tailwind
+ * utilities (unlayered author CSS beats layered utilities).
+ * ------------------------------------------------------------------ */
+
+/* The desktop sidebar column in App.tsx: a plain <div> whose width is
+ * driven by Tailwind classes (w-[68px] / w-[260px]). It is the direct
+ * flex child of the root .h-dvh container whose own direct child is
+ * aside.sidebar. :not(.absolute) excludes the mobile drawer panel
+ * (which also renders aside.sidebar but must stay 280px wide). */
+.h-dvh > div:has(> aside.sidebar):not(.absolute) {
+  /* Smooth width animation for the JS collapse toggle AND for the
+   * narrow-breakpoint rail switch below. The column div carries no
+   * other transition, so this cannot fight an existing one. */
+  transition: width 200ms ease;
+}
+
+/* ------------------------------------------------------------------
+ * Chat bubbles: cap line length, never overflow, code scrolls.
+ * ------------------------------------------------------------------ */
+
+/* Readability cap in ch on top of the existing 78% cap from
+ * imessage.css: long messages stay comfortable on wide windows,
+ * short/narrow windows are unaffected (min picks the smaller). */
+.im-col {
+  max-width: min(78%, 72ch);
+}
+
+/* Message text always wraps — belts-and-braces next to the
+ * overflow-wrap already on .im-bubble (inherited, but explicit here
+ * for user-typed long tokens). */
+.im-user-text,
+.im-bubble p,
+.im-bubble li {
+  overflow-wrap: anywhere;
+}
+
+/* Code blocks: the <pre> already scrolls horizontally via inline
+ * style in MessageParts; here we just guarantee it can never exceed
+ * the bubble, and keep long tokens on one scrollable line. */
+.im-bubble pre {
+  max-width: 100%;
+}
+
+.im-bubble pre code {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+/* Inline code chips wrap instead of pushing the bubble wider. */
+.im-bubble :not(pre) > code {
+  overflow-wrap: anywhere;
+}
+
+/* Wide markdown tables scroll inside the bubble instead of
+ * overflowing the chat column. */
+.im-bubble table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* ------------------------------------------------------------------
+ * Modals: fit small windows.
+ * ------------------------------------------------------------------ */
+
+.marketplace-dialog,
+div[class*="max-w-5xl"] /* SettingsModal panel (Tailwind-only classes) */ {
+  max-width: min(920px, 94vw);
+}
+
+/* ==================================================================
+ * <1100px — narrow: sidebar auto-collapses to the 68px rail.
+ *
+ * The collapse toggle is JS-driven, so below 1100px we force the
+ * column to rail width and restyle the *expanded* sidebar DOM to
+ * reuse the collapsed-rail visuals already defined in Sidebar.css
+ * (.sidebar-collapsed, .teammate-rail, .teammate-rail-item):
+ * avatar-only teammate rows, no search, centered chrome.
+ * ================================================================== */
+@media (max-width: 1100px) {
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) {
+    width: 68px;
+  }
+
+  /* Mirror .sidebar-collapsed */
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar {
+    align-items: center;
+    padding: 12px 8px;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-header-actions {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-logo {
+    padding: 4px 0;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-logo .logo-word {
+    display: none;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-search {
+    display: none;
+  }
+
+  /* Teammate rows become avatar-only, mirroring .teammate-rail-item
+   * (52px square, centered avatar). */
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .teammate-list {
+    align-items: center;
+    width: 100%;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .teammate-item {
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .teammate-meta {
+    display: none;
+  }
+
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) .sidebar-footer {
+    display: flex;
+    justify-content: center;
+  }
+}
+
+/* ==================================================================
+ * <800px — compact: headers condense, composer shrinks.
+ * ================================================================== */
+@media (max-width: 800px) {
+  /* App header (52px, Tailwind in App.tsx): hide the "Boomi / AI
+   * assistant" title block, keep the avatar dot + icon buttons. */
+  main > header {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  main > header > div:first-child > div:last-child {
+    display: none;
+  }
+
+  /* ChatView iMessage header: hide the bot-name title, keep the
+   * avatar + online status. */
+  .im-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .im-header-name {
+    display: none;
+  }
+
+  /* Composer: tighter padding, smaller input. */
+  .im-composer {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .im-input {
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+
+  .im-sending {
+    padding: 2px 12px 6px;
+  }
+
+  /* Bubbles widen as the window narrows. */
+  .im-col {
+    max-width: min(86%, 72ch);
+  }
+}
+
+/* ==================================================================
+ * <560px — mini: bubbles go near full-width, chrome gets minimal.
+ * ================================================================== */
+@media (max-width: 560px) {
+  .im-col {
+    max-width: 92%;
+  }
+
+  .im-bubble {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  .im-row {
+    gap: 6px;
+  }
+
+  .im-header {
+    padding: 6px 10px;
+  }
+
+  .im-composer {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+
+  .im-send {
+    width: 34px;
+    height: 34px;
+  }
+
+  .im-ts {
+    font-size: 10px;
+  }
+
+  .im-sending {
+    padding: 2px 10px 6px;
+    font-size: 11px;
+  }
+}
+
+/* ------------------------------------------------------------------
+ * Reduced motion: no width animation on the sidebar column.
+ * (imessage.css / effects.css already still their own animations.)
+ * ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .h-dvh > div:has(> aside.sidebar):not(.absolute) {
+    transition: none;
+  }
+}
