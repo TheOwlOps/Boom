@@ -15,6 +15,7 @@
 //! additive and old databases keep working without a version table.
 
 mod bot_groups;
+mod bot_memories;
 mod bots;
 mod kv;
 mod providers;
@@ -22,6 +23,7 @@ pub mod server_storage;
 mod sessions;
 
 pub use bot_groups::BotGroupStore;
+pub use bot_memories::{BotMemory, BotMemoryStore};
 pub use bots::{Bot, BotPatch, BotStore, NewBot};
 pub use kv::KvStore;
 pub use providers::{ProviderConfig, ProviderStore};
@@ -130,6 +132,27 @@ impl Storage {
         // Additive migrations: safe to run on every open, on old DBs too.
         conn.execute_batch(SCHEMA_SQL)?;
 
+        // Column added after v0.7.0: backfill on DBs created before it existed.
+        // `ALTER TABLE ... ADD COLUMN` fails when the column is already there,
+        // so probe first via PRAGMA table_info.
+        {
+            let has_chief: bool = conn
+                .prepare("PRAGMA table_info(bot_groups)")
+                .and_then(|mut stmt| {
+                    let cols = stmt
+                        .query_map([], |row| row.get::<_, String>(1))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(cols.iter().any(|c| c == "chief_bot_id"))
+                })
+                .unwrap_or(false);
+            if !has_chief {
+                let _ = conn.execute(
+                    "ALTER TABLE bot_groups ADD COLUMN chief_bot_id TEXT",
+                    [],
+                );
+            }
+        }
+
         #[cfg(unix)]
         {
             // Belt and suspenders on top of the 0700 directory: the DB file
@@ -181,6 +204,10 @@ impl Storage {
     /// Bot groups (multi-bot chat rooms) store.
     pub fn bot_groups(&self) -> BotGroupStore<'_> {
         BotGroupStore::new(&self.conn)
+    }
+
+    pub fn bot_memories(&self) -> BotMemoryStore<'_> {
+        BotMemoryStore::new(&self.conn)
     }
 
     /// Generic key-value store (marketplace installs, group policy/mute, settings).

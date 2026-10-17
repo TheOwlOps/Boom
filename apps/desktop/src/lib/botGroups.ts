@@ -25,6 +25,7 @@ export interface BotGroup {
   id: string;
   name: string;
   bot_ids: string[];
+  chief_bot_id?: string | null;
   created_at: string;
 }
 
@@ -213,6 +214,22 @@ export async function apiRemoveBotFromGroup(groupId: string, botId: string): Pro
   const body = await parseJsonBody(res, "DELETE /api/bot-groups/:id/bots/:bot_id");
   if (!isRecord(body) || !isRecord(body.group)) {
     throw new Error("malformed response: DELETE /api/bot-groups/:id/bots/:bot_id");
+  }
+  return parseGroup(body.group);
+}
+
+export async function apiSetGroupChief(groupId: string, botId: string): Promise<BotGroup> {
+  const res = await fetch(
+    `${API_BASE}/api/bot-groups/${encodeURIComponent(groupId)}/chief`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bot_id: botId }),
+    },
+  );
+  const body = await parseJsonBody(res, "PUT /api/bot-groups/:id/chief");
+  if (!isRecord(body) || !isRecord(body.group)) {
+    throw new Error("malformed response: PUT /api/bot-groups/:id/chief");
   }
   return parseGroup(body.group);
 }

@@ -16,6 +16,7 @@
 //! [`wiring`] module adapts the real subsystems to the server's seams.
 
 pub mod connectors;
+pub mod groups;
 pub mod harness;
 pub mod providers;
 pub mod proxy;

@@ -14,6 +14,7 @@ use serde_json::Value;
 pub mod data;
 pub mod fs;
 pub mod http;
+pub mod shared;
 pub mod shell;
 pub mod system;
 pub mod web;
@@ -109,6 +110,9 @@ impl ToolRegistry {
         reg.register("system", system::EnvList);
         reg.register("system", system::DateNow);
         reg.register("system", system::UuidNew);
+        // Shared workspace (multi-agent groups)
+        reg.register("shared", shared::SharedWrite);
+        reg.register("shared", shared::SharedRead);
         reg
     }
 
@@ -384,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn registry_dispatch_unknown_tool_errors() {
         let reg = ToolRegistry::with_builtins();
-        assert_eq!(reg.tool_names().len(), 30);
+        assert_eq!(reg.tool_names().len(), 32);
         let out = reg.dispatch("nope", serde_json::json!({})).await;
         assert!(out.get("error").is_some());
     }
@@ -393,14 +397,14 @@ mod tests {
     async fn function_definitions_cover_all_tools() {
         let reg = ToolRegistry::with_builtins();
         let defs = reg.function_definitions();
-        assert_eq!(defs.len(), 30);
+        assert_eq!(defs.len(), 32);
         assert!(defs.iter().all(|d| d.get("parameters").is_some()));
     }
 
     #[test]
     fn all_tools_have_valid_tool_info_and_schemas() {
         let reg = ToolRegistry::with_builtins();
-        assert_eq!(reg.tool_names().len(), 30);
+        assert_eq!(reg.tool_names().len(), 32);
         for name in reg.tool_names() {
             let tool = reg.get(&name).unwrap_or_else(|| panic!("tool '{name}' missing"));
             assert!(!tool.name().is_empty(), "empty name");

@@ -57,7 +57,7 @@ use axum::{
     extract::FromRequest,
     http::{header, request::Parts, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde_json::{Map, Value};
@@ -285,6 +285,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/bot-groups/{id}/message",
             post(bot_groups::post_group_message),
+        )
+        .route(
+            "/api/bot-groups/{id}/chief",
+            put(bot_groups::set_group_chief),
         )
         // providers
         .route("/api/providers", get(providers::list_providers))

@@ -18,10 +18,14 @@ use serde_json::{json, Value};
 
 use super::super::{
     normalize_str_list,
-    state::{AppState, TurnRequest},
+    state::{AppState, Bot, BotGroup, TurnRequest},
     ApiError, JsonBody, StorageError,
 };
 use super::chat::{resolve_bot_context, NOT_CONFIGURED_MESSAGE};
+use crate::groups::{
+    chief_system_prompt, parse_handoffs, resolve_handoff_target, roster_line,
+    specialist_group_prompt, strip_handoff_lines,
+};
 use crate::server::TurnError;
 
 fn storage_error(e: StorageError) -> ApiError {
@@ -132,18 +136,117 @@ pub async fn remove_bot_from_group(
     }
 }
 
+/// Run one harness turn as `bot` inside `group_id`, with an (already
+/// augmented) system prompt. Uses the per-bot-per-group session
+/// `botmsg_<group>_<bot>` so each bot keeps isolated memory.
+async fn run_group_bot_turn(
+    state: &AppState,
+    group_id: &str,
+    bot: &Bot,
+    prompt: String,
+    system_prompt: Option<String>,
+) -> Result<String, ApiError> {
+    let (_, tools) = resolve_bot_context(state, Some(&bot.id))?;
+    let session_id = format!("botmsg_{group_id}_{}", bot.id);
+    state.storage.touch_session(&session_id);
+    let req = TurnRequest {
+        prompt,
+        strategy: "auto".to_string(),
+        session_id,
+        system_prompt,
+        tools,
+    };
+    state
+        .harness
+        .run_turn(req)
+        .await
+        .map(|r| r.reply)
+        .map_err(turn_error)
+}
+
+/// Build the member roster text for prompts: one line per bot with its
+/// role description, marking the chief.
+fn build_roster(state: &AppState, group: &BotGroup, chief_id: &str) -> String {
+    group
+        .bot_ids
+        .iter()
+        .filter_map(|id| state.storage.get_bot(id))
+        .map(|b| roster_line(&b.id, &b.name, &b.description, b.id == chief_id))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Persist a bot reply to the group's log and return its JSON shape.
+fn persist_reply(
+    state: &AppState,
+    group_id: &str,
+    bot: &Bot,
+    text: &str,
+) -> Result<Value, ApiError> {
+    state
+        .storage
+        .add_bot_group_message(group_id, &bot.id, &bot.name, text)
+        .map_err(storage_error)?;
+    Ok(json!({
+        "bot_id": bot.id,
+        "bot_name": bot.name,
+        "reply": text,
+    }))
+}
+
+/// Invoke a handoff target: run the specialist's turn on `task`, persist
+/// the stripped reply, and return `(reply_json, nested_handoffs)`.
+/// Nested handoffs are parsed but NOT auto-executed (one level only —
+/// prevents infinite delegation loops).
+async fn invoke_handoff(
+    state: &AppState,
+    group: &BotGroup,
+    chief_id: &str,
+    target_bot_id: &str,
+    task: &str,
+    sender_name: &str,
+) -> Result<(Value, Vec<crate::groups::Handoff>), ApiError> {
+    let bot = state
+        .storage
+        .get_bot(target_bot_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown bot_id: '{target_bot_id}'")))?;
+    let roster = build_roster(state, group, chief_id);
+    let (base_prompt, _) = resolve_bot_context(state, Some(&bot.id))?;
+    let system_prompt = Some(specialist_group_prompt(
+        &bot.name,
+        &group.name,
+        &roster,
+        base_prompt.as_deref().unwrap_or(""),
+    ));
+    let prompt = format!(
+        "{sender_name} (via chief delegation) asks you to do this task:\n\n{task}\n\nDo it now. If the task truly belongs to a teammate's expertise, you may hand it off with [HANDOFF:@name] at the end."
+    );
+    let raw = run_group_bot_turn(state, &group.id, &bot, prompt, system_prompt).await?;
+    let nested = parse_handoffs(&raw);
+    let visible = strip_handoff_lines(&raw);
+    let reply_json = persist_reply(state, &group.id, &bot, &visible)?;
+    Ok((reply_json, nested))
+}
+
 /// `POST /api/bot-groups/{id}/message` — body `{text, from_bot_id?}`.
 ///
-/// Fans the message out to every bot in the group except the sender, in
-/// group order. Each bot's reply is a real harness turn (its own bot
-/// context: system prompt + tool allowlist, session
-/// `botmsg_<group>_<bot>`). Returns 200
-/// `{ok: true, replies: [{bot_id, bot_name, reply}]}`.
+/// **Chief-of-Staff flow** (user message, no `from_bot_id`):
+/// 1. The chief triages the request with the full team roster.
+/// 2. The chief either answers directly or delegates via
+///    `[HANDOFF:@name] task` directives.
+/// 3. Each delegated specialist runs a real harness turn; its reply is
+///    persisted and returned.
+/// 4. When specialists were involved, the chief synthesizes one final
+///    answer from their results.
 ///
-/// The incoming message and every reply are persisted to the group's log —
-/// but only once the turn lock is held, so a 503/429 leaves no partial
-/// state. `text` blank → 400, unknown group or sender → 404, no LLM
-/// provider → 503, agent busy → 429, failed turn → 500.
+/// **Fan-out flow** (a bot sent the message): every other member replies
+/// in group order (legacy behavior), each with the team roster in context
+/// so they can hand off via `[HANDOFF:@name]` (one level deep).
+///
+/// Body `{text, from_bot_id?}` → 200 `{ok: true, replies: [...],
+/// chief_reply?}`. Blank `text` → 400, unknown group/sender → 404, no LLM
+/// provider → 503, agent busy → 429, failed turn → 500. Replies are never
+/// faked.
 pub async fn post_group_message(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -194,38 +297,179 @@ pub async fn post_group_message(
         .add_bot_group_message(&group.id, &sender_id, &sender_name, &text)
         .map_err(storage_error)?;
 
+    if from_bot_id.is_none() {
+        let resp = chief_triage_flow(&state, &group, &text).await?;
+        drop(_guard);
+        return Ok(Json(resp));
+    }
+
+    // Legacy fan-out: a member bot spoke; every other member replies in
+    // group order, each seeing the roster so it can hand off.
+    let chief_id = crate::storage::BotGroupStore::effective_chief(&group).unwrap_or_default();
+    let roster = build_roster(&state, &group, &chief_id);
     let mut replies = Vec::new();
     for bot_id in group.bot_ids.iter().filter(|id| Some(*id) != from_bot_id.as_ref()) {
         let bot = state
             .storage
             .get_bot(bot_id)
             .ok_or_else(|| ApiError::not_found(format!("unknown bot_id: '{bot_id}'")))?;
-        let (system_prompt, tools) = resolve_bot_context(&state, Some(bot_id))?;
-        let session_id = format!("botmsg_{}_{}", group.id, bot_id);
-        state.storage.touch_session(&session_id);
-        let req = TurnRequest {
-            prompt: format!(
-                "You are chatting in the group \"{}\". {} says:\n\n{}\n\nReply as yourself, briefly and in character.",
-                group.name, sender_name, text
-            ),
-            strategy: "auto".to_string(),
-            session_id,
-            system_prompt,
-            tools,
-        };
-        let result = state.harness.run_turn(req).await.map_err(turn_error)?;
-        state
-            .storage
-            .add_bot_group_message(&group.id, bot_id, &bot.name, &result.reply)
-            .map_err(storage_error)?;
-        replies.push(json!({
-            "bot_id": bot_id,
-            "bot_name": bot.name,
-            "reply": result.reply,
-        }));
+        let (base_prompt, _) = resolve_bot_context(&state, Some(bot_id))?;
+        let system_prompt = Some(specialist_group_prompt(
+            &bot.name,
+            &group.name,
+            &roster,
+            base_prompt.as_deref().unwrap_or(""),
+        ));
+        let prompt = format!(
+            "You are chatting in the group \"{}\". {} says:\n\n{}\n\nReply as yourself, briefly and in character.",
+            group.name, sender_name, text
+        );
+        let raw = run_group_bot_turn(&state, &group.id, &bot, prompt, system_prompt).await?;
+        // One level of handoff: a replier may delegate to a teammate.
+        let handoffs = parse_handoffs(&raw);
+        let visible = strip_handoff_lines(&raw);
+        replies.push(persist_reply(&state, &group.id, &bot, &visible)?);
+        let roster_pairs: Vec<(String, String)> = group
+            .bot_ids
+            .iter()
+            .filter_map(|id| state.storage.get_bot(id))
+            .map(|b| (b.id.clone(), b.name.clone()))
+            .collect();
+        for h in handoffs {
+            if let Some(target_id) =
+                resolve_handoff_target(&h.target_name, &roster_pairs)
+            {
+                if target_id == bot.id {
+                    continue; // never hand off to yourself
+                }
+                let (rj, _) =
+                    invoke_handoff(&state, &group, &chief_id, &target_id, &h.task, &bot.name)
+                        .await?;
+                replies.push(rj);
+            }
+        }
     }
     drop(_guard);
     Ok(Json(json!({ "ok": true, "replies": replies })))
+}
+
+/// Chief-of-Staff triage for a user message:
+/// chief analyzes → delegates via handoffs → specialists run →
+/// chief synthesizes the final answer.
+async fn chief_triage_flow(
+    state: &AppState,
+    group: &BotGroup,
+    text: &str,
+) -> Result<Value, ApiError> {
+    use crate::storage::BotGroupStore;
+
+    let chief_id = BotGroupStore::effective_chief(group)
+        .ok_or_else(|| ApiError::bad_request("group has no bots to answer"))?;
+    let chief = state
+        .storage
+        .get_bot(&chief_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown bot_id: '{chief_id}'")))?;
+    let roster = build_roster(state, group, &chief_id);
+    let roster_pairs: Vec<(String, String)> = group
+        .bot_ids
+        .iter()
+        .filter_map(|id| state.storage.get_bot(id))
+        .map(|b| (b.id.clone(), b.name.clone()))
+        .collect();
+
+    // 1. Chief triage turn.
+    let (base_prompt, _) = resolve_bot_context(state, Some(&chief.id))?;
+    let chief_prompt = chief_system_prompt(
+        &chief.name,
+        &group.name,
+        &roster,
+        base_prompt.as_deref().unwrap_or(""),
+    );
+    let triage_raw = run_group_bot_turn(
+        state,
+        &group.id,
+        &chief,
+        format!("The user says in group \"{}\":\n\n{}\n\nTriage this now.", group.name, text),
+        Some(chief_prompt),
+    )
+    .await?;
+    let handoffs = parse_handoffs(&triage_raw);
+    let chief_visible = strip_handoff_lines(&triage_raw);
+
+    // 2. Delegate to specialists (dedupe targets, skip self-handoff).
+    let mut seen_targets = std::collections::HashSet::new();
+    let mut replies = Vec::new();
+    let mut specialist_results: Vec<(String, String)> = Vec::new();
+    for h in &handoffs {
+        let Some(target_id) = resolve_handoff_target(&h.target_name, &roster_pairs) else {
+            continue; // unknown @name — ignore rather than fail the turn
+        };
+        if target_id == chief.id || !seen_targets.insert(target_id.clone()) {
+            continue;
+        }
+        let (rj, _nested) =
+            invoke_handoff(state, group, &chief_id, &target_id, &h.task, "user").await?;
+        if let (Some(name), Some(reply)) = (
+            rj.get("bot_name").and_then(|v| v.as_str()),
+            rj.get("reply").and_then(|v| v.as_str()),
+        ) {
+            specialist_results.push((name.to_string(), reply.to_string()));
+        }
+        replies.push(rj);
+    }
+
+    // 3. Final answer: synthesize when specialists ran, else the chief's
+    //    own (stripped) reply.
+    let final_answer = if specialist_results.is_empty() {
+        chief_visible.clone()
+    } else {
+        let results_text = specialist_results
+            .iter()
+            .map(|(name, reply)| format!("--- {name} ---\n{reply}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let (base_prompt, _) = resolve_bot_context(state, Some(&chief.id))?;
+        let synth_prompt = format!(
+            "You are the CHIEF OF STAFF of \"{}\". You delegated parts of the user's request to specialists and now have their results.\n\nUSER REQUEST:\n{}\n\nSPECIALIST RESULTS:\n{}\n\nWrite ONE consolidated final answer for the user: merge the results, resolve conflicts, keep it concise and in character. Do not mention handoffs or internal routing.",
+            group.name, text, results_text
+        );
+        run_group_bot_turn(
+            state,
+            &group.id,
+            &chief,
+            synth_prompt,
+            base_prompt,
+        )
+        .await?
+    };
+    let _chief_json = persist_reply(state, &group.id, &chief, &final_answer)?;
+
+    Ok(json!({
+        "ok": true,
+        "chief_id": chief.id,
+        "chief_name": chief.name,
+        "chief_reply": final_answer,
+        "replies": replies,
+        "delegated": !specialist_results.is_empty(),
+    }))
+}
+
+/// `PUT /api/bot-groups/{id}/chief` — body `{bot_id}` → 200
+/// `{ok: true, group}`. Designates the Chief-of-Staff bot. Missing group →
+/// 404, unknown bot or non-member → 404, missing `bot_id` → 400.
+pub async fn set_group_chief(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    let bot_id = match body.get("bot_id").and_then(|v| v.as_str()) {
+        Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+        _ => return Err(ApiError::bad_request("bot_id is required")),
+    };
+    match state.storage.set_group_chief(&group_id, &bot_id) {
+        Ok(group) => Ok(Json(json!({ "ok": true, "group": group }))),
+        Err(e) => Err(storage_error(e)),
+    }
 }
 
 #[cfg(test)]
@@ -582,7 +826,8 @@ mod tests {
         assert_eq!(messages[0].text, "hello");
         assert_eq!(messages[1].bot_id, b2);
 
-        // No sender: both bots reply, in group order.
+        // No sender (user message): chief triage flow. EchoHarness emits no
+        // handoffs, so the chief answers directly with no delegation.
         let Json(resp) = post_group_message(
             State(state.clone()),
             Path(gid.clone()),
@@ -590,11 +835,63 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(resp["ok"], json!(true));
+        assert_eq!(resp["delegated"], json!(false));
+        // Chief is "One" (first member).
+        assert_eq!(resp["chief_name"], json!("One"));
+        assert!(resp["chief_reply"].as_str().unwrap().starts_with("echo from turn:"));
         let replies = resp["replies"].as_array().unwrap();
-        assert_eq!(replies.len(), 2);
-        assert_eq!(replies[0]["bot_id"], json!(b1));
-        assert_eq!(replies[1]["bot_id"], json!(b2));
-        assert_eq!(state.storage.list_bot_group_messages(&gid).len(), 5);
+        assert!(replies.is_empty());
+        // Persisted: prior 2 + user msg + chief reply = 4.
+        assert_eq!(state.storage.list_bot_group_messages(&gid).len(), 4);
+    }
+
+    #[tokio::test]
+    async fn chief_delegates_via_handoff() {
+        // Harness whose triage reply contains a handoff to "Two".
+        struct HandoffHarness;
+        impl Harness for HandoffHarness {
+            fn is_configured(&self) -> bool {
+                true
+            }
+            fn run_turn(&self, req: TurnRequest) -> BoxFuture<'_, Result<TurnResult, TurnError>> {
+                let reply = if req.prompt.contains("Triage this now") {
+                    "I'll have Two handle it.\n[HANDOFF:@Two] do the task".to_string()
+                } else if req.prompt.contains("consolidated final answer") {
+                    "Final: done.".to_string()
+                } else {
+                    format!("specialist did: {}", req.prompt.chars().take(20).collect::<String>())
+                };
+                Box::pin(async move {
+                    Ok(TurnResult {
+                        reply,
+                        strategy: "auto".to_string(),
+                        errors: Map::new(),
+                    })
+                })
+            }
+        }
+        let (state, b1, b2, gid) = state_with_group(Arc::new(HandoffHarness));
+        let Json(resp) = post_group_message(
+            State(state.clone()),
+            Path(gid.clone()),
+            body(&[("text", json!("please do the thing"))]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["ok"], json!(true));
+        assert_eq!(resp["delegated"], json!(true));
+        assert_eq!(resp["chief_id"], json!(b1));
+        // One specialist reply from Two.
+        let replies = resp["replies"].as_array().unwrap();
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0]["bot_id"], json!(b2));
+        // Handoff directive stripped from the visible reply.
+        assert!(!replies[0]["reply"].as_str().unwrap().contains("[HANDOFF:"));
+        // Chief synthesized the final answer.
+        assert_eq!(resp["chief_reply"], json!("Final: done."));
+        // Persisted: user msg + specialist reply + chief final = 3.
+        assert_eq!(state.storage.list_bot_group_messages(&gid).len(), 3);
     }
 
     #[tokio::test]

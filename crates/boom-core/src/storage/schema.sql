@@ -53,11 +53,14 @@ CREATE TABLE IF NOT EXISTS kv (
 );
 
 -- Bot groups: multi-bot chat rooms. `bot_ids` is a JSON array of bot ids.
+-- `chief_bot_id` is the Chief-of-Staff bot that triages incoming user
+-- messages and delegates to specialists (NULL = first member acts as chief).
 CREATE TABLE IF NOT EXISTS bot_groups (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    bot_ids    TEXT NOT NULL DEFAULT '[]',
-    created_at INTEGER NOT NULL
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    bot_ids      TEXT NOT NULL DEFAULT '[]',
+    chief_bot_id TEXT,
+    created_at   INTEGER NOT NULL
 );
 
 -- Persisted message log for bot groups (incoming messages and bot replies).
@@ -72,3 +75,16 @@ CREATE TABLE IF NOT EXISTS bot_group_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_bot_group_messages_group
     ON bot_group_messages(group_id, created_at, id);
+
+-- Per-bot isolated memories: long-term facts/notes scoped to one bot id,
+-- never shared across bots. Sessions (`botmsg_<bot_id>`) already isolate
+-- conversation turns; this table is for durable per-bot memory entries.
+CREATE TABLE IF NOT EXISTS bot_memories (
+    id         TEXT PRIMARY KEY,
+    bot_id     TEXT NOT NULL,
+    role       TEXT NOT NULL DEFAULT 'fact',
+    content    TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bot_memories_bot
+    ON bot_memories(bot_id, created_at, id);

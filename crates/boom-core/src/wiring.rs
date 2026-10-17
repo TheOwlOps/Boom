@@ -734,7 +734,7 @@ mod tests {
         let reg = Arc::new(tools::ToolRegistry::with_builtins());
         let srv = ServerToolRegistry::new(reg);
         let infos = srv.list_tools();
-        assert_eq!(infos.len(), 30);
+        assert_eq!(infos.len(), 32);
         let by_name: std::collections::HashMap<_, _> =
             infos.iter().map(|i| (i.name.as_str(), i)).collect();
         // Every tool registered via with_builtins() must resolve to its
@@ -833,7 +833,7 @@ mod tests {
             &tools::ToolRegistry::with_builtins(),
             &req.tools,
         );
-        assert_eq!(schemas.len(), 29);
+        assert_eq!(schemas.len(), 31);
         assert!(!schemas.iter().any(|s| s.name == "date_now"));
     }
 

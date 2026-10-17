@@ -69,7 +69,9 @@ impl<'a> BotGroupStore<'a> {
             id: row.get(0)?,
             name: row.get(1)?,
             bot_ids,
-            created_at: row.get(3)?,
+            // Column added later; old rows / old SELECTs may yield NULL.
+            chief_bot_id: row.get::<_, Option<String>>(3)?,
+            created_at: row.get(4)?,
         })
     }
 
@@ -86,22 +88,25 @@ impl<'a> BotGroupStore<'a> {
 
     /// Creates a group. The id is generated; a primary-key collision
     /// (same second, reused process id) is retried with a fresh id.
+    /// The chief defaults to the first bot in `bot_ids` (if any).
     pub fn create(&self, name: &str, bot_ids: &[String]) -> Result<BotGroup> {
         let bot_ids_json = serde_json::to_string(bot_ids)?;
         let created_at = now_unix();
+        let chief_bot_id: Option<String> = bot_ids.first().cloned();
         let mut last_err: Option<rusqlite::Error> = None;
         for _ in 0..5 {
             let id = group_id();
             let conn = self.lock();
             match conn.execute(
-                "INSERT INTO bot_groups (id, name, bot_ids, created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![id, name, bot_ids_json, created_at],
+                "INSERT INTO bot_groups (id, name, bot_ids, chief_bot_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, name, bot_ids_json, chief_bot_id, created_at],
             ) {
                 Ok(_) => {
                     return Ok(BotGroup {
                         id,
                         name: name.to_string(),
                         bot_ids: bot_ids.to_vec(),
+                        chief_bot_id: chief_bot_id.clone(),
                         created_at,
                     })
                 }
@@ -118,7 +123,7 @@ impl<'a> BotGroupStore<'a> {
     pub fn get(&self, id: &str) -> Result<Option<BotGroup>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, name, bot_ids, created_at FROM bot_groups WHERE id = ?1",
+            "SELECT id, name, bot_ids, chief_bot_id, created_at FROM bot_groups WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
@@ -131,7 +136,7 @@ impl<'a> BotGroupStore<'a> {
     pub fn list(&self) -> Result<Vec<BotGroup>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, name, bot_ids, created_at FROM bot_groups ORDER BY created_at ASC, id ASC",
+            "SELECT id, name, bot_ids, chief_bot_id, created_at FROM bot_groups ORDER BY created_at ASC, id ASC",
         )?;
         let groups = stmt
             .query_map([], Self::group_from_row)?
@@ -152,6 +157,7 @@ impl<'a> BotGroupStore<'a> {
 
     /// Adds a bot to a group (idempotent — already a member is a no-op).
     /// Returns `None` when the group does not exist.
+    /// The first bot ever added becomes chief when no chief is set.
     pub fn add_bot(&self, group_id: &str, bot_id: &str) -> Result<Option<BotGroup>> {
         let mut group = match self.get(group_id)? {
             Some(g) => g,
@@ -160,9 +166,13 @@ impl<'a> BotGroupStore<'a> {
         if !group.bot_ids.iter().any(|b| b == bot_id) {
             group.bot_ids.push(bot_id.to_string());
             let json = serde_json::to_string(&group.bot_ids)?;
+            // First member becomes chief when none is set.
+            if group.chief_bot_id.is_none() && group.bot_ids.len() == 1 {
+                group.chief_bot_id = Some(bot_id.to_string());
+            }
             self.lock().execute(
-                "UPDATE bot_groups SET bot_ids = ?1 WHERE id = ?2",
-                params![json, group_id],
+                "UPDATE bot_groups SET bot_ids = ?1, chief_bot_id = ?2 WHERE id = ?3",
+                params![json, group.chief_bot_id, group_id],
             )?;
         }
         Ok(Some(group))
@@ -170,6 +180,7 @@ impl<'a> BotGroupStore<'a> {
 
     /// Removes a bot from a group (not a member is a no-op).
     /// Returns `None` when the group does not exist.
+    /// When the chief is removed, the first remaining member is promoted.
     pub fn remove_bot(&self, group_id: &str, bot_id: &str) -> Result<Option<BotGroup>> {
         let mut group = match self.get(group_id)? {
             Some(g) => g,
@@ -177,13 +188,41 @@ impl<'a> BotGroupStore<'a> {
         };
         if group.bot_ids.iter().any(|b| b == bot_id) {
             group.bot_ids.retain(|b| b != bot_id);
+            // Chief left: promote the first remaining member (or clear).
+            if group.chief_bot_id.as_deref() == Some(bot_id) {
+                group.chief_bot_id = group.bot_ids.first().cloned();
+            }
             let json = serde_json::to_string(&group.bot_ids)?;
             self.lock().execute(
-                "UPDATE bot_groups SET bot_ids = ?1 WHERE id = ?2",
-                params![json, group_id],
+                "UPDATE bot_groups SET bot_ids = ?1, chief_bot_id = ?2 WHERE id = ?3",
+                params![json, group.chief_bot_id, group_id],
             )?;
         }
         Ok(Some(group))
+    }
+
+    /// Sets the chief-of-staff bot. The caller must validate that the bot
+    /// is a group member. Returns `None` when the group does not exist.
+    pub fn set_chief(&self, group_id: &str, bot_id: &str) -> Result<Option<BotGroup>> {
+        let mut group = match self.get(group_id)? {
+            Some(g) => g,
+            None => return Ok(None),
+        };
+        group.chief_bot_id = Some(bot_id.to_string());
+        self.lock().execute(
+            "UPDATE bot_groups SET chief_bot_id = ?1 WHERE id = ?2",
+            params![group.chief_bot_id, group_id],
+        )?;
+        Ok(Some(group))
+    }
+
+    /// The effective chief: the designated chief when still a member,
+    /// otherwise the first member, otherwise `None`.
+    pub fn effective_chief(group: &BotGroup) -> Option<String> {
+        match &group.chief_bot_id {
+            Some(id) if group.bot_ids.iter().any(|b| b == id) => Some(id.clone()),
+            _ => group.bot_ids.first().cloned(),
+        }
     }
 
     /// Appends a message to a group's log. The id is generated; a
@@ -242,6 +281,7 @@ impl<'a> BotGroupStore<'a> {
 #[cfg(test)]
 mod tests {
     use super::super::open_test_db;
+    use super::BotGroupStore;
 
     #[test]
     fn group_crud_round_trip() {
@@ -257,6 +297,8 @@ mod tests {
         assert!(!created.id.is_empty());
         assert_eq!(created.name, "Team");
         assert_eq!(created.bot_ids, vec!["b1".to_string(), "b2".to_string()]);
+        // Chief defaults to the first member.
+        assert_eq!(created.chief_bot_id, Some("b1".to_string()));
         assert!(created.created_at > 0);
 
         let fetched = store.get(&created.id).expect("get").expect("exists");
@@ -276,6 +318,54 @@ mod tests {
         assert!(store.get(&created.id).expect("get").is_none());
         assert!(!store.delete(&created.id).expect("delete again"));
         assert_eq!(store.list().expect("list").len(), 1);
+    }
+
+    #[test]
+    fn chief_assignment_and_reassignment() {
+        let db = open_test_db();
+        let store = db.bot_groups();
+
+        // Empty group → no chief.
+        let g = store.create("Solo", &[]).expect("create");
+        assert_eq!(g.chief_bot_id, None);
+        assert_eq!(BotGroupStore::effective_chief(&g), None);
+
+        // First bot added becomes chief.
+        let g = store.add_bot(&g.id, "b1").expect("add").expect("exists");
+        assert_eq!(g.chief_bot_id, Some("b1".to_string()));
+
+        // Second bot added does not steal chief.
+        let g = store.add_bot(&g.id, "b2").expect("add").expect("exists");
+        assert_eq!(g.chief_bot_id, Some("b1".to_string()));
+
+        // Explicit reassignment.
+        let g = store.set_chief(&g.id, "b2").expect("set").expect("exists");
+        assert_eq!(g.chief_bot_id, Some("b2".to_string()));
+
+        // Chief removed → first remaining member promoted.
+        let g = store.remove_bot(&g.id, "b2").expect("remove").expect("exists");
+        assert_eq!(g.chief_bot_id, Some("b1".to_string()));
+
+        // Last member removed → chief cleared.
+        let g = store.remove_bot(&g.id, "b1").expect("remove").expect("exists");
+        assert_eq!(g.chief_bot_id, None);
+
+        // Unknown group → None.
+        assert!(store.set_chief("nope", "b1").expect("set missing").is_none());
+    }
+
+    #[test]
+    fn effective_chief_falls_back_to_first_member() {
+        let db = open_test_db();
+        let store = db.bot_groups();
+        let g = store.create("Team", &["b1".to_string(), "b2".to_string()]).expect("create");
+        // Designated chief not a member (data inconsistency) → first member.
+        let mut hacked = g.clone();
+        hacked.chief_bot_id = Some("ghost".to_string());
+        assert_eq!(
+            BotGroupStore::effective_chief(&hacked),
+            Some("b1".to_string())
+        );
     }
 
     #[test]

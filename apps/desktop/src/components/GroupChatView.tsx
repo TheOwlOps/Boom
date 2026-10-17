@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
+  Crown,
   RefreshCw,
   SendHorizonal,
   Trash2,
@@ -26,6 +27,7 @@ import {
   apiDeleteGroup,
   apiAddBotToGroup,
   apiRemoveBotFromGroup,
+  apiSetGroupChief,
   apiMessageGroup,
   getBotsRef,
 } from "../lib/botGroups";
@@ -196,6 +198,16 @@ export default function GroupChatView({ groupId, onClose, onDeleted, onChanged }
     }
   };
 
+  const setChief = async (botId: string) => {
+    try {
+      const updated = await apiSetGroupChief(groupId, botId);
+      setGroup(updated);
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to set chief");
+    }
+  };
+
   const members = useMemo(
     () =>
       (group?.bot_ids ?? [])
@@ -257,7 +269,24 @@ export default function GroupChatView({ groupId, onClose, onDeleted, onChanged }
               {members.map((m) => (
                 <li key={m.id} className="flex items-center gap-2">
                   <BotAvatar botId={m.id} name={m.name} emoji={m.avatar_emoji} size={28} status="idle" />
-                  <span className="flex-1 text-sm text-[var(--text)]">{m.name}</span>
+                  <span className="flex-1 text-sm text-[var(--text)]">
+                    {m.name}
+                    {group?.chief_bot_id === m.id && (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-[var(--surface-2)] px-1.5 py-px text-[10px] font-medium text-[var(--muted)]" title="Chief of Staff — triages user messages">
+                        <Crown size={10} /> chief
+                      </span>
+                    )}
+                  </span>
+                  {group?.chief_bot_id !== m.id && (
+                    <button
+                      onClick={() => void setChief(m.id)}
+                      aria-label={`Set ${m.name} as chief`}
+                      title={`Set ${m.name} as chief of staff`}
+                      className="rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
+                    >
+                      <Crown size={14} />
+                    </button>
+                  )}
                   <button
                     onClick={() => void removeBot(m.id)}
                     disabled={removingId !== null}

@@ -477,6 +477,24 @@ impl ApiStorage for SqliteStorage {
             .ok_or_else(|| ApiError::NotFound(format!("bot group not found: '{group_id}'")))
     }
 
+    fn set_group_chief(
+        &self,
+        group_id: &str,
+        bot_id: &str,
+    ) -> Result<ApiBotGroup, ApiError> {
+        // Validate the bot exists first for a clean 404.
+        self.db
+            .bots()
+            .get(bot_id)
+            .map_err(api_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("unknown bot_id: '{bot_id}'")))?;
+        self.db
+            .bot_groups()
+            .set_chief(group_id, bot_id)
+            .map_err(api_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("bot group not found: '{group_id}'")))
+    }
+
     fn add_bot_group_message(
         &self,
         group_id: &str,

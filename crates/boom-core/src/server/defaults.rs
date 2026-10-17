@@ -509,10 +509,12 @@ impl Storage for MemoryStorage {
         inner.next_bot_group += 1;
         let id = format!("bgroup_{}_{}", now_epoch(), inner.next_bot_group);
         let now = now_epoch();
+        let chief_bot_id = bot_ids.first().cloned();
         let group = BotGroup {
             id: id.clone(),
             name: name.to_string(),
             bot_ids,
+            chief_bot_id,
             created_at: now,
         };
         inner.bot_groups.insert(id, group.clone());
@@ -563,6 +565,10 @@ impl Storage for MemoryStorage {
             .ok_or_else(|| StorageError::NotFound(format!("bot group not found: '{group_id}'")))?;
         if !group.bot_ids.iter().any(|b| b == bot_id) {
             group.bot_ids.push(bot_id.to_string());
+            // First member becomes chief when none is set.
+            if group.chief_bot_id.is_none() && group.bot_ids.len() == 1 {
+                group.chief_bot_id = Some(bot_id.to_string());
+            }
         }
         Ok(group.clone())
     }
@@ -585,6 +591,30 @@ impl Storage for MemoryStorage {
             )));
         }
         group.bot_ids.retain(|b| b != bot_id);
+        // Chief left: promote the first remaining member (or clear).
+        if group.chief_bot_id.as_deref() == Some(bot_id) {
+            group.chief_bot_id = group.bot_ids.first().cloned();
+        }
+        Ok(group.clone())
+    }
+
+    fn set_group_chief(&self, group_id: &str, bot_id: &str) -> Result<BotGroup, StorageError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal("failed to update bot group".to_string())
+        })?;
+        if !inner.bots.contains_key(bot_id) {
+            return Err(StorageError::NotFound(format!("unknown bot_id: '{bot_id}'")));
+        }
+        let group = inner
+            .bot_groups
+            .get_mut(group_id)
+            .ok_or_else(|| StorageError::NotFound(format!("bot group not found: '{group_id}'")))?;
+        if !group.bot_ids.iter().any(|b| b == bot_id) {
+            return Err(StorageError::NotFound(format!(
+                "bot '{bot_id}' is not in group '{group_id}'"
+            )));
+        }
+        group.chief_bot_id = Some(bot_id.to_string());
         Ok(group.clone())
     }
 
