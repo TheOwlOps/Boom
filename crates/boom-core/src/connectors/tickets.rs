@@ -263,7 +263,7 @@ fn validate_date(raw: &str) -> Result<NaiveDate, ToolError> {
     })
 }
 
-const ALLOWED_SORTS: &[&str] = &["date,asc", "date,desc", "relevance"];
+const ALLOWED_SORTS: &[&str] = &["date,asc", "date,desc", "relevance,asc", "relevance,desc"];
 
 fn validate_sort(raw: &str) -> Result<String, ToolError> {
     let s = raw.trim();
@@ -472,7 +472,7 @@ impl Tool for EventsSearch {
                 (
                     "sort",
                     "string",
-                    "One of: date,asc | date,desc | relevance (default)",
+                    "One of: date,asc | date,desc | relevance,asc | relevance,desc (omit for API default)",
                 ),
             ],
             &[],
@@ -668,10 +668,10 @@ mod tests {
 
     #[test]
     fn sort_validates() {
-        for ok in ["date,asc", "date,desc", "relevance"] {
+        for ok in ["date,asc", "date,desc", "relevance,asc", "relevance,desc"] {
             assert!(validate_sort(ok).is_ok());
         }
-        for bad in ["date", "asc", "random", ""] {
+        for bad in ["date", "asc", "relevance", "random", ""] {
             assert!(validate_sort(bad).is_err(), "expected error for {bad:?}");
         }
     }

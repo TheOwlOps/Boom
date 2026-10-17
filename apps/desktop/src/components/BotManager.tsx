@@ -19,7 +19,7 @@
  * as lib/api.ts); malformed shapes throw instead of rendering garbage.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { MessageSquare, Pencil, Plus, RefreshCw, Search, Trash2, Type, X } from "lucide-react";
+import { ChevronDown, MessageSquare, Pencil, Plus, RefreshCw, Search, Trash2, Type, X } from "lucide-react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG } from "../data/toolCatalog";
 import { BoomiEmptyState } from "./BoomiEmptyState";
@@ -210,6 +210,8 @@ function BotFormModal({
   const [toolFilter, setToolFilter] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  // Advanced section (tools + channels) collapsed by default in create mode.
+  const [showAdvanced, setShowAdvanced] = useState(initial !== null);
 
   const filteredTools = useMemo(
     () =>
@@ -290,25 +292,15 @@ function BotFormModal({
           </p>
         )}
 
-        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs text-[var(--muted)]">Name *</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Support Bot"
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-[var(--muted)]">Avatar emoji</label>
-            <input
-              value={avatarEmoji}
-              onChange={(e) => setAvatarEmoji(e.target.value)}
-              placeholder="🤖"
-              className={inputCls}
-            />
-          </div>
+        <div className="mb-3">
+          <label className="mb-1 block text-xs text-[var(--muted)]">Name *</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Support Bot"
+            autoFocus
+            className={inputCls}
+          />
         </div>
 
         <div className="mb-3">
@@ -335,6 +327,29 @@ function BotFormModal({
             className={`${inputCls} font-mono`}
           />
         </div>
+
+        {/* Advanced: avatar, tools, channels — collapsed in create mode. */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          className="mb-2 flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]"
+        >
+          <ChevronDown size={14} className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+          Advanced options
+        </button>
+
+        {showAdvanced && (
+          <>
+            <div className="mb-3">
+              <label className="mb-1 block text-xs text-[var(--muted)]">Avatar emoji</label>
+              <input
+                value={avatarEmoji}
+                onChange={(e) => setAvatarEmoji(e.target.value)}
+                placeholder="🤖"
+                className={inputCls}
+              />
+            </div>
 
         <div className="mb-3">
           <div className="mb-1 flex items-center justify-between">
@@ -399,6 +414,8 @@ function BotFormModal({
           />
           <p className="mt-1 text-xs text-[var(--muted)]">Comma-separated channel names, e.g. telegram, discord.</p>
         </div>
+          </>
+        )}
 
         <div className="flex justify-end gap-2">
           <button
