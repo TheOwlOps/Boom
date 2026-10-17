@@ -4,11 +4,7 @@ import Sidebar from "./components/Sidebar";
 import { ChatView, type BotApi } from "./components/ChatView";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import UpdateChecker from "./components/UpdateChecker";
-// Marketplace modal (types re-exported for consumers by the component itself).
-import Marketplace, {
-  type BotSummary,
-  type MarketplaceItem,
-} from "./components/Marketplace";
+// Settings modal.
 import { Toast } from "./components/Toast";
 import { Tooltip } from "./components/Tooltip";
 import BackendStatus from "./components/BackendStatus";
@@ -174,12 +170,6 @@ export default function App() {
     setActiveBotId(api.activeBotId);
   }, []);
 
-  // Marketplace modal state.
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
-  const [marketplaceItems, setMarketplaceItems] =
-    useState<MarketplaceItem[]>(MARKETPLACE_ITEMS);
-  const [installedIds, setInstalledIds] = useState<string[]>([]);
-  const [marketBots, setMarketBots] = useState<BotSummary[]>([]);
   const [toast, setToast] = useState<{
     id: number;
     message: string;
@@ -189,59 +179,9 @@ export default function App() {
   const showToast = (message: string, type: "success" | "error" = "success") =>
     setToast((prev) => ({ id: (prev?.id ?? 0) + 1, message, type }));
 
-  /**
-   * Open the Marketplace modal and (re)load its data.
-   * The gateway may not implement every marketplace endpoint, so each fetch
-   * falls back to local data instead of failing the modal.
-   */
-  const openMarketplace = () => {
-    setMarketplaceOpen(true);
-    void (async () => {
-      try {
-        setMarketplaceItems(await getMarketplace());
-      } catch {
-        setMarketplaceItems(MARKETPLACE_ITEMS);
-      }
-      try {
-        setInstalledIds(await getMarketplaceInstalled());
-      } catch {
-        setInstalledIds([]);
-      }
-      try {
-        const bots = await listBots();
-        setMarketBots(
-          bots.map((b) => ({
-            id: b.id,
-            name: b.name,
-            icon: b.avatar_emoji || "🤖",
-            description: b.description || b.name,
-          })),
-        );
-      } catch {
-        setMarketBots([]);
-      }
-    })();
-  };
-
-  const handleMarketplaceAdd = async (item: MarketplaceItem) => {
-    try {
-      await installMarketplaceItem(item.id);
-      setInstalledIds((ids) =>
-        ids.includes(item.id) ? ids : [...ids, item.id],
-      );
-      showToast(`Added ${item.name} ✓`, "success");
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : `Failed to add ${item.name}`,
-        "error",
-      );
-    }
-  };
-
   const handleUseBot = async (id: string) => {
     try {
       await setActiveBot(id);
-      setMarketplaceOpen(false);
       showToast("Active bot updated ✓", "success");
     } catch (err) {
       showToast(
@@ -254,7 +194,6 @@ export default function App() {
   const closeOverlays = () => {
     setMobileNavOpen(false);
     setSettingsOpen(false);
-    setMarketplaceOpen(false);
   };
 
   // Escape closes any overlay (settings, mobile sidebar drawer).
@@ -284,12 +223,6 @@ export default function App() {
         label: "Open settings",
         keywords: "preferences configuration options",
         run: () => setSettingsOpen(true),
-      },
-      {
-        id: "open-marketplace",
-        label: "Open marketplace",
-        keywords: "plugins bots store install",
-        run: () => openMarketplace(),
       },
       {
         id: "toggle-sidebar",
@@ -332,7 +265,6 @@ export default function App() {
       setMobileNavOpen(false);
     },
     onOpenSettings: () => setSettingsOpen(true),
-    onOpenMarketplace: openMarketplace,
   };
 
   return (
@@ -409,17 +341,6 @@ export default function App() {
         initialSection={settingsSection}
       />
 
-      {/* Marketplace modal + toast notifications */}
-      <Marketplace
-        open={marketplaceOpen}
-        onClose={() => setMarketplaceOpen(false)}
-        onAdd={handleMarketplaceAdd}
-        onUseBot={handleUseBot}
-        installedIds={installedIds}
-        items={marketplaceItems}
-        categories={MARKETPLACE_CATEGORIES}
-        bots={marketBots}
-      />
       {toast !== null && (
         <Toast key={toast.id} message={toast.message} type={toast.type} />
       )}

@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from "react";
-import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Store, Bot as BotIcon, Users } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Bot as BotIcon, Users } from "lucide-react";
 import type { Bot } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
@@ -21,7 +21,6 @@ export interface SidebarProps {
   onCreateBot(): void;
   onCreateGroup(): void;
   onOpenSettings(): void;
-  onOpenMarketplace(): void;
 }
 
 function Logo({ collapsed }: { collapsed: boolean }) {
@@ -86,7 +85,6 @@ export default function Sidebar({
   onCreateBot,
   onCreateGroup,
   onOpenSettings,
-  onOpenMarketplace,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -176,9 +174,6 @@ export default function Sidebar({
         <div className="sidebar-collapsed-spacer" />
         <button className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Open settings">
           <Settings size={18} />
-        </button>
-        <button className="icon-btn" onClick={onOpenMarketplace} title="Marketplace" aria-label="Open marketplace">
-          <Store size={18} />
         </button>
         <ChannelMonitor compact />
       </aside>
@@ -292,10 +287,6 @@ export default function Sidebar({
         <button type="button" className="settings-btn" onClick={onOpenSettings} aria-label="Open settings">
           <Settings size={18} aria-hidden="true" />
           <span>Settings</span>
-        </button>
-        <button type="button" className="settings-btn" onClick={onOpenMarketplace} aria-label="Open marketplace">
-          <Store size={18} aria-hidden="true" />
-          <span>Marketplace</span>
         </button>
         <ChannelMonitor compact />
       </footer>

@@ -452,8 +452,10 @@ pub trait ZaloPersonal: Send + Sync {
 /// Public status of one channel for `GET /api/channels`.
 ///
 /// `status` is one of `connected`, `disconnected`, `not-configured` or
-/// `unsupported`. Channels the Rust core does not implement report
-/// `unsupported` with an honest `detail` — never "not wired".
+/// `connected` (credential verified live against the platform API),
+/// `not-configured`, or `unsupported`. Channels the Rust core does not
+/// implement report `unsupported` with an honest `detail` — never
+/// "not wired".
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelInfo {
     pub id: String,
@@ -461,6 +463,23 @@ pub struct ChannelInfo {
     pub status: String,
     pub supported: bool,
     pub detail: Option<String>,
+}
+
+/// One inbound message from a channel platform, normalized across
+/// Telegram / Discord / Messenger.
+///
+/// - `id`: platform update id (Telegram `update_id`, Discord message id,
+///   Messenger `mid`).
+/// - `chat_id`: Telegram chat id, Discord channel id, Messenger PSID.
+/// - `ts`: ISO-8601 UTC timestamp when the platform provides one
+///   (Discord); otherwise the platform epoch as a string (Telegram).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InboundMessage {
+    pub id: String,
+    pub chat_id: String,
+    pub sender: Option<String>,
+    pub text: String,
+    pub ts: Option<String>,
 }
 
 /// Info returned by a successful `POST /api/channels/:id/connect`.
@@ -497,11 +516,12 @@ impl ChannelError {
 }
 
 /// Channel registry (Rust-native port of Python's `gateway/channel.py`
-/// adapters + `KNOWN_CHANNELS`). Telegram is implemented for real against
-/// the Bot API; every other platform reports `unsupported` honestly.
+/// adapters + `KNOWN_CHANNELS`). Telegram, Discord and Messenger are
+/// implemented for real against their platform APIs; every other platform
+/// reports `unsupported` honestly.
 ///
-/// Secrets live only in the 0600 config file; they are never returned by
-/// `info` and never appear in error messages or logs.
+/// Secrets live only in the per-channel 0600 config files; they are never
+/// returned by `info` and never appear in error messages or logs.
 pub trait ChannelRegistry: Send + Sync {
     /// Fixed channel list (mirrors [`KNOWN_CHANNELS`] order).
     fn channel_ids(&self) -> Vec<String>;
@@ -523,6 +543,20 @@ pub trait ChannelRegistry: Send + Sync {
         chat_id: Option<&str>,
         message: Option<&str>,
     ) -> BoxFuture<'_, Result<String, ChannelError>>;
+    /// Poll for inbound messages (ingress).
+    ///
+    /// - Telegram: `getUpdates`; `after` is the last seen `update_id`
+    ///   (exclusive). `chat_id` optionally filters to one chat.
+    /// - Discord: recent channel messages; `chat_id` is the **channel id**
+    ///   (required), `after` is the last seen message id (exclusive).
+    /// - Messenger: has no polling API — returns 501 with webhook setup
+    ///   guidance. See `docs/channels.md`.
+    fn poll_updates(
+        &self,
+        id: &str,
+        chat_id: Option<&str>,
+        after: Option<&str>,
+    ) -> BoxFuture<'_, Result<Vec<InboundMessage>, ChannelError>>;
 }
 
 /// `$BOOM_HOME`, else `~/.boom` (Python: `os.environ.get("BOOM_HOME", ...)`
