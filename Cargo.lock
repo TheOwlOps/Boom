@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "boom_desktop"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "boom-core",

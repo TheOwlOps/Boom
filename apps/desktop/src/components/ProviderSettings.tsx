@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
+  ChevronDown,
   Eye,
   EyeOff,
   KeyRound,
@@ -62,7 +63,7 @@ function writeLocalDrafts(drafts: LocalDrafts): void {
 
 type ConnState = "idle" | "testing" | "ok" | "fail";
 
-interface CardState {
+interface RowState {
   apiKey: string;
   model: string;
   baseUrl: string;
@@ -73,7 +74,7 @@ interface CardState {
   error: string | null;
 }
 
-function initialCard(meta: ProviderMeta, drafts: LocalDrafts): CardState {
+function initialRow(meta: ProviderMeta, drafts: LocalDrafts): RowState {
   const draft = drafts[meta.id] ?? {};
   return {
     apiKey: draft.api_key ?? "",
@@ -101,11 +102,7 @@ function StatusPill({ state, message }: { state: ConnState; message: string | nu
   return (
     <span
       title={message ?? undefined}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-        ok
-          ? "border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
-          : "border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
-      }`}
+      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-xs text-[var(--text)]"
     >
       {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
       {ok ? "Connected" : "Failed"}
@@ -113,16 +110,20 @@ function StatusPill({ state, message }: { state: ConnState; message: string | nu
   );
 }
 
-function ProviderCard({
+function ProviderRow({
   meta,
   active,
-  card,
+  row,
+  expanded,
+  onToggle,
   onChange,
 }: {
   meta: ProviderMeta;
   active: boolean;
-  card: CardState;
-  onChange: (patch: Partial<CardState>) => void;
+  row: RowState;
+  expanded: boolean;
+  onToggle: () => void;
+  onChange: (patch: Partial<RowState>) => void;
 }) {
   const set = onChange;
 
@@ -133,9 +134,9 @@ function ProviderCard({
       // 1. Local cache (drafts survive reloads even if the backend is down).
       const drafts = readLocalDrafts();
       drafts[meta.id] = {
-        api_key: card.apiKey,
-        model: card.model,
-        base_url: card.baseUrl,
+        api_key: row.apiKey,
+        model: row.model,
+        base_url: row.baseUrl,
       };
       writeLocalDrafts(drafts);
       // 2. Backend (source of truth; writes ~/.boom/providers.json 0600).
@@ -146,9 +147,9 @@ function ProviderCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider_id: meta.id,
-          api_key: card.apiKey,
-          model: card.model,
-          base_url: meta.show_base_url ? card.baseUrl : undefined,
+          api_key: row.apiKey,
+          model: row.model,
+          base_url: meta.show_base_url ? row.baseUrl : undefined,
         }),
       });
       if (!res.ok) {
@@ -210,182 +211,208 @@ function ProviderCard({
     }
   }
 
+  const connected = meta.has_key || row.conn === "ok";
+
   const inputCls =
     "w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none";
   const labelCls =
     "mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]";
 
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ProviderLogo providerId={meta.id} size={16} className="shrink-0 text-[var(--muted)]" />
-          <h3 className="text-sm font-semibold text-[var(--text)]">{meta.name}</h3>
-          {active && (
-            <span className="rounded-full border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
-              Active
-            </span>
-          )}
-          {meta.has_key && !active && (
-            <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
-              Key saved
-            </span>
-          )}
-        </div>
-        <StatusPill state={card.conn} message={card.connMessage} />
-      </div>
+    <li>
+      {/* Row header — click to expand the detail form (accordion). */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-label={`${meta.name} provider settings`}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)]"
+      >
+        <ProviderLogo
+          providerId={meta.id}
+          size={20}
+          colored
+          className="shrink-0"
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--text)]">
+          {meta.name}
+        </span>
+        {active && (
+          <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
+            Active
+          </span>
+        )}
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className={`h-2 w-2 rounded-full ${
+              connected ? "bg-emerald-500" : "bg-[var(--border)]"
+            }`}
+          />
+          <span className="whitespace-nowrap text-xs text-[var(--muted)]">
+            {connected ? "Connected" : "Not configured"}
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={`h-4 w-4 shrink-0 text-[var(--muted)] transition-transform ${
+            expanded ? "rotate-180" : ""
+          }`}
+        />
+      </button>
 
-      {meta.needs_key && (
-        <div className="mb-3">
-          <label className={labelCls} htmlFor={`${meta.id}-key`}>
-            API key
-          </label>
-          <div className="relative">
-            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
-            <input
-              id={`${meta.id}-key`}
-              type={card.showKey ? "text" : "password"}
-              value={card.apiKey}
-              onChange={(e) => set({ apiKey: e.target.value, conn: "idle" })}
-              placeholder={meta.has_key ? "•••••••• (saved)" : "Enter API key"}
-              autoComplete="off"
-              spellCheck={false}
-              className={`${inputCls} pl-9 pr-10`}
-            />
+      {/* Expanded detail form. */}
+      {expanded && (
+        <div className="space-y-3 border-t border-[var(--border)] bg-[var(--bg)] px-4 py-4">
+          {meta.needs_key && (
+            <div>
+              <label className={labelCls} htmlFor={`${meta.id}-key`}>
+                API key
+              </label>
+              <div className="relative">
+                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
+                <input
+                  id={`${meta.id}-key`}
+                  type={row.showKey ? "text" : "password"}
+                  value={row.apiKey}
+                  onChange={(e) => set({ apiKey: e.target.value, conn: "idle" })}
+                  placeholder={meta.has_key ? "•••••••• (saved)" : "Enter API key"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={`${inputCls} pl-9 pr-10`}
+                />
+                <button
+                  type="button"
+                  onClick={() => set({ showKey: !row.showKey })}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
+                  aria-label={row.showKey ? "Hide API key" : "Show API key"}
+                >
+                  {row.showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className={labelCls} htmlFor={`${meta.id}-model`}>
+              Model
+            </label>
+            {meta.models.length > 0 && !meta.allow_custom_model ? (
+              <select
+                id={`${meta.id}-model`}
+                value={row.model}
+                onChange={(e) => set({ model: e.target.value, conn: "idle" })}
+                className={inputCls}
+              >
+                {meta.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : meta.models.length > 0 ? (
+              <select
+                id={`${meta.id}-model`}
+                value={meta.models.includes(row.model) ? row.model : "__custom"}
+                onChange={(e) =>
+                  set({
+                    model: e.target.value === "__custom" ? "" : e.target.value,
+                    conn: "idle",
+                  })
+                }
+                className={inputCls}
+              >
+                {meta.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+                <option value="__custom">Custom…</option>
+              </select>
+            ) : null}
+            {(meta.allow_custom_model &&
+              (meta.models.length === 0 || !meta.models.includes(row.model))) && (
+              <input
+                id={meta.models.length > 0 ? undefined : `${meta.id}-model`}
+                type="text"
+                value={row.model}
+                onChange={(e) => set({ model: e.target.value, conn: "idle" })}
+                placeholder="Model name (e.g. provider/model-id)"
+                autoComplete="off"
+                spellCheck={false}
+                className={`${inputCls} ${meta.models.length > 0 ? "mt-2" : ""}`}
+              />
+            )}
+          </div>
+
+          {meta.show_base_url && (
+            <div>
+              <label className={labelCls} htmlFor={`${meta.id}-url`}>
+                Base URL
+              </label>
+              <input
+                id={`${meta.id}-url`}
+                type="text"
+                value={row.baseUrl}
+                onChange={(e) => set({ baseUrl: e.target.value, conn: "idle" })}
+                placeholder={meta.default_base_url || "https://your-endpoint/v1"}
+                autoComplete="off"
+                spellCheck={false}
+                className={inputCls}
+              />
+            </div>
+          )}
+
+          <StatusPill state={row.conn} message={row.connMessage} />
+          {row.connMessage && row.conn !== "idle" && (
+            <p className="text-xs text-[var(--muted)]">{row.connMessage}</p>
+          )}
+          {row.error && (
+            <p className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text)]">
+              {row.error}
+            </p>
+          )}
+
+          <div className="flex gap-2 pt-1">
             <button
               type="button"
-              onClick={() => set({ showKey: !card.showKey })}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--muted)] hover:text-[var(--text)]"
-              aria-label={card.showKey ? "Hide API key" : "Show API key"}
+              onClick={handleSave}
+              disabled={row.saving}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
             >
-              {card.showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {row.saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={row.conn === "testing" || row.saving}
+              title="Saves the current values first, then tests the connection"
+              className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
+            >
+              {row.conn === "testing" || row.saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plug className="h-4 w-4" />
+              )}
+              Test connection
             </button>
           </div>
         </div>
       )}
-
-      <div className="mb-3">
-        <label className={labelCls} htmlFor={`${meta.id}-model`}>
-          Model
-        </label>
-        {meta.models.length > 0 && !meta.allow_custom_model ? (
-          <select
-            id={`${meta.id}-model`}
-            value={card.model}
-            onChange={(e) => set({ model: e.target.value, conn: "idle" })}
-            className={inputCls}
-          >
-            {meta.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        ) : meta.models.length > 0 ? (
-          <select
-            id={`${meta.id}-model`}
-            value={meta.models.includes(card.model) ? card.model : "__custom"}
-            onChange={(e) =>
-              set({
-                model: e.target.value === "__custom" ? "" : e.target.value,
-                conn: "idle",
-              })
-            }
-            className={inputCls}
-          >
-            {meta.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-            <option value="__custom">Custom…</option>
-          </select>
-        ) : null}
-        {(meta.allow_custom_model &&
-          (meta.models.length === 0 || !meta.models.includes(card.model))) && (
-          <input
-            id={meta.models.length > 0 ? undefined : `${meta.id}-model`}
-            type="text"
-            value={card.model}
-            onChange={(e) => set({ model: e.target.value, conn: "idle" })}
-            placeholder="Model name (e.g. provider/model-id)"
-            autoComplete="off"
-            spellCheck={false}
-            className={`${inputCls} ${meta.models.length > 0 ? "mt-2" : ""}`}
-          />
-        )}
-      </div>
-
-      {meta.show_base_url && (
-        <div className="mb-3">
-          <label className={labelCls} htmlFor={`${meta.id}-url`}>
-            Base URL
-          </label>
-          <input
-            id={`${meta.id}-url`}
-            type="text"
-            value={card.baseUrl}
-            onChange={(e) => set({ baseUrl: e.target.value, conn: "idle" })}
-            placeholder={meta.default_base_url || "https://your-endpoint/v1"}
-            autoComplete="off"
-            spellCheck={false}
-            className={inputCls}
-          />
-        </div>
-      )}
-
-      {card.connMessage && card.conn !== "idle" && (
-        <p
-          className={`mb-3 text-xs ${
-            card.conn === "ok" ? "text-[var(--muted)]" : "text-[var(--muted)]"
-          }`}
-        >
-          {card.connMessage}
-        </p>
-      )}
-      {card.error && (
-        <p className="mb-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text)]">
-          {card.error}
-        </p>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={card.saving}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
-        >
-          {card.saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={card.conn === "testing" || card.saving}
-          title="Saves the current values first, then tests the connection"
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,var(--text))] disabled:opacity-50"
-        >
-          {card.conn === "testing" || card.saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plug className="h-4 w-4" />
-          )}
-          Test connection
-        </button>
-      </div>
-    </div>
+    </li>
   );
 }
 
 export function ProviderSettings() {
   const [metas, setMetas] = useState<ProviderMeta[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [cards, setCards] = useState<Record<string, CardState>>({});
+  const [rows, setRows] = useState<Record<string, RowState>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const mounted = useRef(true);
 
@@ -414,14 +441,22 @@ export function ProviderSettings() {
         const parsed = body as ProvidersResponse;
         if (cancelled) return;
         const drafts = readLocalDrafts();
-        const next: Record<string, CardState> = {};
+        const next: Record<string, RowState> = {};
         for (const meta of parsed.providers) {
-          next[meta.id] = initialCard(meta, drafts);
+          next[meta.id] = initialRow(meta, drafts);
         }
         if (mounted.current) {
           setMetas(parsed.providers);
           setActiveId(parsed.active);
-          setCards(next);
+          setRows(next);
+          // Open the most relevant provider by default: the active one,
+          // otherwise the first with a saved key, otherwise the first row.
+          setExpandedId(
+            parsed.active ??
+              parsed.providers.find((p) => p.has_key)?.id ??
+              parsed.providers[0]?.id ??
+              null,
+          );
         }
       } catch (e) {
         if (!cancelled && mounted.current) {
@@ -435,8 +470,8 @@ export function ProviderSettings() {
     };
   }, []);
 
-  const updateCard = useCallback((id: string, patch: Partial<CardState>) => {
-    setCards((prev) => {
+  const updateRow = useCallback((id: string, patch: Partial<RowState>) => {
+    setRows((prev) => {
       const cur = prev[id];
       if (!cur) return prev;
       return { ...prev, [id]: { ...cur, ...patch } };
@@ -459,16 +494,29 @@ export function ProviderSettings() {
     );
   }
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {metas.map((meta) => (
-        <ProviderCard
-          key={meta.id}
-          meta={meta}
-          active={meta.id === activeId}
-          card={cards[meta.id] ?? initialCard(meta, {})}
-          onChange={(patch) => updateCard(meta.id, patch)}
-        />
-      ))}
+    <div>
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-[var(--text)]">Providers</h3>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Configure API keys and models for each LLM provider. Click a provider
+          to edit its settings.
+        </p>
+      </div>
+      <ul className="divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+        {metas.map((meta) => (
+          <ProviderRow
+            key={meta.id}
+            meta={meta}
+            active={meta.id === activeId}
+            row={rows[meta.id] ?? initialRow(meta, {})}
+            expanded={expandedId === meta.id}
+            onToggle={() =>
+              setExpandedId((cur) => (cur === meta.id ? null : meta.id))
+            }
+            onChange={(patch) => updateRow(meta.id, patch)}
+          />
+        ))}
+      </ul>
     </div>
   );
 }
