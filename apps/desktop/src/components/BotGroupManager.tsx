@@ -32,215 +32,23 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { API_BASE } from "../lib/api";
 import { formatFullTime, formatSmartTime } from "../lib/formatTime";
+import {
+  type BotGroup,
+  type BotRef,
+  type GroupMessage,
+  type GroupReply,
+  getGroups,
+  getBotsRef,
+  apiCreateGroup,
+  apiGetGroupDetail,
+  apiDeleteGroup,
+  apiAddBotToGroup,
+  apiRemoveBotFromGroup,
+  apiMessageGroup,
+} from "../lib/botGroups";
 import { BoomiEmptyState } from "./BoomiEmptyState";
 import { BotAvatar } from "./BotAvatar";
-
-/* ------------------------------------------------------------------ types */
-
-/** One bot group. */
-export interface BotGroup {
-  id: string;
-  name: string;
-  bot_ids: string[];
-  created_at: string;
-}
-
-/** One message in a group conversation. */
-export interface GroupMessage {
-  id: string;
-  bot_id: string;
-  bot_name: string;
-  text: string;
-  created_at: string;
-}
-
-/** One reply from a group member after sending a group message. */
-export interface GroupReply {
-  bot_id: string;
-  bot_name: string;
-  reply: string;
-}
-
-/** Slim bot reference: only what the group UI needs. */
-export interface BotRef {
-  id: string;
-  name: string;
-  avatar_emoji: string;
-}
-
-/* ------------------------------------------------------- runtime validation */
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-function reqString(v: unknown, field: string): string {
-  if (typeof v !== "string") throw new Error(`malformed response: ${field} must be a string`);
-  return v;
-}
-
-function optString(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-/** Lenient string-list parser: non-array or non-string entries are dropped. */
-function stringList(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === "string");
-}
-
-function parseGroup(v: unknown): BotGroup {
-  if (!isRecord(v)) throw new Error("malformed response: bot group entry");
-  return {
-    id: reqString(v.id, "group.id"),
-    name: reqString(v.name, "group.name"),
-    bot_ids: stringList(v.bot_ids),
-    created_at: optString(v.created_at),
-  };
-}
-
-function parseGroupMessage(v: unknown): GroupMessage {
-  if (!isRecord(v)) throw new Error("malformed response: group message entry");
-  return {
-    id: reqString(v.id, "message.id"),
-    bot_id: optString(v.bot_id),
-    bot_name: optString(v.bot_name),
-    text: reqString(v.text, "message.text"),
-    created_at: optString(v.created_at),
-  };
-}
-
-function parseGroupReply(v: unknown): GroupReply {
-  if (!isRecord(v)) throw new Error("malformed response: group reply entry");
-  return {
-    bot_id: reqString(v.bot_id, "reply.bot_id"),
-    bot_name: optString(v.bot_name),
-    reply: reqString(v.reply, "reply.reply"),
-  };
-}
-
-function parseBotRef(v: unknown): BotRef {
-  if (!isRecord(v)) throw new Error("malformed response: bot entry");
-  return {
-    id: reqString(v.id, "bot.id"),
-    name: reqString(v.name, "bot.name"),
-    avatar_emoji: optString(v.avatar_emoji),
-  };
-}
-
-/** Server error convention: {"error": "..."} or {"ok": false, "error": "..."}. */
-async function readErrorMessage(res: Response): Promise<string> {
-  try {
-    const body: unknown = (await res.json()) as unknown;
-    if (isRecord(body) && typeof body.error === "string") return body.error;
-  } catch {
-    /* body was not JSON */
-  }
-  return `HTTP ${res.status} ${res.statusText}`.trim();
-}
-
-async function parseJsonBody(res: Response, path: string): Promise<unknown> {
-  let body: unknown;
-  try {
-    body = (await res.json()) as unknown;
-  } catch {
-    throw new Error(`malformed response: ${path} did not return JSON`);
-  }
-  if (!res.ok) throw new Error(await readErrorMessage(res));
-  if (isRecord(body) && body.ok === false) {
-    throw new Error(typeof body.error === "string" ? body.error : "request failed");
-  }
-  return body;
-}
-
-/* ------------------------------------------------------------- api helpers */
-
-async function getGroups(): Promise<BotGroup[]> {
-  const res = await fetch(`${API_BASE}/api/bot-groups`);
-  const body = await parseJsonBody(res, "GET /api/bot-groups");
-  if (!isRecord(body) || !Array.isArray(body.groups)) {
-    throw new Error("malformed response: GET /api/bot-groups");
-  }
-  return body.groups.map(parseGroup);
-}
-
-async function getBotsRef(): Promise<BotRef[]> {
-  const res = await fetch(`${API_BASE}/api/bots`);
-  const body = await parseJsonBody(res, "GET /api/bots");
-  if (!isRecord(body) || !Array.isArray(body.bots)) {
-    throw new Error("malformed response: GET /api/bots");
-  }
-  return body.bots.map(parseBotRef);
-}
-
-async function apiCreateGroup(name: string, botIds: string[]): Promise<BotGroup> {
-  const res = await fetch(`${API_BASE}/api/bot-groups`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, bot_ids: botIds }),
-  });
-  const body = await parseJsonBody(res, "POST /api/bot-groups");
-  if (!isRecord(body) || !isRecord(body.group)) {
-    throw new Error("malformed response: POST /api/bot-groups");
-  }
-  return parseGroup(body.group);
-}
-
-async function apiGetGroupDetail(id: string): Promise<{ group: BotGroup; messages: GroupMessage[] }> {
-  const res = await fetch(`${API_BASE}/api/bot-groups/${encodeURIComponent(id)}`);
-  const body = await parseJsonBody(res, "GET /api/bot-groups/:id");
-  if (!isRecord(body) || !isRecord(body.group) || !Array.isArray(body.messages)) {
-    throw new Error("malformed response: GET /api/bot-groups/:id");
-  }
-  return { group: parseGroup(body.group), messages: body.messages.map(parseGroupMessage) };
-}
-
-async function apiDeleteGroup(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/bot-groups/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-  await parseJsonBody(res, "DELETE /api/bot-groups/:id");
-}
-
-async function apiAddBotToGroup(groupId: string, botId: string): Promise<BotGroup> {
-  const res = await fetch(`${API_BASE}/api/bot-groups/${encodeURIComponent(groupId)}/bots`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bot_id: botId }),
-  });
-  const body = await parseJsonBody(res, "POST /api/bot-groups/:id/bots");
-  if (!isRecord(body) || !isRecord(body.group)) {
-    throw new Error("malformed response: POST /api/bot-groups/:id/bots");
-  }
-  return parseGroup(body.group);
-}
-
-async function apiRemoveBotFromGroup(groupId: string, botId: string): Promise<BotGroup> {
-  const res = await fetch(
-    `${API_BASE}/api/bot-groups/${encodeURIComponent(groupId)}/bots/${encodeURIComponent(botId)}`,
-    { method: "DELETE" },
-  );
-  const body = await parseJsonBody(res, "DELETE /api/bot-groups/:id/bots/:bot_id");
-  if (!isRecord(body) || !isRecord(body.group)) {
-    throw new Error("malformed response: DELETE /api/bot-groups/:id/bots/:bot_id");
-  }
-  return parseGroup(body.group);
-}
-
-async function apiMessageGroup(groupId: string, text: string, fromBotId?: string): Promise<GroupReply[]> {
-  const res = await fetch(`${API_BASE}/api/bot-groups/${encodeURIComponent(groupId)}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(fromBotId ? { text, from_bot_id: fromBotId } : { text }),
-  });
-  const body = await parseJsonBody(res, "POST /api/bot-groups/:id/message");
-  if (!isRecord(body) || !Array.isArray(body.replies)) {
-    throw new Error("malformed response: POST /api/bot-groups/:id/message");
-  }
-  return body.replies.map(parseGroupReply);
-}
 
 /* ------------------------------------------------------------ shared modal */
 
@@ -278,7 +86,7 @@ function ModalShell({
 
 /* ---------------------------------------------------------- new group modal */
 
-function NewGroupModal({
+export function NewGroupModal({
   bots,
   onClose,
   onCreated,
@@ -393,7 +201,7 @@ function NewGroupModal({
 
 /* -------------------------------------------------------- delete group modal */
 
-function DeleteGroupModal({
+export function DeleteGroupModal({
   group,
   onClose,
   onDeleted,
@@ -452,7 +260,7 @@ function DeleteGroupModal({
 
 /* ------------------------------------------------------------------ avatar */
 
-function MemberAvatarStack({ bots, size = 28 }: { bots: BotRef[]; size?: number }) {
+export function MemberAvatarStack({ bots, size = 28 }: { bots: BotRef[]; size?: number }) {
   const shown = bots.slice(0, 5);
   const extra = bots.length - shown.length;
   return (

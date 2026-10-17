@@ -1,6 +1,9 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Bot as BotIcon, Users } from "lucide-react";
 import type { Bot } from "../lib/types";
+import { type BotGroup, type GroupPreview } from "../lib/botGroups";
+import { formatSmartTime } from "../lib/formatTime";
+import { MemberAvatarStack } from "./BotGroupManager";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
 import { BotAvatar } from "./BotAvatar";
@@ -17,6 +20,14 @@ export interface SidebarProps {
   loadingBots?: boolean;
   activeBotId: string | null;
   onSelectBot(id: string): void;
+  /** Bot groups for the "Groups" section, loaded by the parent. */
+  groups: BotGroup[];
+  /** Last-message previews keyed by group id. */
+  groupPreviews: Record<string, GroupPreview>;
+  /** True while the parent is fetching groups. */
+  loadingGroups?: boolean;
+  activeGroupId: string | null;
+  onSelectGroup(id: string): void;
   onNewChat(): void;
   onCreateBot(): void;
   onCreateGroup(): void;
@@ -74,6 +85,48 @@ function TeammateRow({
   );
 }
 
+function GroupRow({
+  group,
+  bots,
+  preview,
+  active,
+  onSelect,
+}: {
+  group: BotGroup;
+  bots: Bot[];
+  preview?: GroupPreview;
+  active: boolean;
+  onSelect(id: string): void;
+}) {
+  const members = group.bot_ids
+    .map((id) => bots.find((b) => b.id === id))
+    .filter((b): b is Bot => b !== undefined)
+    .map((b) => ({ id: b.id, name: b.name, avatar_emoji: b.avatar_emoji ?? "" }));
+  const previewText = preview?.text.trim() || `${group.bot_ids.length} member${group.bot_ids.length === 1 ? "" : "s"}`;
+  const time = preview ? formatSmartTime(preview.created_at) : "";
+  return (
+    <button
+      type="button"
+      className={`teammate-item stagger-item${active ? " active" : ""}`}
+      onClick={() => onSelect(group.id)}
+      title={group.name}
+      role="option"
+      aria-selected={active}
+    >
+      <span className="teammate-avatar-wrap">
+        <MemberAvatarStack bots={members} size={40} />
+      </span>
+      <span className="teammate-meta">
+        <span className="teammate-name-row">
+          <span className="teammate-name">{group.name}</span>
+          {time && <span className="teammate-time">{time}</span>}
+        </span>
+        <span className="teammate-preview">{previewText}</span>
+      </span>
+    </button>
+  );
+}
+
 export default function Sidebar({
   collapsed,
   onToggle,
@@ -81,6 +134,11 @@ export default function Sidebar({
   loadingBots = false,
   activeBotId,
   onSelectBot,
+  groups,
+  groupPreviews,
+  loadingGroups = false,
+  activeGroupId,
+  onSelectGroup,
   onNewChat,
   onCreateBot,
   onCreateGroup,
@@ -123,6 +181,12 @@ export default function Sidebar({
         (b.description ?? "").toLowerCase().includes(q)
     );
   }, [bots, query]);
+
+  const filteredGroups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter((g) => g.name.toLowerCase().includes(q));
+  }, [groups, query]);
 
   if (collapsed) {
     return (
@@ -171,6 +235,24 @@ export default function Sidebar({
             </button>
           ))}
         </div>
+        {groups.length > 0 && (
+          <div className="teammate-rail" aria-label="Groups">
+            {groups.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                className={`teammate-rail-item${g.id === activeGroupId ? " active" : ""}`}
+                onClick={() => onSelectGroup(g.id)}
+                title={g.name}
+                aria-label={g.name}
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--surface-2)] text-[var(--muted)]">
+                  <Users size={18} />
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="sidebar-collapsed-spacer" />
         <button className="icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Open settings">
           <Settings size={18} />
@@ -218,8 +300,8 @@ export default function Sidebar({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search teammates"
-          aria-label="Search teammates"
+          placeholder="Search"
+          aria-label="Search teammates and groups"
         />
       </div>
 
@@ -279,6 +361,58 @@ export default function Sidebar({
               bot={b}
               active={b.id === activeBotId}
               onSelect={onSelectBot}
+            />
+          ))}
+      </nav>
+
+      <div className="sidebar-section-header">
+        <span className="sidebar-section-title">
+          Groups
+          {groups.length > 0 && (
+            <span className="sidebar-section-count">{groups.length}</span>
+          )}
+        </span>
+        <button
+          type="button"
+          className="icon-btn icon-btn-sm"
+          onClick={onCreateGroup}
+          title="New group"
+          aria-label="Create new bot group"
+        >
+          <Plus size={15} />
+        </button>
+      </div>
+
+      <nav className="teammate-list group-list" role="listbox" aria-label="Groups" aria-busy={loadingGroups}>
+        {loadingGroups && (
+          <div className="sk-stack" style={{ padding: "4px 2px" }} role="status" aria-label="Loading groups">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="sk-row" style={{ padding: "8px 12px" }} aria-hidden="true">
+                <SkeletonAvatar size={40} />
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <Skeleton width="55%" height={13} />
+                  <Skeleton width="85%" height={11} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!loadingGroups && filteredGroups.length === 0 && !query.trim() && (
+          <p className="sidebar-empty-note">
+            No groups yet — create one to chat with several bots at once.
+          </p>
+        )}
+
+        {!loadingGroups &&
+          filteredGroups.map((g) => (
+            <GroupRow
+              key={g.id}
+              group={g}
+              bots={bots}
+              preview={groupPreviews[g.id]}
+              active={g.id === activeGroupId}
+              onSelect={onSelectGroup}
             />
           ))}
       </nav>

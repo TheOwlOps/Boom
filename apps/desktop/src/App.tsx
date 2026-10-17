@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { Menu } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import { ChatView, type BotApi } from "./components/ChatView";
+import GroupChatView from "./components/GroupChatView";
+import { NewGroupModal } from "./components/BotGroupManager";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import {
+  type BotGroup,
+  type GroupPreview,
+  getGroups,
+  getGroupPreview,
+} from "./lib/botGroups";
 import UpdateChecker from "./components/UpdateChecker";
 // Settings modal.
 import { Toast } from "./components/Toast";
@@ -163,12 +171,41 @@ export default function App() {
   // Sidebar (dumb component) can render and trigger switches.
   const [bots, setBots] = useState<Bot[]>([]);
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  // Bot groups (sidebar "Groups" section + full-page group chat).
+  const [groups, setGroups] = useState<BotGroup[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [groupPreviews, setGroupPreviews] = useState<Record<string, GroupPreview>>({});
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const botApiRef = useRef<BotApi | null>(null);
   const handleBotApi = useCallback((api: BotApi) => {
     botApiRef.current = api;
     setBots(api.bots);
     setActiveBotId(api.activeBotId);
   }, []);
+
+  const loadGroups = useCallback(async () => {
+    setLoadingGroups(true);
+    try {
+      const list = await getGroups();
+      setGroups(list);
+      // Last-message previews, best-effort per group.
+      const previews = await Promise.all(list.map((g) => getGroupPreview(g.id)));
+      const map: Record<string, GroupPreview> = {};
+      for (const pv of previews) {
+        if (pv) map[pv.groupId] = pv;
+      }
+      setGroupPreviews(map);
+    } catch {
+      // Honest degradation: groups section stays empty, chat unaffected.
+    } finally {
+      setLoadingGroups(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadGroups();
+  }, [loadGroups]);
 
   const [toast, setToast] = useState<{
     id: number;
@@ -236,10 +273,20 @@ export default function App() {
         keywords: `bot assistant switch ${bot.name} ${bot.id}`,
         run: () => {
           void botApiRef.current?.switchBot(bot.id);
+          setActiveGroupId(null);
+        },
+      })),
+      ...groups.map((g) => ({
+        id: `open-group-${g.id}`,
+        label: `Open group ${g.name}`,
+        keywords: `group bot group chat ${g.name} ${g.id}`,
+        run: () => {
+          setActiveGroupId(g.id);
+          setMobileNavOpen(false);
         },
       })),
     ],
-    [bots],
+    [bots, groups],
   );
 
   const sidebarProps = {
@@ -250,10 +297,20 @@ export default function App() {
     onSelectBot: (id: string) => {
       // ChatView owns bot switching (API + localStorage); call through.
       void botApiRef.current?.switchBot(id);
+      setActiveGroupId(null);
+      setMobileNavOpen(false);
+    },
+    groups,
+    groupPreviews,
+    loadingGroups,
+    activeGroupId,
+    onSelectGroup: (id: string) => {
+      setActiveGroupId(id);
       setMobileNavOpen(false);
     },
     onNewChat: () => {
       setActiveSession(null);
+      setActiveGroupId(null);
       setMobileNavOpen(false);
     },
     onCreateBot: () => {
@@ -261,7 +318,7 @@ export default function App() {
       setMobileNavOpen(false);
     },
     onCreateGroup: () => {
-      openSettingsSection("bot-groups");
+      setCreatingGroup(true);
       setMobileNavOpen(false);
     },
     onOpenSettings: () => setSettingsOpen(true),
@@ -291,16 +348,28 @@ export default function App() {
             window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))
           }
         />
-        {/* Chat is the main view; all management lives in SettingsModal. */}
+        {/* Chat is the main view; group chat takes over when a group is selected. */}
         <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label="Chat view">
           {/* Full backend health panel — only visible while disconnected. */}
           <BackendStatus />
-          <ChatView
-            sessionId={activeSession}
-            onTogglePanel={noop}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onBotApi={handleBotApi}
-          />
+          {activeGroupId ? (
+            <GroupChatView
+              groupId={activeGroupId}
+              onClose={() => setActiveGroupId(null)}
+              onDeleted={(id) => {
+                setActiveGroupId((prev) => (prev === id ? null : prev));
+                void loadGroups();
+              }}
+              onChanged={() => void loadGroups()}
+            />
+          ) : (
+            <ChatView
+              sessionId={activeSession}
+              onTogglePanel={noop}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onBotApi={handleBotApi}
+            />
+          )}
         </div>
       </main>
 
@@ -340,6 +409,17 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         initialSection={settingsSection}
       />
+
+      {creatingGroup && (
+        <NewGroupModal
+          bots={bots.map((b) => ({ id: b.id, name: b.name, avatar_emoji: b.avatar_emoji }))}
+          onClose={() => setCreatingGroup(false)}
+          onCreated={(group) => {
+            setCreatingGroup(false);
+            void loadGroups().then(() => setActiveGroupId(group.id));
+          }}
+        />
+      )}
 
       {toast !== null && (
         <Toast key={toast.id} message={toast.message} type={toast.type} />
