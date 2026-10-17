@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE } from "../lib/api";
 import ChannelAccordion from "./ChannelAccordion";
-import { EmptyState } from "./EmptyState";
+import ConnectorCard from "./ConnectorCard";
+import type { ConnectorCardData } from "./ConnectorCard";
+import { connectorLabel } from "./connectorLabels";
 import { SkeletonText } from "./Skeleton";
 import { BoomiEmptyState } from "./BoomiEmptyState";
 
@@ -21,6 +23,7 @@ interface ToolsResponse {
 interface ConnectorSummary {
   id: string;
   name: string;
+  description?: string;
   connected: boolean;
 }
 
@@ -112,11 +115,11 @@ function RunModal({
         {connectorName !== null && !connectorConnected ? (
           <div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
             <p className="text-sm font-medium text-[var(--text)]">
-              {connectorName} is not connected
+              {connectorName} chưa được kết nối
             </p>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              This tool needs {connectorName} connected to work. Open Settings →
-              Connectors, connect {connectorName}, then try again.
+              Công cụ này cần {connectorName} được kết nối mới hoạt động.
+              Bấm "Kết nối" ở thẻ {connectorName} rồi thử lại.
             </p>
           </div>
         ) : (
@@ -138,7 +141,7 @@ function RunModal({
         )}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)]">
-            Close
+            Đóng
           </button>
           {connectorConnected && (
             <button
@@ -146,7 +149,7 @@ function RunModal({
               disabled={running}
               className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
             >
-              {running ? "Running…" : "Execute"}
+              {running ? "Đang chạy…" : "Chạy"}
             </button>
           )}
         </div>
@@ -155,62 +158,59 @@ function RunModal({
   );
 }
 
-/** Tool manager: channels subsection first, then tools fetched live from the backend. */
+/** Tool manager: channels subsection first, then connectors as unified cards. */
 export default function ToolManager() {
   const [query, setQuery] = useState("");
   const [tools, setTools] = useState<ToolDef[] | null>(null);
-  const [connectors, setConnectors] = useState<Map<string, ConnectorSummary> | null>(null);
+  const [connectors, setConnectors] = useState<ConnectorSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const [active, setActive] = useState<ToolDef | null>(null);
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   // The tool list comes from the live backend (GET /api/tools). There is no
   // static fallback catalog on purpose: a stale catalog would show tools the
   // backend does not have, and every Run click on one would 404.
-  // Connector connection status comes from GET /api/connectors so each tool
-  // row can show whether its service is connected.
+  // Connector list + connection status comes from GET /api/connectors.
   useEffect(() => {
     let cancelled = false;
     setLoadError(null);
-    fetch(`${API_BASE}/api/tools`)
-      .then(async (res) => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/tools`);
         if (!res.ok) throw new Error(`GET /api/tools → ${res.status}`);
         const body = (await res.json()) as ToolsResponse;
         const list = Array.isArray(body.tools) ? body.tools.filter(isToolDef) : [];
         if (!cancelled) setTools(list);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : "Could not reach the backend.");
         setTools([]);
-      });
-    fetch(`${API_BASE}/api/connectors`)
-      .then(async (res) => {
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/connectors`);
         if (!res.ok) return;
         const body = (await res.json()) as ConnectorsResponse;
         if (!Array.isArray(body.connectors)) return;
-        const map = new Map<string, ConnectorSummary>();
-        for (const c of body.connectors.filter(isConnectorSummary)) {
-          map.set(c.id.toLowerCase(), c);
-        }
-        if (!cancelled) setConnectors(map);
-      })
-      .catch(() => {
+        const list = body.connectors.filter(isConnectorSummary);
+        if (!cancelled) setConnectors(list);
+      } catch {
         // Connection status is best-effort: tools still list without it.
-      });
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
     };
   }, [retryTick]);
 
-  /** Connector status for a tool: {id, name, connected} or null when unknown. */
-  const connectorStatus = (toolName: string): ConnectorSummary | null => {
-    const id = toolToConnectorId(toolName);
-    if (id === null || connectors === null) return null;
-    return connectors.get(id) ?? null;
+  /** Connector status lookup by id. */
+  const connectorById = (id: string): ConnectorSummary | null => {
+    if (!connectors) return null;
+    return connectors.find((c) => c.id.toLowerCase() === id.toLowerCase()) ?? null;
   };
 
-  // Filter by tool name (case-insensitive).
   // Son's request: hide system/built-in tools, only show connector tools
   // (the external services/channels like Gmail, GitHub, Spotify, etc.)
   const CONNECTOR_PREFIXES = [
@@ -231,114 +231,190 @@ export default function ToolManager() {
   const isConnectorTool = (name: string) =>
     CONNECTOR_PREFIXES.some((p) => name.toLowerCase().startsWith(p));
 
-  const filtered = useMemo(
-    () =>
-      (tools ?? []).filter(
-        (t) =>
-          isConnectorTool(t.name) &&
-          t.name.toLowerCase().includes(query.trim().toLowerCase()),
-      ),
-    [tools, query],
-  );
-
-  // Groups are derived from the live data — never hardcoded.
-  const groups = useMemo(() => {
-    const seen = new Map<string, ToolDef[]>();
-    for (const t of filtered) {
-      const g = t.group || "other";
-      const list = seen.get(g);
+  /** Group connector tools by connector id, filtered by search query. */
+  const connectorGroups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const byConnector = new Map<string, ToolDef[]>();
+    for (const t of tools ?? []) {
+      if (!isConnectorTool(t.name)) continue;
+      const cid = toolToConnectorId(t.name);
+      if (!cid) continue;
+      // Search matches connector label, id, or tool name.
+      if (q) {
+        const { label } = connectorLabel(cid);
+        const hay = `${label} ${cid} ${t.name} ${t.description}`.toLowerCase();
+        if (!hay.includes(q)) continue;
+      }
+      const list = byConnector.get(cid);
       if (list) list.push(t);
-      else seen.set(g, [t]);
+      else byConnector.set(cid, [t]);
     }
-    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
+    // Sort by Vietnamese label.
+    return [...byConnector.entries()].sort((a, b) =>
+      connectorLabel(a[0]).label.localeCompare(connectorLabel(b[0]).label, "vi"),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tools, query, connectors]);
+
+  /** Connectors with no tools (or not yet loaded) still show as cards. */
+  const allConnectorIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [cid] of connectorGroups) ids.add(cid);
+    for (const c of connectors ?? []) ids.add(c.id.toLowerCase());
+    return [...ids].sort((a, b) =>
+      connectorLabel(a).label.localeCompare(connectorLabel(b).label, "vi"),
+    );
+  }, [connectorGroups, connectors]);
+
+  const handleConnect = async (id: string) => {
+    setBusyIds((prev) => new Set(prev).add(id));
+    setNotes((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`${API_BASE}/api/connectors/${id}/connect`, {
+        method: "POST",
+      });
+      const body = (await res.json().catch(() => null)) as {
+        connect_url?: string;
+        instructions?: string;
+      } | null;
+      if (!res.ok) {
+        throw new Error(
+          (body as { error?: string } | null)?.error ?? `Connect failed (${res.status})`,
+        );
+      }
+      if (body?.connect_url) {
+        window.open(body.connect_url, "_blank", "noopener");
+      }
+      setNotes((prev) => ({
+        ...prev,
+        [id]: body?.instructions ?? "Hoàn tất kết nối trong trình duyệt rồi quay lại đây.",
+      }));
+    } catch (e) {
+      setNotes((prev) => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : "Kết nối thất bại.",
+      }));
+    } finally {
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const handleDisconnect = async (id: string) => {
+    setBusyIds((prev) => new Set(prev).add(id));
+    setNotes((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`${API_BASE}/api/connectors/${id}/disconnect`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`Disconnect failed (${res.status})`);
+      // Refresh connector list.
+      const listRes = await fetch(`${API_BASE}/api/connectors`);
+      if (listRes.ok) {
+        const body = (await listRes.json()) as ConnectorsResponse;
+        if (Array.isArray(body.connectors)) {
+          setConnectors(body.connectors.filter(isConnectorSummary));
+        }
+      }
+    } catch (e) {
+      setNotes((prev) => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : "Ngắt kết nối thất bại.",
+      }));
+    } finally {
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const cardData = (cid: string): ConnectorCardData => {
+    const cs = connectorById(cid);
+    return {
+      id: cid,
+      name: cs?.name ?? cid,
+      description: cs?.description ?? "",
+      connected: cs?.connected ?? false,
+    };
+  };
+
+  const connectedCount = (connectors ?? []).filter((c) => c.connected).length;
 
   return (
     <div>
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search tools by name…"
+        placeholder="Tìm dịch vụ… (ví dụ: Gmail, Spotify)"
         className="mb-4 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)]"
       />
       <ChannelAccordion query={query} />
       {tools === null ? (
-        <SkeletonText lines={6} label="Loading tools" />
+        <SkeletonText lines={6} label="Đang tải dịch vụ" />
       ) : loadError !== null ? (
         <BoomiEmptyState
           animation="error"
-          title="Could not load tools"
-          description={`The backend did not return a tool list (${loadError}). No tools are shown rather than a stale catalog.`}
-          actionLabel="Retry"
+          title="Không tải được danh sách"
+          description={`Backend không trả về danh sách công cụ (${loadError}).`}
+          actionLabel="Thử lại"
           onAction={() => {
             setTools(null);
             setRetryTick((t) => t + 1);
           }}
         />
-      ) : groups.length === 0 ? (
+      ) : allConnectorIds.length === 0 ? (
         <BoomiEmptyState
           animation="idle"
-          title={query.trim() === "" ? "No tools registered" : "No tools match your search"}
+          title={query.trim() === "" ? "Chưa có dịch vụ nào" : "Không tìm thấy dịch vụ"}
           description={
             query.trim() === ""
-              ? "The backend returned an empty tool list. Check that the gateway is running the expected build."
+              ? "Backend trả về danh sách rỗng. Kiểm tra gateway đang chạy đúng bản build."
               : undefined
           }
         />
       ) : (
-        groups.map(([group, list]) => (
-          <section key={group} className="mb-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
-              {group} ({list.length})
-            </h3>
-            <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
-              {list.map((t) => {
-                const cs = connectorStatus(t.name);
-                return (
-                  <li key={t.name} className="flex items-center gap-3 px-3 py-2">
-                    <span
-                      title={
-                        cs === null
-                          ? "Connection status unknown"
-                          : cs.connected
-                            ? `${cs.name} connected`
-                            : `${cs.name} not connected`
-                      }
-                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-                        cs === null
-                          ? "bg-[var(--muted)]"
-                          : cs.connected
-                            ? "bg-green-500"
-                            : "bg-[var(--muted)] opacity-50"
-                      }`}
-                    />
-                    <code className="font-mono text-sm text-[var(--text)]">{t.name}</code>
-                    <span className="flex-1 text-sm text-[var(--muted)]">
-                      {t.description}
-                      {cs !== null && !cs.connected && (
-                        <span className="ml-2 text-xs">({cs.name} not connected)</span>
-                      )}
-                    </span>
-                    <button
-                      onClick={() => setActive(t)}
-                      className="rounded border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
-                    >
-                      Run
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))
+        <section className="mb-5">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Dịch vụ kết nối ({connectedCount}/{allConnectorIds.length} đã kết nối)
+          </h3>
+          <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
+            {allConnectorIds.map((cid) => {
+              const toolsForConnector =
+                connectorGroups.find(([g]) => g === cid)?.[1] ?? [];
+              return (
+                <ConnectorCard
+                  key={cid}
+                  connector={cardData(cid)}
+                  tools={toolsForConnector.map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                  }))}
+                  onRunTool={(name, description) =>
+                    setActive({ name, description, group: cid })
+                  }
+                  onConnect={handleConnect}
+                  onDisconnect={handleDisconnect}
+                  busy={busyIds.has(cid)}
+                  note={notes[cid] || undefined}
+                />
+              );
+            })}
+          </ul>
+        </section>
       )}
       {active &&
         (() => {
-          const cs = connectorStatus(active.name);
+          const cid = toolToConnectorId(active.name);
+          const cs = cid ? connectorById(cid) : null;
           return (
             <RunModal
               tool={active}
-              connectorName={cs?.name ?? null}
+              connectorName={cs ? connectorLabel(cs.id).label : null}
               connectorConnected={cs?.connected ?? true}
               onClose={() => setActive(null)}
             />
