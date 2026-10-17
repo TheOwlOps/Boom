@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE } from "../lib/api";
+import ChannelAccordion from "./ChannelAccordion";
 import { EmptyState } from "./EmptyState";
 import { SkeletonText } from "./Skeleton";
 import { BoomiEmptyState } from "./BoomiEmptyState";
@@ -170,6 +171,7 @@ export default function ToolManager() {
         placeholder="Search tools by name…"
         className="mb-4 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)]"
       />
+      <ChannelAccordion query={query} />
       {tools === null ? (
         <SkeletonText lines={6} label="Loading tools" />
       ) : loadError !== null ? (
