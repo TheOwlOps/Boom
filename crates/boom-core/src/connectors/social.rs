@@ -1318,10 +1318,8 @@ impl Tool for SocialPost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
 
     // Serialize tests that mutate process-global env vars.
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     struct EnvGuard {
         saved: Vec<(String, Option<String>)>,
@@ -1383,9 +1381,9 @@ mod tests {
         assert!(!c.description().is_empty());
     }
 
-    #[test]
-    fn connect_url_shape() {
-        let _lock = ENV_LOCK.lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_shape() {
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let _guard = EnvGuard::set(&[("BOOM_META_CLIENT_ID", "test-app-123")]);
         let url = SocialConnector::new()
             .connect_url()
@@ -1421,9 +1419,9 @@ mod tests {
         assert!(url.contains("redirect_uri=https%3A%2F%2Fexample.com%2Fcb"), "url={url}");
     }
 
-    #[test]
-    fn connect_url_errors_without_client_id() {
-        let _lock = ENV_LOCK.lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_errors_without_client_id() {
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home(); // no token file to fall back to
         let _guard = EnvGuard::unset(&["BOOM_META_CLIENT_ID", "BOOM_META_ACCESS_TOKEN"]);
         let err = SocialConnector::new().connect_url().unwrap_err();
@@ -1433,7 +1431,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn tools_degrade_honestly_when_not_connected() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = no_token_env();
 
@@ -1469,7 +1467,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn token_roundtrip_through_shared_helpers() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = no_token_env();
         let tok = ConnectorToken {
@@ -1692,7 +1690,7 @@ mod tests {
     #[tokio::test]
     async fn instagram_post_requires_media_url() {
         // Arg validation happens before the token check, so this is offline-safe.
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = no_token_env();
         let err = SocialPost
@@ -1706,7 +1704,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn threads_post_rejects_overlong_text() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = no_token_env();
         let long = "x".repeat(501);
@@ -1722,7 +1720,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn post_rejects_empty_text() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = no_token_env();
         let err = SocialPost
@@ -1776,7 +1774,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn exchange_code_validates_input_offline() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
         let _guard = EnvGuard::unset(&["BOOM_META_CLIENT_ID", "BOOM_META_ACCESS_TOKEN"]);
         let mut c = SocialConnector::new();

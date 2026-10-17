@@ -36,14 +36,21 @@ use serde::{Deserialize, Serialize};
 
 // One module per connector worker. `flights` holds two connectors
 // (FlightAware + Duffel); every other module holds one.
+pub mod canva;
+pub mod finances;
 pub mod flights;
 pub mod gcalendar;
 pub mod gdrive;
 pub mod github;
 pub mod gmail;
+pub mod health;
+pub mod meta_ads;
 pub mod places;
+pub mod shopify;
 pub mod social;
 pub mod spotify;
+pub mod stripe;
+pub mod tailscale;
 pub mod tickets;
 
 // ---------------------------------------------------------------------------
@@ -245,6 +252,21 @@ pub fn http_client(timeout: Duration) -> reqwest::Client {
 }
 
 // ---------------------------------------------------------------------------
+// Test isolation
+// ---------------------------------------------------------------------------
+
+/// Serializes every test that mutates process-global environment
+/// (`BOOM_HOME`, `BOOM_*_CLIENT_ID` / `BOOM_*_CLIENT_SECRET`). The token
+/// helpers read these on every call, so per-module locks are insufficient —
+/// one process-global lock for all connector tests.
+///
+/// It is a `tokio::sync::Mutex` (not `std::sync::Mutex`) because tests hold
+/// it across `.await` points (mock HTTP servers); a blocking mutex held
+/// across an await could starve the executor when many tests contend.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+// ---------------------------------------------------------------------------
 // Connector trait
 // ---------------------------------------------------------------------------
 
@@ -328,10 +350,10 @@ pub struct ConnectorSummary {
 // Registry
 // ---------------------------------------------------------------------------
 
-/// Canonical connector ids — exactly the 10 modules constructed by
+/// Canonical connector ids — exactly the 17 modules constructed by
 /// [`ConnectorRegistry::new`]. Keep in sync with the `pub mod` list above
 /// and the constructor calls in `new()`.
-pub const ALL_CONNECTOR_IDS: [&str; 10] = [
+pub const ALL_CONNECTOR_IDS: [&str; 17] = [
     "gmail",
     "gcalendar",
     "gdrive",
@@ -342,6 +364,13 @@ pub const ALL_CONNECTOR_IDS: [&str; 10] = [
     "flightaware",
     "duffel",
     "ticketmaster",
+    "health",
+    "canva",
+    "finances",
+    "meta_ads",
+    "shopify",
+    "stripe",
+    "tailscale",
 ];
 
 /// Owns every connector. Constructed once per process (see
@@ -351,7 +380,7 @@ pub struct ConnectorRegistry {
 }
 
 impl ConnectorRegistry {
-    /// Registry with all 10 connectors (each module's `<Id>Connector::new()`).
+    /// Registry with all 17 connectors (each module's `<Id>Connector::new()`).
     pub fn new() -> Self {
         let mut reg = Self::empty();
         reg.register(Box::new(gmail::GmailConnector::new()));
@@ -364,6 +393,13 @@ impl ConnectorRegistry {
         reg.register(Box::new(flights::FlightAwareConnector::new()));
         reg.register(Box::new(flights::DuffelConnector::new()));
         reg.register(Box::new(tickets::TicketmasterConnector::new()));
+        reg.register(Box::new(health::HealthConnector::new()));
+        reg.register(Box::new(canva::CanvaConnector::new()));
+        reg.register(Box::new(finances::FinancesConnector::new()));
+        reg.register(Box::new(meta_ads::MetaAdsConnector::new()));
+        reg.register(Box::new(shopify::ShopifyConnector::new()));
+        reg.register(Box::new(stripe::StripeConnector::new()));
+        reg.register(Box::new(tailscale::TailscaleConnector::new()));
         debug_assert_eq!(reg.connectors.len(), ALL_CONNECTOR_IDS.len());
         reg
     }
@@ -442,15 +478,12 @@ impl Default for ConnectorRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
-
-    /// Serializes tests that mutate `BOOM_HOME` (process-global env).
-    static ENV_GUARD: StdMutex<()> = StdMutex::new(());
 
     /// Point BOOM_HOME at a fresh temp dir; returns the guard + tempdir
-    /// (tempdir must stay alive for the test's duration).
-    fn temp_boom_home() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
-        let guard = ENV_GUARD.lock().unwrap();
+    /// (tempdir must stay alive for the test's duration). Serialized on the
+    /// process-global [`super::TEST_ENV_LOCK`].
+    async fn temp_boom_home() -> (tokio::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        let guard = super::TEST_ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BOOM_HOME", dir.path());
         (guard, dir)
@@ -517,9 +550,9 @@ mod tests {
 
     // -- token storage ------------------------------------------------------
 
-    #[test]
-    fn token_save_load_roundtrip() {
-        let (_guard, _tmp) = temp_boom_home();
+    #[tokio::test]
+    async fn token_save_load_roundtrip() {
+        let (_guard, _tmp) = temp_boom_home().await;
         let tok = sample_token();
         save_token("github", &tok).expect("save");
         let loaded = load_token("github").expect("load");
@@ -547,9 +580,9 @@ mod tests {
         assert!(leftovers.is_empty(), "atomic write left tmp files");
     }
 
-    #[test]
-    fn token_delete_is_idempotent() {
-        let (_guard, _tmp) = temp_boom_home();
+    #[tokio::test]
+    async fn token_delete_is_idempotent() {
+        let (_guard, _tmp) = temp_boom_home().await;
         delete_token("github").expect("delete of missing file is Ok");
         save_token("github", &sample_token()).expect("save");
         assert!(load_token("github").is_some());
@@ -558,9 +591,9 @@ mod tests {
         delete_token("github").expect("second delete is Ok");
     }
 
-    #[test]
-    fn token_ids_cannot_escape_dir() {
-        let (_guard, _tmp) = temp_boom_home();
+    #[tokio::test]
+    async fn token_ids_cannot_escape_dir() {
+        let (_guard, _tmp) = temp_boom_home().await;
         assert!(save_token("../evil", &sample_token()).is_err());
         assert!(save_token("a/b", &sample_token()).is_err());
         assert!(save_token("", &sample_token()).is_err());
@@ -576,9 +609,9 @@ mod tests {
         assert!(dbg.contains("<redacted>"), "Debug should show redaction marker");
     }
 
-    #[test]
-    fn is_connected_respects_token_state() {
-        let (_guard, _tmp) = temp_boom_home();
+    #[tokio::test]
+    async fn is_connected_respects_token_state() {
+        let (_guard, _tmp) = temp_boom_home().await;
         let c = github::GitHubConnector::new();
         assert!(!c.is_connected(), "not connected before any token");
 
@@ -596,39 +629,22 @@ mod tests {
 
     // -- registry -----------------------------------------------------------
 
-    fn ten_connector_registry() -> ConnectorRegistry {
-        let mut reg = ConnectorRegistry::empty();
-        reg.register(Box::new(github::GitHubConnector::new()));
-        // Stubs stand in for the 9 sibling worker modules in unit tests.
-        for id in [
-            "gmail",
-            "gcalendar",
-            "gdrive",
-            "spotify",
-            "social",
-            "places",
-            "flightaware",
-            "duffel",
-            "ticketmaster",
-        ] {
-            reg.register(Box::new(StubConnector {
-                id,
-                auth_kind: "oauth2",
-            }));
-        }
-        reg
-    }
-
     #[test]
-    fn registry_lists_all_ten_ids() {
-        let reg = ten_connector_registry();
+    fn registry_lists_all_ids() {
+        // The real registry: every connector module's constructor must work
+        // without network access.
+        let reg = ConnectorRegistry::new();
         let ids = reg.all_ids();
-        assert_eq!(ids.len(), 10, "registry must list 10 connector ids");
+        assert_eq!(
+            ids.len(),
+            ALL_CONNECTOR_IDS.len(),
+            "registry must list every connector id"
+        );
         for want in ALL_CONNECTOR_IDS {
             assert!(ids.contains(&want), "missing connector id: {want}");
         }
         let summaries = reg.list();
-        assert_eq!(summaries.len(), 10);
+        assert_eq!(summaries.len(), ALL_CONNECTOR_IDS.len());
         for s in &summaries {
             assert!(!s.id.is_empty() && !s.name.is_empty());
             assert!(
@@ -641,7 +657,7 @@ mod tests {
 
     #[test]
     fn registry_get_and_get_mut() {
-        let mut reg = ten_connector_registry();
+        let mut reg = ConnectorRegistry::new();
         assert!(reg.get("gmail").is_some());
         assert!(reg.get("nope").is_none());
         assert!(reg.get_mut("spotify").is_some());
@@ -653,9 +669,9 @@ mod tests {
             .expect("disconnect");
     }
 
-    #[test]
-    fn connect_url_errors_clearly_without_client_id() {
-        let (_guard, _tmp) = temp_boom_home();
+    #[tokio::test]
+    async fn connect_url_errors_clearly_without_client_id() {
+        let (_guard, _tmp) = temp_boom_home().await;
         std::env::remove_var("BOOM_TEST_OAUTH_CLIENT_ID");
         let stub = StubConnector {
             id: "oauth_stub",

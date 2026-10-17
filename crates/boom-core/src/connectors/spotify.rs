@@ -737,13 +737,8 @@ impl Tool for SpotifyPause {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::OnceLock;
 
     /// Env vars are process-global: serialize every test that mutates them.
-    fn env_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-    }
 
     /// Isolate the token file: a fresh temp dir per test.
     fn temp_home() -> String {
@@ -756,9 +751,9 @@ mod tests {
         dir.to_string_lossy().to_string()
     }
 
-    #[test]
-    fn connect_url_shape() {
-        let _env_guard = env_lock().lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_shape() {
+        let _env_guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let home = temp_home();
         std::env::set_var("BOOM_HOME", &home);
         std::env::set_var("BOOM_SPOTIFY_CLIENT_ID", "abc123");
@@ -775,9 +770,9 @@ mod tests {
         std::env::remove_var("BOOM_SPOTIFY_CLIENT_SECRET");
     }
 
-    #[test]
-    fn connect_url_without_creds_is_honest_error() {
-        let _env_guard = env_lock().lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_without_creds_is_honest_error() {
+        let _env_guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let home = temp_home();
         std::env::set_var("BOOM_HOME", &home);
         std::env::remove_var("BOOM_SPOTIFY_CLIENT_ID");
@@ -787,9 +782,9 @@ mod tests {
         assert!(err.contains("BOOM_SPOTIFY_CLIENT_ID"));
     }
 
-    #[test]
-    fn token_file_roundtrip_and_permissions() {
-        let _env_guard = env_lock().lock().unwrap();
+    #[tokio::test]
+    async fn token_file_roundtrip_and_permissions() {
+        let _env_guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let home = temp_home();
         std::env::set_var("BOOM_HOME", &home);
         let tok = SpotifyToken {
@@ -920,7 +915,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn tools_honestly_degrade_when_disconnected() {
-        let _env_guard = env_lock().lock().unwrap();
+        let _env_guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let home = temp_home();
         std::env::set_var("BOOM_HOME", &home);
         let shared = Arc::new(Mutex::new(SpotifyConnector::new()));

@@ -865,8 +865,9 @@ mod tests {
 
     // -- token file round-trip (temp BOOM_HOME) ------------------------------
 
-    #[test]
-    fn token_helpers_roundtrip() {
+    #[tokio::test]
+    async fn token_helpers_roundtrip() {
+        let _env_guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
         let old = std::env::var("BOOM_HOME").ok();
         std::env::set_var("BOOM_HOME", tmp.path());

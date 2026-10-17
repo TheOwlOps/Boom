@@ -746,10 +746,8 @@ pub(crate) fn build_raw_message(to: &str, subject: &str, body: &str) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
 
     // Serialize tests that mutate process-global env vars.
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     struct EnvGuard {
         saved: Vec<(String, Option<String>)>,
@@ -827,9 +825,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn connect_url_contains_scope_and_client_id() {
-        let _lock = ENV_LOCK.lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_contains_scope_and_client_id() {
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let _guard = EnvGuard::set(&[("BOOM_GOOGLE_CLIENT_ID", "test-client-id-123")]);
         let url = GmailConnector::new()
             .connect_url()
@@ -848,9 +846,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn connect_url_errors_without_client_id() {
-        let _lock = ENV_LOCK.lock().unwrap();
+    #[tokio::test]
+    async fn connect_url_errors_without_client_id() {
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home(); // no token file to fall back to
         let _guard = EnvGuard::unset(&["BOOM_GOOGLE_CLIENT_ID"]);
         let err = GmailConnector::new().connect_url().unwrap_err();
@@ -860,7 +858,7 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn tools_degrade_honestly_when_not_connected() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::connectors::TEST_ENV_LOCK.lock().await;
         let (_dir, _home) = isolated_home();
 
         let err = GmailSearch

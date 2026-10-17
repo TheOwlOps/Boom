@@ -740,7 +740,6 @@ impl Tool for SearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
 
     // -- fixtures ------------------------------------------------------------
 
@@ -793,17 +792,15 @@ mod tests {
     // Tests that touch the token file serialize on a process-global lock and
     // point BOOM_HOME at a fresh temp dir, restoring the env var afterwards.
 
-    static HOME_LOCK: Mutex<()> = Mutex::new(());
-
     struct TestHome {
-        _lock: MutexGuard<'static, ()>,
+        _lock: tokio::sync::MutexGuard<'static, ()>,
         _dir: tempfile::TempDir,
         old: Option<String>,
     }
 
     impl TestHome {
-        fn new() -> Self {
-            let lock = HOME_LOCK.lock().unwrap();
+        async fn new() -> Self {
+            let lock = crate::connectors::TEST_ENV_LOCK.lock().await;
             let dir = tempfile::tempdir().unwrap();
             let old = std::env::var("BOOM_HOME").ok();
             std::env::set_var("BOOM_HOME", dir.path());
@@ -968,9 +965,9 @@ mod tests {
 
     // -- token helpers -------------------------------------------------------
 
-    #[test]
-    fn token_helpers_roundtrip() {
-        let _home = TestHome::new();
+    #[tokio::test]
+    async fn token_helpers_roundtrip() {
+        let _home = TestHome::new().await;
         assert!(load_token("github").is_none());
         save_token("github", "ghp_TEST").unwrap();
         assert_eq!(load_token("github").as_deref(), Some("ghp_TEST"));
@@ -1001,7 +998,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_ok_stores_token_and_login() {
-        let _home = TestHome::new();
+        let _home = TestHome::new().await;
         let (base, handle) = mock_server(200, &[], USER_FIXTURE, 1).await;
         let mut c = GitHubConnector::with_api_base(&base);
         assert!(!c.is_connected());
@@ -1036,7 +1033,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_rejects_bad_token() {
-        let _home = TestHome::new();
+        let _home = TestHome::new().await;
         let (base, _handle) =
             mock_server(401, &[], r#"{"message":"Bad credentials"}"#, 1).await;
         let mut c = GitHubConnector::with_api_base(&base);
@@ -1050,7 +1047,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_empty_pat_is_rejected_without_network() {
-        let _home = TestHome::new();
+        let _home = TestHome::new().await;
         let mut c = GitHubConnector::new();
         let err = c.exchange_code("   ").await.unwrap_err();
         assert!(err.contains("empty"), "got: {err}");
@@ -1058,7 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn disconnect_clears_token() {
-        let _home = TestHome::new();
+        let _home = TestHome::new().await;
         let (base, _handle) = mock_server(200, &[], USER_FIXTURE, 1).await;
         let mut c = GitHubConnector::with_api_base(&base);
         c.exchange_code("ghp_X").await.unwrap();
@@ -1073,7 +1070,7 @@ mod tests {
 
     #[tokio::test]
     async fn not_connected_is_honest() {
-        let _home = TestHome::new();
+        let _home = TestHome::new().await;
         let tool = ReposTool::new("http://127.0.0.1:9".to_string());
         let err = tool
             .execute(serde_json::json!({}))
@@ -1084,15 +1081,15 @@ mod tests {
 
     // -- repos tool (mock) ---------------------------------------------------
 
-    fn connected_tool_home(pat: &str) -> TestHome {
-        let home = TestHome::new();
+    async fn connected_tool_home(pat: &str) -> TestHome {
+        let home = TestHome::new().await;
         save_token("github", pat).unwrap();
         home
     }
 
     #[tokio::test]
     async fn repos_lists_and_maps_fields() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, handle) = mock_server(200, &[], REPOS_FIXTURE, 1).await;
         let tool = ReposTool::new(base);
         let out = tool.execute(serde_json::json!({})).await.unwrap();
@@ -1113,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     async fn repos_clamps_per_page_to_100() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, handle) = mock_server(200, &[], "[]", 1).await;
         let tool = ReposTool::new(base);
         tool.execute(serde_json::json!({"per_page": 500}))
@@ -1126,7 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn repos_rejects_bad_args() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let tool = ReposTool::new("http://127.0.0.1:9".to_string());
         for args in [
             serde_json::json!({"visibility": "everyone"}),
@@ -1144,7 +1141,7 @@ mod tests {
 
     #[tokio::test]
     async fn issues_lists_and_maps_fields() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, handle) = mock_server(200, &[], ISSUES_FIXTURE, 1).await;
         let tool = IssuesTool::new(base);
         let out = tool
@@ -1169,7 +1166,7 @@ mod tests {
 
     #[tokio::test]
     async fn issues_rejects_bad_args() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let tool = IssuesTool::new("http://127.0.0.1:9".to_string());
         // Missing required args.
         let err = tool
@@ -1195,7 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_repositories_summarizes() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, handle) = mock_server(200, &[], SEARCH_REPOS_FIXTURE, 1).await;
         let tool = SearchTool::new(base);
         let out = tool
@@ -1215,7 +1212,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_issues_extracts_repo() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, _handle) = mock_server(200, &[], SEARCH_ISSUES_FIXTURE, 1).await;
         let tool = SearchTool::new(base);
         let out = tool
@@ -1229,7 +1226,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_code_summarizes() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, _handle) = mock_server(200, &[], SEARCH_CODE_FIXTURE, 1).await;
         let tool = SearchTool::new(base);
         let out = tool
@@ -1244,7 +1241,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_clamps_per_page_to_50() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, handle) = mock_server(200, &[], SEARCH_REPOS_FIXTURE, 1).await;
         let tool = SearchTool::new(base);
         tool.execute(serde_json::json!({"query": "x", "per_page": 99}))
@@ -1256,7 +1253,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_rejects_bad_args() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let tool = SearchTool::new("http://127.0.0.1:9".to_string());
         let err = tool
             .execute(serde_json::json!({"kind": "repositories"}))
@@ -1274,7 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limit_exhausted_gives_clear_message() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, _handle) = mock_server(
             403,
             &[("x-ratelimit-remaining", "0")],
@@ -1291,7 +1288,7 @@ mod tests {
 
     #[tokio::test]
     async fn forbidden_without_rate_limit_is_not_a_rate_limit_error() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, _handle) = mock_server(
             403,
             &[("x-ratelimit-remaining", "59")],
@@ -1308,7 +1305,7 @@ mod tests {
 
     #[tokio::test]
     async fn not_found_maps_cleanly() {
-        let _home = connected_tool_home("ghp_T");
+        let _home = connected_tool_home("ghp_T").await;
         let (base, _handle) =
             mock_server(404, &[], r#"{"message":"Not Found"}"#, 1).await;
         let tool = IssuesTool::new(base);

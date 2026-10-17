@@ -1104,35 +1104,27 @@ impl Connector for GDriveConnector {
 mod tests {
     use super::*;
 
-    /// Serializes tests that mutate the Google OAuth env vars, so parallel
-    /// execution cannot observe a half-changed environment.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Unique temp BOOM_HOME per test; parallel-safe.
-    fn temp_boom_home(tag: &str) -> tempfile::TempDir {
+    /// Unique temp BOOM_HOME per test, serialized on the process-global
+    /// [`crate::connectors::TEST_ENV_LOCK`].
+    async fn temp_boom_home(tag: &str) -> (tokio::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        let guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         env::set_var("BOOM_HOME", dir.path());
         env::set_var("BOOM_GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com");
         env::set_var("BOOM_GOOGLE_CLIENT_SECRET", "test-client-secret");
         let _ = tag;
-        dir
+        (guard, dir)
     }
 
     fn fresh_connector() -> GDriveConnector {
-        let _tmp = temp_boom_home("fresh");
-        // Keep the TempDir alive for the whole test via a static leak is
-        // overkill; instead return it alongside. Simpler: forget it — the OS
-        // cleans /tmp eventually. We intentionally leak to keep BOOM_HOME valid.
-        std::mem::forget(_tmp);
         GDriveConnector {
             client: GDriveClient::disconnected(),
         }
     }
 
-    #[test]
-    fn connect_url_shape() {
-        let _env = ENV_LOCK.lock().unwrap();
-        let _tmp = temp_boom_home("url");
+    #[tokio::test]
+    async fn connect_url_shape() {
+        let (_guard, _tmp) = temp_boom_home("url").await;
         let c = GDriveConnector {
             client: GDriveClient::disconnected(),
         };
@@ -1147,10 +1139,9 @@ mod tests {
         assert!(url.contains("www.googleapis.com%2Fauth%2Fdrive.file"));
     }
 
-    #[test]
-    fn connect_url_fails_honestly_without_creds() {
-        let _env = ENV_LOCK.lock().unwrap();
-        let _tmp = temp_boom_home("nocreds");
+    #[tokio::test]
+    async fn connect_url_fails_honestly_without_creds() {
+        let (_guard, _tmp) = temp_boom_home("nocreds").await;
         env::remove_var("BOOM_GOOGLE_CLIENT_ID");
         env::remove_var("BOOM_GOOGLE_CLIENT_SECRET");
         let c = GDriveConnector {
@@ -1183,6 +1174,7 @@ mod tests {
 
     #[tokio::test]
     async fn tools_fail_honestly_when_disconnected() {
+        let (_guard, _tmp) = temp_boom_home("fresh").await;
         let c = fresh_connector();
         assert!(!c.is_connected());
         let mut reg = ToolRegistry::default();
@@ -1261,9 +1253,9 @@ mod tests {
         assert!(check_limit(0, MAX_UPLOAD_BYTES, "upload file").is_ok());
     }
 
-    #[test]
-    fn path_guard() {
-        let tmp = temp_boom_home("guard");
+    #[tokio::test]
+    async fn path_guard() {
+        let (_guard, tmp) = temp_boom_home("guard").await;
         let boom = tmp.path().canonicalize().unwrap();
 
         // Inside BOOM_HOME (relative) → accepted.
@@ -1303,9 +1295,9 @@ mod tests {
         assert!(err.to_string().contains("outside"));
     }
 
-    #[test]
-    fn path_guard_allows_extra_dirs() {
-        let tmp = temp_boom_home("extra");
+    #[tokio::test]
+    async fn path_guard_allows_extra_dirs() {
+        let (_guard, tmp) = temp_boom_home("extra").await;
         let extra = tempfile::tempdir().unwrap();
         env::set_var("BOOM_GDRIVE_ALLOWED_DIRS", extra.path());
         let p = guard_dest_path(extra.path().join("ok.bin").to_str().unwrap())
@@ -1337,9 +1329,9 @@ mod tests {
         assert!(dbg.contains("<redacted>"));
     }
 
-    #[test]
-    fn token_roundtrip_and_perms() {
-        let _tmp = temp_boom_home("token");
+    #[tokio::test]
+    async fn token_roundtrip_and_perms() {
+        let (_guard, _tmp) = temp_boom_home("token").await;
         let tok = StoredToken {
             access_token: "acc".into(),
             refresh_token: Some("ref".into()),

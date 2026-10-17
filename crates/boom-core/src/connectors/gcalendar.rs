@@ -815,19 +815,16 @@ mod tests {
     use crate::connectors::{load_token as ct_load, save_token as ct_save};
     use std::sync::Mutex;
 
-    /// Serializes every test that touches process-global env vars.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     /// RAII: fresh `$BOOM_HOME` temp dir + env lock for the whole test.
     struct TempHome {
-        _guard: std::sync::MutexGuard<'static, ()>,
+        _guard: tokio::sync::MutexGuard<'static, ()>,
         _dir: tempfile::TempDir,
         prev_home: Option<String>,
     }
 
     impl TempHome {
-        fn new() -> Self {
-            let guard = ENV_LOCK.lock().unwrap();
+        async fn new() -> Self {
+            let guard = crate::connectors::TEST_ENV_LOCK.lock().await;
             let dir = tempfile::tempdir().unwrap();
             let prev_home = std::env::var("BOOM_HOME").ok();
             std::env::set_var("BOOM_HOME", dir.path());
@@ -882,9 +879,9 @@ mod tests {
 
     // -- connect_url -------------------------------------------------------
 
-    #[test]
-    fn connect_url_shape() {
-        let _env = TempHome::new().with_client_env("cid-123", "csecret-456");
+    #[tokio::test]
+    async fn connect_url_shape() {
+        let _env = TempHome::new().await.with_client_env("cid-123", "csecret-456");
         let conn = GCalendarConnector::new();
         let url = conn.connect_url().expect("connect_url must succeed");
         let parsed = reqwest::Url::parse(&url).expect("connect_url must be a valid URL");
@@ -921,9 +918,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn connect_url_fails_without_client_id() {
-        let _home = TempHome::new();
+    #[tokio::test]
+    async fn connect_url_fails_without_client_id() {
+        let _home = TempHome::new().await;
         std::env::remove_var("BOOM_GOOGLE_CLIENT_ID");
         std::env::remove_var("BOOM_GOOGLE_CLIENT_SECRET");
         let conn = GCalendarConnector::new();
@@ -934,9 +931,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn connect_url_falls_back_to_extra_in_token_file() {
-        let _home = TempHome::new();
+    #[tokio::test]
+    async fn connect_url_falls_back_to_extra_in_token_file() {
+        let _home = TempHome::new().await;
         std::env::remove_var("BOOM_GOOGLE_CLIENT_ID");
         std::env::remove_var("BOOM_GOOGLE_CLIENT_SECRET");
         seed_token(&ConnectorToken {
@@ -957,7 +954,7 @@ mod tests {
 
     #[tokio::test]
     async fn tools_degrade_honestly_when_not_connected() {
-        let _home = TempHome::new();
+        let _home = TempHome::new().await;
         let conn = GCalendarConnector::new();
         assert!(!conn.is_connected());
 
@@ -988,9 +985,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn is_connected_honesty() {
-        let _home = TempHome::new();
+    #[tokio::test]
+    async fn is_connected_honesty() {
+        let _home = TempHome::new().await;
         let conn = GCalendarConnector::new();
         assert!(!conn.is_connected(), "no token file → not connected");
 
@@ -1117,7 +1114,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_rejects_bad_rfc3339() {
-        let _home = TempHome::new();
+        let _home = TempHome::new().await;
         seed_token(&sample_token("at"));
         let conn = GCalendarConnector::new();
         let mut reg = ToolRegistry::default();
@@ -1170,9 +1167,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn debug_redacts_token() {
-        let _home = TempHome::new();
+    #[tokio::test]
+    async fn debug_redacts_token() {
+        let _home = TempHome::new().await;
         seed_token(&sample_token("super-secret-access-token-xyz"));
         let conn = GCalendarConnector::new();
         assert!(conn.is_connected()); // populate the cache
@@ -1187,9 +1184,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn token_file_roundtrip() {
-        let _home = TempHome::new();
+    #[tokio::test]
+    async fn token_file_roundtrip() {
+        let _home = TempHome::new().await;
         let tok = ConnectorToken {
             access_token: "at-1".to_string(),
             refresh_token: Some("rt-1".to_string()),
@@ -1347,7 +1344,7 @@ mod tests {
     /// and the refreshed token is persisted to the token file.
     #[tokio::test]
     async fn refresh_on_401_then_retry_succeeds() {
-        let _env = TempHome::new().with_client_env("cid", "csecret");
+        let _env = TempHome::new().await.with_client_env("cid", "csecret");
         // Looks valid (not expired) but Google rejects it → exercises the
         // reactive 401 → refresh → retry path.
         seed_token(&sample_token("stale-access"));
@@ -1436,7 +1433,7 @@ mod tests {
     /// exchange_code trades the auth code for tokens and persists them.
     #[tokio::test]
     async fn exchange_code_persists_tokens() {
-        let _env = TempHome::new().with_client_env("cid", "csecret");
+        let _env = TempHome::new().await.with_client_env("cid", "csecret");
         let (addr, recorded, task) = spawn_mock(|req: &RecordedRequest| {
             assert_eq!(req.path, "/token");
             assert_eq!(req.method, "POST");
@@ -1488,7 +1485,7 @@ mod tests {
     /// A failed token exchange surfaces Google's error honestly.
     #[tokio::test]
     async fn exchange_code_surfaces_google_error() {
-        let _env = TempHome::new().with_client_env("cid", "csecret");
+        let _env = TempHome::new().await.with_client_env("cid", "csecret");
         let (addr, _recorded, task) = spawn_mock(|_req: &RecordedRequest| {
             (
                 400,

@@ -734,7 +734,6 @@ mod tests {
     /// Serializes the tests that mutate `BOOM_HOME` (Rust runs tests in
     /// parallel threads of one process; env vars are process-global).
     /// Async mutex so the guard may be held across `.await` points.
-    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     // -- validation ---------------------------------------------------------
 
@@ -968,7 +967,7 @@ mod tests {
 
     #[tokio::test]
     async fn tools_error_honestly_when_not_connected() {
-        let _guard = ENV_LOCK.lock().await;
+        let _guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         // Point BOOM_HOME at an empty temp dir so no token file can exist.
         let dir = std::env::temp_dir().join(format!(
             "boom-flights-test-{}",
@@ -1011,7 +1010,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_rejects_same_origin_destination_before_network() {
-        let _guard = ENV_LOCK.lock().await;
+        let _guard = crate::connectors::TEST_ENV_LOCK.lock().await;
         // Validation happens before any HTTP, so this errors even unconnected —
         // but the not-connected check runs first by design; use a connected
         // stub by writing a token into a temp BOOM_HOME.
