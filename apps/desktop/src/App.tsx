@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Menu } from "lucide-react";
 import Sidebar from "./components/Sidebar";
+import BotPanel from "./components/BotPanel";
 import { ChatView, type BotApi } from "./components/ChatView";
 import GroupChatView from "./components/GroupChatView";
 import { NewGroupModal } from "./components/BotGroupManager";
@@ -78,17 +79,13 @@ function usePersistedState<T>(
 /**
  * Slim header row (52px), iMessage-style chat title bar.
  * Left: bot identity — avatar monogram + name + subtitle.
- * Right: backend status dot + command palette hint.
+ * Right: backend status dot.
  * Settings / Marketplace now live in the sidebar footer.
  * Monochrome: CSS vars only (var(--bg), var(--surface), var(--border),
  * var(--text), var(--muted)). Icon buttons are ghost circles with a gray
  * hover background.
  */
-function Header({
-  onOpenCommandPalette,
-}: {
-  onOpenCommandPalette(): void;
-}) {
+function Header() {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3">
       {/* Left — bot identity (iMessage-style title). */}
@@ -109,22 +106,9 @@ function Header({
         </div>
       </div>
 
-      {/* Right — backend status dot + command palette. */}
+      {/* Right — backend status dot. */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <BackendStatus compact />
-        {/* Command palette hint chip — opens the palette on click. */}
-        <Tooltip label="Command palette (⌘K)">
-          <button
-            type="button"
-            onClick={onOpenCommandPalette}
-            aria-label="Open command palette"
-            className="flex h-9 items-center justify-center rounded-full px-2 text-[var(--muted)] transition-colors hover:bg-[var(--surface)] hover:text-[var(--text)]"
-          >
-            <kbd className="border border-[var(--border)] rounded bg-[var(--surface)] px-1.5 py-0.5 font-[inherit] text-[11px] font-medium leading-none">
-              ⌘K
-            </kbd>
-          </button>
-        </Tooltip>
       </div>
     </header>
   );
@@ -171,6 +155,8 @@ export default function App() {
   // Sidebar (dumb component) can render and trigger switches.
   const [bots, setBots] = useState<Bot[]>([]);
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  /** Right-side bot info panel — open by default when a bot is selected. */
+  const [botPanelOpen, setBotPanelOpen] = useState(true);
   // Bot groups (sidebar "Groups" section + full-page group chat).
   const [groups, setGroups] = useState<BotGroup[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
@@ -295,8 +281,14 @@ export default function App() {
     bots,
     activeBotId,
     onSelectBot: (id: string) => {
-      // ChatView owns bot switching (API + localStorage); call through.
-      void botApiRef.current?.switchBot(id);
+      // Clicking the already-active bot toggles its info panel.
+      if (id === activeBotId) {
+        setBotPanelOpen((v) => !v);
+      } else {
+        // ChatView owns bot switching (API + localStorage); call through.
+        void botApiRef.current?.switchBot(id);
+        setBotPanelOpen(true);
+      }
       setActiveGroupId(null);
       setMobileNavOpen(false);
     },
@@ -313,8 +305,10 @@ export default function App() {
       setActiveGroupId(null);
       setMobileNavOpen(false);
     },
-    onCreateBot: () => {
-      openSettingsSection("bots");
+    onBotsChanged: () => {
+      // Sidebar did an inline create/rename/delete — refresh the roster.
+      // ChatView keeps its own copy via onBotApi; it reconciles on next switch.
+      void listBots().then(setBots).catch(() => {});
       setMobileNavOpen(false);
     },
     onCreateGroup: () => {
@@ -343,11 +337,7 @@ export default function App() {
 
       {/* Center column — slim header, chat view */}
       <main id="boom-main" className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-        <Header
-          onOpenCommandPalette={() =>
-            window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))
-          }
-        />
+        <Header />
         {/* Chat is the main view; group chat takes over when a group is selected. */}
         <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label="Chat view">
           {/* Full backend health panel — only visible while disconnected. */}
@@ -372,6 +362,19 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* Right column — bot info panel (only when chatting with a bot). */}
+      {(() => {
+        const activeBot = activeBotId ? bots.find((b) => b.id === activeBotId) ?? null : null;
+        if (!activeBot || activeGroupId || !botPanelOpen) return null;
+        return (
+          <BotPanel
+            bot={activeBot}
+            onClose={() => setBotPanelOpen(false)}
+            onEditAdvanced={() => openSettingsSection("bots")}
+          />
+        );
+      })()}
 
       {/* Sidebar as overlay drawer on <768px */}
       {mobileNavOpen && (
