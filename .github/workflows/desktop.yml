@@ -93,11 +93,7 @@ jobs:
         run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # TAURI_SIGNING_PRIVATE_KEY intentionally not passed here.
-          # The "Verify updater signing key" step above validates the secret.
-          # To enable signed auto-updates: set a VALID key in repo secrets
-          # (generate via `npx tauri signer generate`) and add this line back:
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       # With --bundles app,dmg the raw .app survives in bundle/macos/ (the
       # bundler only cleans it when MacOsBundle is not a requested target).
