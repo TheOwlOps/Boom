@@ -3,9 +3,9 @@
 // Integration: pnpm add react-markdown remark-gfm
 // Animation classes (keyframes live in shared animations.css, NOT defined here):
 //   msg-appear (message mount), toolcall-pulse (tool running state)
-// iMessage skin: bubble/row/timestamp classes live in ../styles/imessage.css
-//   (prefix `im-`). MessageBubble renders avatar-at-bottom rows with curved
-//   tails; all layout constants are CSS, no logic changed here.
+// Team-chat skin: row/avatar/name/time classes live in ../styles/teamchat.css
+//   (prefix `tc-`). MessageBubble renders content only — the row chrome
+//   (avatar, sender name, timestamp) is owned by ChatView.
 // Security: no dangerouslySetInnerHTML. react-markdown runs without rehype-raw,
 // so raw HTML in model output is escaped, never injected.
 
@@ -14,7 +14,6 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, CheckCircle2, Copy, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import type { ChatMessage } from '../lib/types';
-import { BoomiAvatar } from './BoomiAvatar';
 
 const MONO = "'JetBrains Mono', monospace";
 const BODY = "'Work Sans', sans-serif";
@@ -26,9 +25,9 @@ const ghostBtn: React.CSSProperties = {
 };
 
 /**
- * Code-block background resolves through --im-code-bg so the iMessage skin
- * can darken code inside the gray bot bubble; falls back to the original
- * --surface-2 everywhere else (callers that never import imessage.css).
+ * Code-block background resolves through --im-code-bg so older skins can
+ * darken code inside bot messages; falls back to --surface-2 everywhere
+ * else (callers that never set it).
  */
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
@@ -91,44 +90,21 @@ const mdComponents: Components = {
   },
 };
 
-import { formatFullTime, formatSmartTime } from "../lib/formatTime";
-
-/** Backwards-compatible alias kept for the removed local formatter. */
-function formatTime(ts: number): string {
-  return formatSmartTime(ts);
-}
-
 /**
- * iMessage-style message row.
- *  - user: right-aligned black bubble (#000 dark / near-black light),
- *    white text, no avatar, tail on the bottom-right.
- *  - assistant: left-aligned gray bubble (var(--surface-2)) next to an
- *    animated BoomiAvatar (bottom-aligned), markdown rendered inside,
- *    tail on the bottom-left.
- * A small muted timestamp sits under every bubble.
+ * Team-chat message content (no chrome).
+ *  - user: plain pre-wrapped text.
+ *  - assistant: markdown rendered inline.
+ * The row (avatar, sender name, timestamp) is rendered by ChatView.
  */
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
-  const ts = formatTime(message.ts);
-  return (
-    <div className={`msg-appear im-row${isUser ? ' im-row-user' : ' im-row-bot'}`}>
-      {!isUser && <BoomiAvatar size={32} alt="Boomi" />}
-      <div className="im-col">
-        <div className={`im-bubble${isUser ? ' im-bubble-user' : ' im-bubble-bot'}`}>
-          {isUser
-            ? <div className="im-user-text">{message.text}</div>
-            : <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{message.text}</ReactMarkdown>}
-        </div>
-        {ts && (
-          <div
-            className="im-ts"
-            title={formatFullTime(message.ts)}
-            aria-label={`Sent at ${formatFullTime(message.ts)}`}
-          >
-            {ts}
-          </div>
-        )}
-      </div>
+  return isUser ? (
+    <div className="tc-user-text">{message.text}</div>
+  ) : (
+    <div className="tc-md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {message.text}
+      </ReactMarkdown>
     </div>
   );
 }

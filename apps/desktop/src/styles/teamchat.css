@@ -1,0 +1,344 @@
+/* ------------------------------------------------------------------
+ * teamchat.css — team-chat skin for Boom desktop ChatView.
+ *
+ * Slack/Discord-style rows: avatar left, sender name + timestamp on one
+ * line, message content below. No bubbles, no tails — clean and minimal.
+ *
+ * Scope: every selector is prefixed `tc-` to avoid clashing with other
+ * stylesheets. Imported by components/ChatView.tsx.
+ *
+ * Palette: STRICTLY monochrome — grays only, via the existing theme vars.
+ * Light theme works through [data-theme="light"] on <html>.
+ * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------
+ * Header: slim channel bar — avatar + name + status.
+ * ------------------------------------------------------------------ */
+
+.tc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 56px;
+}
+
+.tc-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tc-header-name {
+  font-family: var(--font-display, "Outfit", system-ui, sans-serif);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-header-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tc-online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.tc-header-note {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+/* ------------------------------------------------------------------
+ * Message list
+ * ------------------------------------------------------------------ */
+
+.tc-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 16px;
+}
+
+/* One message row: avatar (top-aligned) + main column. */
+.tc-msg {
+  display: flex;
+  gap: 12px;
+  padding: 6px 20px;
+  transition: background-color 120ms ease;
+}
+
+.tc-msg:hover {
+  background: var(--surface);
+}
+
+.tc-msg-avatar {
+  flex-shrink: 0;
+  margin-top: 2px;
+  line-height: 0;
+}
+
+/* User rows get a simple monochrome initial chip instead of a bot avatar. */
+.tc-user-chip {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  user-select: none;
+}
+
+.tc-msg-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Sender name + timestamp on one line. */
+.tc-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tc-msg-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-msg-time {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* Message content: full-width, comfortable reading. */
+.tc-msg-body {
+  font-family: var(--font-body, "Work Sans", system-ui, sans-serif);
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.tc-user-text {
+  white-space: pre-wrap;
+}
+
+/* Markdown inside team-chat rows. */
+.tc-md > p:first-child,
+.tc-md > *:first-child { margin-top: 0; }
+.tc-md > p:last-child,
+.tc-md > *:last-child { margin-bottom: 0; }
+.tc-md p { margin: 6px 0; }
+.tc-md ul,
+.tc-md ol { margin: 6px 0; padding-left: 22px; }
+.tc-md blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--muted);
+  color: var(--muted);
+}
+.tc-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Code blocks resolve through --im-code-bg for compat with MessageParts. */
+.tc-md pre { max-width: 100%; }
+.tc-md pre code {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+.tc-md :not(pre) > code { overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------
+ * Day / NEW divider — thin rule with centered label.
+ * ------------------------------------------------------------------ */
+
+.tc-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px 4px;
+  user-select: none;
+}
+
+.tc-divider::before,
+.tc-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.tc-divider-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------
+ * Thinking indicator: avatar + name row + dots, no bubble.
+ * ------------------------------------------------------------------ */
+
+.tc-thinking {
+  display: flex;
+  gap: 12px;
+  padding: 6px 20px;
+}
+
+.tc-thinking-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Compact sending line above the composer. */
+.tc-sending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 20px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------
+ * Composer: pill input + circular send button.
+ * ------------------------------------------------------------------ */
+
+.tc-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tc-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 18px;
+  font-family: var(--font-body, "Work Sans", system-ui, sans-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.tc-input::placeholder { color: var(--muted); }
+
+.tc-input:focus { border-color: var(--muted); }
+
+.tc-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.tc-send {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.tc-send:hover:not(:disabled) { opacity: 0.85; }
+.tc-send:active:not(:disabled) { transform: scale(0.94); }
+
+.tc-send:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.tc-send:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------
+ * Hover actions on message rows (base show/hide in effects.css).
+ * ------------------------------------------------------------------ */
+
+.tc-msg .msg-actions {
+  top: 2px;
+  right: 12px;
+}
+
+.tc-msg .msg-action-btn {
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+
+.tc-msg .msg-action-btn:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+/* ------------------------------------------------------------------
+ * Entrance animation for new rows.
+ * ------------------------------------------------------------------ */
+
+@keyframes tc-msg-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.tc-msg {
+  animation: tc-msg-in 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-msg { animation: none; }
+}

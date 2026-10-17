@@ -66,13 +66,7 @@ function TeammateRow({
         />
       </span>
       <span className="teammate-meta">
-        <span className="teammate-name-row">
-          <span className="teammate-name">{bot.name}</span>
-          <span className={`teammate-status${online ? " online" : ""}`}>
-            <span className="status-dot" aria-hidden="true" />
-            {online ? "Online" : "Offline"}
-          </span>
-        </span>
+        <span className="teammate-name">{bot.name}</span>
         <span className="teammate-preview">{preview}</span>
       </span>
     </button>

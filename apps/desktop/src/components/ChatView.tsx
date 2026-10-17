@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SendHorizonal, RotateCcw, Copy, Check, KeyRound, X } from "lucide-react";
+import { SendHorizonal, RotateCcw, Copy, Check, KeyRound, X, User } from "lucide-react";
 import { listBots, postChat, setActiveBot, isProviderNotConfiguredError } from "../lib/api";
 import type { Bot as BotInfo, ChatMessage, ChatRequest, Strategy } from "../lib/types";
+import { formatSmartTime, formatFullTime } from "../lib/formatTime";
 import { MessageBubble } from "./MessageParts";
 import { BoomiAvatar } from "./BoomiAvatar";
 import { BotAvatar } from "./BotAvatar";
@@ -9,7 +10,7 @@ import { BoomiEmptyState } from "./BoomiEmptyState";
 import { ThinkingDots } from "./ThinkingDots";
 import { Skeleton, SkeletonAvatar } from "./Skeleton";
 import "../styles/effects.css";
-import "../styles/imessage.css";
+import "../styles/teamchat.css";
 
 // CLIENT-SIDE ANIMATION (NOT live token streaming): the backend returns the
 // full reply at once (see API_CONTRACT.md `POST /api/chat`), and this reveals
@@ -40,7 +41,7 @@ type Props = {
   sessionId: string | null;
   /**
    * Kept for API compatibility with older callers (App.tsx passes it).
-   * The iMessage header no longer renders a panel toggle button; the prop
+   * The team-chat header no longer renders a panel toggle button; the prop
    * is accepted and ignored.
    */
   onTogglePanel(): void;
@@ -382,12 +383,12 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
     autoresize(e.target);
   };
 
-  // `lastStrategy` is still tracked (set in `send`) but the iMessage header
-  // is minimal — no strategy badge rendered. Read here to keep the state
-  // intentionally alive for future use / debugging.
+  // `lastStrategy` is still tracked (set in `send`) but the team-chat
+  // header is minimal — no strategy badge rendered. Read here to keep the
+  // state intentionally alive for future use / debugging.
   void lastStrategy;
   // `onTogglePanel` kept for prop compatibility only (no toggle button in
-  // the iMessage header); `botMenuOpen` state is driven by switchBot only.
+  // the team-chat header); `botMenuOpen` state is driven by switchBot only.
   void onTogglePanel;
 
   const canSend = !sending && input.trim().length > 0;
@@ -402,10 +403,10 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
 
   return (
     <section className="chat-view" aria-label="Chat">
-      {/* iMessage header: avatar + active bot name + Online status.
+      {/* Team-chat header: avatar + bot name + Online status.
           No bot-picker dropdown (sidebar owns selection via onBotApi),
           no panel toggle button. */}
-      <header className="im-header">
+      <header className="tc-header">
         {activeBot ? (
           <BotAvatar
             botId={activeBot.id}
@@ -417,13 +418,13 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         ) : (
           <BoomiAvatar size={36} alt="Boomi" />
         )}
-        <div className="im-header-meta">
-          <div className="im-header-name">{activeBot ? activeBot.name : "Boomi"}</div>
-          <div className="im-header-status">
-            <span className="im-online-dot" aria-hidden="true" />
+        <div className="tc-header-meta">
+          <div className="tc-header-name">{activeBot ? activeBot.name : "Boomi"}</div>
+          <div className="tc-header-status">
+            <span className="tc-online-dot" aria-hidden="true" />
             <span>Online</span>
             {botError && (
-              <span className="im-header-note" role="alert" title={botError}>
+              <span className="tc-header-note" role="alert" title={botError}>
                 · bots unavailable
               </span>
             )}
@@ -431,28 +432,19 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         </div>
       </header>
 
-      <div className="chat-messages" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
-        {/* History loading: skeleton iMessage bubbles with alternating
-            widths, mimicking the .im-row/.im-col layout of real messages. */}
+      <div className="chat-messages tc-list" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
+        {/* History loading: skeleton team-chat rows with varied widths. */}
         {loadingHistory && messages.length === 0 && (
           <div role="status" aria-busy="true" aria-label="Loading conversation history">
-            {HISTORY_SKELETON_WIDTHS.map((w, i) => {
-              const user = i % 2 === 1;
-              return (
-                <div
-                  key={i}
-                  className={`im-row ${user ? "im-row-user" : "im-row-bot"}`}
-                  aria-hidden="true"
-                >
-                  {!user && <SkeletonAvatar size={32} />}
-                  <Skeleton
-                    width={w}
-                    height={i % 3 === 2 ? 78 : 56}
-                    radius={20}
-                  />
+            {HISTORY_SKELETON_WIDTHS.map((w, i) => (
+              <div key={i} className="tc-msg" aria-hidden="true">
+                <SkeletonAvatar size={36} />
+                <div className="tc-msg-main" style={{ gap: 8 }}>
+                  <Skeleton width="24%" height={13} />
+                  <Skeleton width={w} height={i % 3 === 2 ? 64 : 40} />
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
 
@@ -468,6 +460,10 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         {messages.map((msg) => {
           const isTyping = msg.id === typingId;
           const copied = copiedId === msg.id;
+          const isUser = msg.role === "user";
+          const senderName = isUser ? "You" : (activeBot ? activeBot.name : "Boomi");
+          const ts = formatSmartTime(msg.ts);
+          const fullTs = formatFullTime(msg.ts);
           return (
             <div key={msg.id} className="msg-row">
               {/* Hover actions: Copy on every message, Regenerate only on the
@@ -496,32 +492,59 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
                 )}
               </div>
 
-              {isTyping ? (
-                // Typing placeholder: same iMessage bubble styling as the
-                // final MessageBubble; plain text word reveal, markdown
-                // renders once the reveal finishes.
-                <div className="msg-appear im-row im-row-bot">
-                  <BoomiAvatar size={32} status="thinking" alt="Boomi is typing" />
-                  <div className="im-col">
-                    <div className="im-bubble im-bubble-bot">
+              {/* Team-chat row: avatar + name/time header + content. */}
+              <div className="msg-appear tc-msg">
+                <div className="tc-msg-avatar">
+                  {isUser ? (
+                    <span className="tc-user-chip" aria-hidden="true">
+                      <User size={18} />
+                    </span>
+                  ) : isTyping ? (
+                    <BoomiAvatar size={36} status="thinking" alt="Boomi is typing" />
+                  ) : activeBot ? (
+                    <BotAvatar
+                      botId={activeBot.id}
+                      name={activeBot.name}
+                      emoji={activeBot.avatar_emoji}
+                      size={36}
+                      status="online"
+                    />
+                  ) : (
+                    <BoomiAvatar size={36} alt="Boomi" />
+                  )}
+                </div>
+                <div className="tc-msg-main">
+                  <div className="tc-msg-head">
+                    <span className="tc-msg-name">{senderName}</span>
+                    {ts && (
+                      <span className="tc-msg-time" title={fullTs} aria-label={`Sent at ${fullTs}`}>
+                        {ts}
+                      </span>
+                    )}
+                  </div>
+                  <div className="tc-msg-body">
+                    {isTyping ? (
                       <TypingText text={msg.text} wordsShown={revealedWords} />
-                    </div>
+                    ) : (
+                      <MessageBubble message={msg} />
+                    )}
                   </div>
                 </div>
-              ) : (
-                <div className="msg-markdown">
-                  <MessageBubble message={msg} />
-                </div>
-              )}
+              </div>
             </div>
           );
         })}
 
         {phase && (
-          <div className="im-thinking">
-            {/* Animated thinking variant (cycles through 5 videos). */}
-            <BoomiAvatar size={32} status="thinking" alt="Boomi is thinking" />
-            <div className="im-thinking-bubble">
+          <div className="tc-thinking">
+            {/* Animated thinking avatar + phase label, no bubble. */}
+            <div className="tc-msg-avatar">
+              <BoomiAvatar size={36} status="thinking" alt="Boomi is thinking" />
+            </div>
+            <div className="tc-thinking-main">
+              <div className="tc-msg-head">
+                <span className="tc-msg-name">{activeBot ? activeBot.name : "Boomi"}</span>
+              </div>
               <ThinkingDots label={phase ? `${phase}…` : "Thinking"} />
             </div>
           </div>
@@ -568,7 +591,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
 
       {/* Typing indicator: visible near the composer while waiting for a reply. */}
       {sending && (
-        <div className="im-sending" role="status" aria-live="polite">
+        <div className="tc-sending" role="status" aria-live="polite">
           <span className="typing-dots" aria-hidden="true">
             <span />
             <span />
@@ -579,7 +602,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
       )}
 
       <form
-        className="im-composer"
+        className="tc-composer"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -587,7 +610,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
       >
         <textarea
           ref={inputRef}
-          className="im-input"
+          className="tc-input"
           rows={1}
           value={input}
           onChange={handleInput}
@@ -596,7 +619,7 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
           disabled={sending}
           aria-label="Message input"
         />
-        <button type="submit" className="im-send" disabled={!canSend} aria-label="Send message">
+        <button type="submit" className="tc-send" disabled={!canSend} aria-label="Send message">
           <SendHorizonal size={18} />
         </button>
       </form>

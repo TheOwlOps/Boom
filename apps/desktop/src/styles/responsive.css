@@ -32,45 +32,35 @@
  * Chat bubbles: cap line length, never overflow, code scrolls.
  * ------------------------------------------------------------------ */
 
-/* Readability cap in ch on top of the existing 78% cap from
- * imessage.css: long messages stay comfortable on wide windows,
- * short/narrow windows are unaffected (min picks the smaller). */
-.im-col {
-  max-width: min(78%, 72ch);
+/* Readability cap: long messages stay comfortable on wide windows,
+ * short/narrow windows are unaffected. */
+.tc-msg-main {
+  max-width: min(100%, 80ch);
 }
 
-/* Message text always wraps — belts-and-braces next to the
- * overflow-wrap already on .im-bubble (inherited, but explicit here
- * for user-typed long tokens). */
-.im-user-text,
-.im-bubble p,
-.im-bubble li {
+/* Message text always wraps — belts-and-braces for user-typed
+ * long tokens. */
+.tc-user-text,
+.tc-md p,
+.tc-md li {
   overflow-wrap: anywhere;
 }
 
 /* Code blocks: the <pre> already scrolls horizontally via inline
  * style in MessageParts; here we just guarantee it can never exceed
- * the bubble, and keep long tokens on one scrollable line. */
-.im-bubble pre {
+ * the message column, and keep long tokens on one scrollable line. */
+.tc-md pre {
   max-width: 100%;
 }
 
-.im-bubble pre code {
+.tc-md pre code {
   overflow-wrap: normal;
   white-space: pre;
 }
 
-/* Inline code chips wrap instead of pushing the bubble wider. */
-.im-bubble :not(pre) > code {
+/* Inline code chips wrap instead of pushing the column wider. */
+.tc-md :not(pre) > code {
   overflow-wrap: anywhere;
-}
-
-/* Wide markdown tables scroll inside the bubble instead of
- * overflowing the chat column. */
-.im-bubble table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
 }
 
 /* ------------------------------------------------------------------
@@ -164,74 +154,68 @@ div[class*="max-w-5xl"] /* SettingsModal panel (Tailwind-only classes) */ {
     display: none;
   }
 
-  /* ChatView iMessage header: hide the bot-name title, keep the
+  /* ChatView team-chat header: hide the bot-name title, keep the
    * avatar + online status. */
-  .im-header {
+  .tc-header {
     padding: 8px 12px;
     gap: 8px;
   }
 
-  .im-header-name {
+  .tc-header-name {
     display: none;
   }
 
   /* Composer: tighter padding, smaller input. */
-  .im-composer {
+  .tc-composer {
     padding: 8px 10px;
     gap: 8px;
   }
 
-  .im-input {
+  .tc-input {
     padding: 8px 14px;
     font-size: 14px;
   }
 
-  .im-sending {
+  .tc-sending {
     padding: 2px 12px 6px;
   }
 
-  /* Bubbles widen as the window narrows. */
-  .im-col {
-    max-width: min(86%, 72ch);
+  /* Message rows breathe a bit less on narrow windows. */
+  .tc-msg {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
 /* ==================================================================
- * <560px — mini: bubbles go near full-width, chrome gets minimal.
+ * <560px — mini: chrome gets minimal.
  * ================================================================== */
 @media (max-width: 560px) {
-  .im-col {
-    max-width: 92%;
+  .tc-msg {
+    gap: 8px;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 
-  .im-bubble {
-    padding: 8px 12px;
-    font-size: 14px;
-  }
-
-  .im-row {
-    gap: 6px;
-  }
-
-  .im-header {
+  .tc-header {
     padding: 6px 10px;
   }
 
-  .im-composer {
+  .tc-composer {
     padding: 6px 8px;
     gap: 6px;
   }
 
-  .im-send {
+  .tc-send {
     width: 34px;
     height: 34px;
   }
 
-  .im-ts {
+  .tc-msg-time {
     font-size: 10px;
   }
 
-  .im-sending {
+  .tc-sending {
     padding: 2px 10px 6px;
     font-size: 11px;
   }
@@ -239,7 +223,7 @@ div[class*="max-w-5xl"] /* SettingsModal panel (Tailwind-only classes) */ {
 
 /* ------------------------------------------------------------------
  * Reduced motion: no width animation on the sidebar column.
- * (imessage.css / effects.css already still their own animations.)
+ * (teamchat.css / effects.css already still their own animations.)
  * ------------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
   .h-dvh > div:has(> aside.sidebar):not(.absolute) {

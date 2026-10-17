@@ -64,44 +64,12 @@
   gap: 2px;
 }
 
-.teammate-name-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .teammate-name {
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.teammate-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.teammate-status .status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--muted);
-  flex-shrink: 0;
-}
-
-.teammate-status.online {
-  color: var(--text);
-}
-
-.teammate-status.online .status-dot {
-  background: var(--accent);
 }
 
 .teammate-preview {

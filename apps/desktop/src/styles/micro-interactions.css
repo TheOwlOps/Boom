@@ -16,24 +16,10 @@
  * on source order.
  * ============================================================ */
 
-/* ---------- 1. Message send animation ---------- */
+/* ---------- 1. Message entrance animation ---------- */
 
-@keyframes im-msg-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* New user bubble: 200ms slide+fade on mount. Runs layered under
-   the row-level .msg-appear entrance for a soft iMessage pop. */
-.im-bubble-user {
-  animation: im-msg-in 200ms ease-out both;
-}
+/* Team-chat rows animate on mount via teamchat.css (.tc-msg).
+   No extra layer needed here. */
 
 /* ---------- 2. Button press feedback ---------- */
 
@@ -109,18 +95,18 @@ button.teammate-rail-item:active {
   transform: scale(0.97);
 }
 
-/* ---------- 6. iMessage send button ---------- */
+/* ---------- 6. Team-chat send button ---------- */
 
 /* Standardize on the 120ms ease-out / scale(0.97) press spec.
-   Higher specificity than imessage.css so this holds regardless
+   Higher specificity than teamchat.css so this holds regardless
    of stylesheet order. */
-.im-composer .im-send {
+.tc-composer .tc-send {
   transition:
     opacity 150ms ease,
     transform 120ms ease-out;
 }
 
-.im-composer .im-send:active:not(:disabled) {
+.tc-composer .tc-send:active:not(:disabled) {
   transform: scale(0.97);
 }
 
@@ -153,7 +139,7 @@ button.teammate-rail-item:active {
 /* ---------- 10. Reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .im-bubble-user,
+  .tc-msg,
   .mi-press,
   .mi-press-btn,
   .mi-market-card,
@@ -161,7 +147,7 @@ button.teammate-rail-item:active {
   button.teammate-item,
   button.teammate-rail-item,
   .msg-action-btn,
-  .im-composer .im-send {
+  .tc-composer .tc-send {
     animation: none !important;
     transition: none !important;
   }
@@ -172,7 +158,7 @@ button.teammate-rail-item:active {
   .mi-press-btn:active,
   button.teammate-rail-item:active,
   .msg-action-btn:active,
-  .im-composer .im-send:active:not(:disabled) {
+  .tc-composer .tc-send:active:not(:disabled) {
     transform: none;
   }
 
