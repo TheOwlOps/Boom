@@ -40,6 +40,36 @@ use crate::server::{TurnError, CHAT_STRATEGIES};
 /// `POST /api/providers/config` first.
 pub(crate) const NOT_CONFIGURED_MESSAGE: &str = "no LLM provider configured";
 
+/// Turn a raw harness failure into a user-friendly message.
+///
+/// The raw `TurnError::Failed` string is technical (e.g. "LLM API error
+/// (HTTP 401): ...") — this maps common cases to actionable guidance while
+/// keeping the technical detail as a suffix for debugging. Never includes
+/// secrets: provider error messages are already sanitized at construction
+/// (see `ProviderError` docs).
+pub(crate) fn friendly_turn_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    // Truncate the raw technical detail so the response stays readable.
+    let detail: String = raw.chars().take(300).collect();
+    if lower.contains("401") || lower.contains("unauthorized") || lower.contains("invalid api key") || lower.contains("incorrect api key") {
+        format!("LLM API key không đúng hoặc hết hạn — kiểm tra lại trong Settings → Providers. Chi tiết: {detail}")
+    } else if lower.contains("404") || lower.contains("model_not_found") || lower.contains("does not exist") {
+        format!("Model không tồn tại — kiểm tra tên model trong Settings → Providers. Chi tiết: {detail}")
+    } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests") {
+        format!("Bị giới hạn tốc độ (rate limit) — đợi một lúc rồi thử lại. Chi tiết: {detail}")
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        format!("LLM quá lâu không trả lời (timeout) — thử lại. Chi tiết: {detail}")
+    } else if lower.contains("connection") || lower.contains("dns") || lower.contains("network") {
+        format!("Lỗi kết nối tới LLM provider — kiểm tra mạng. Chi tiết: {detail}")
+    } else if lower.contains("missing api key") {
+        format!("Thiếu API key — cấu hình trong Settings → Providers. Chi tiết: {detail}")
+    } else if lower.contains("llm provider unavailable") {
+        format!("Không gọi được LLM provider — kiểm tra cấu hình trong Settings → Providers. Chi tiết: {detail}")
+    } else {
+        format!("Chat thất bại. Chi tiết: {detail}")
+    }
+}
+
 fn sse_event(name: &str, payload: &Value) -> Event {
     Event::default()
         .event(name)
@@ -165,8 +195,12 @@ pub async fn chat(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 NOT_CONFIGURED_MESSAGE,
             ),
-            TurnError::Failed(_) => {
-                ApiError::new(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "chat turn failed")
+            TurnError::Failed(msg) => {
+                state.api_log(format!("chat turn failed: {msg}"));
+                ApiError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    friendly_turn_error(&msg),
+                )
             }
         })?;
         drop(guard);
@@ -267,10 +301,14 @@ impl Stream for ChatSseStream {
                                     &json!({ "session_id": this.session_id, "strategy": used, "errors": r.errors }),
                                 )));
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                let msg = match e {
+                                    TurnError::NotConfigured => NOT_CONFIGURED_MESSAGE.to_string(),
+                                    TurnError::Failed(m) => friendly_turn_error(&m),
+                                };
                                 this.events.push_back(Ok(sse_event(
                                     "error",
-                                    &json!({ "error": "chat turn failed" }),
+                                    &json!({ "error": msg }),
                                 )));
                             }
                         }
@@ -285,5 +323,48 @@ impl Stream for ChatSseStream {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::friendly_turn_error;
+
+    #[test]
+    fn friendly_error_401_mentions_api_key() {
+        let msg = friendly_turn_error("LLM API error (HTTP 401): invalid api key");
+        assert!(msg.contains("API key"), "got: {msg}");
+        assert!(msg.contains("Settings"), "got: {msg}");
+    }
+
+    #[test]
+    fn friendly_error_404_mentions_model() {
+        let msg = friendly_turn_error("LLM API error (HTTP 404): model does not exist");
+        assert!(msg.contains("Model"), "got: {msg}");
+    }
+
+    #[test]
+    fn friendly_error_429_mentions_rate_limit() {
+        let msg = friendly_turn_error("LLM API error (HTTP 429): rate limit exceeded");
+        assert!(msg.contains("giới hạn tốc độ"), "got: {msg}");
+    }
+
+    #[test]
+    fn friendly_error_timeout() {
+        let msg = friendly_turn_error("request timed out");
+        assert!(msg.contains("timeout"), "got: {msg}");
+    }
+
+    #[test]
+    fn friendly_error_unknown_keeps_detail() {
+        let msg = friendly_turn_error("something weird happened");
+        assert!(msg.contains("something weird happened"), "got: {msg}");
+    }
+
+    #[test]
+    fn friendly_error_truncates_long_detail() {
+        let long = "x".repeat(1000);
+        let msg = friendly_turn_error(&long);
+        assert!(msg.len() < 600, "too long: {}", msg.len());
     }
 }

@@ -7,10 +7,11 @@ import { MessageBubble } from "./MessageParts";
 import { BoomiAvatar } from "./BoomiAvatar";
 import { BotAvatar } from "./BotAvatar";
 import { BoomiEmptyState } from "./BoomiEmptyState";
-import { ThinkingDots } from "./ThinkingDots";
-import { Skeleton, SkeletonAvatar } from "./Skeleton";
+import { BotThinking } from "./BotThinking";
+import { Skeleton } from "./Skeleton";
 import "../styles/effects.css";
-import "../styles/teamchat.css";
+import "../styles/teamchat.css"; // tc-header only; messages use grokchat.css
+import "../styles/grokchat.css";
 
 // CLIENT-SIDE ANIMATION (NOT live token streaming): the backend returns the
 // full reply at once (see API_CONTRACT.md `POST /api/chat`), and this reveals
@@ -432,17 +433,14 @@ export function ChatView({ sessionId, onTogglePanel, onOpenSettings, onBotApi, l
         </div>
       </header>
 
-      <div className="chat-messages tc-list" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
-        {/* History loading: skeleton team-chat rows with varied widths. */}
+      <div className="gc-scroll" ref={listRef} onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
+      <div className="gc-column">
+        {/* History loading: bubble-shaped skeletons. */}
         {loadingHistory && messages.length === 0 && (
           <div role="status" aria-busy="true" aria-label="Loading conversation history">
             {HISTORY_SKELETON_WIDTHS.map((w, i) => (
-              <div key={i} className="tc-msg" aria-hidden="true">
-                <SkeletonAvatar size={36} />
-                <div className="tc-msg-main" style={{ gap: 8 }}>
-                  <Skeleton width="24%" height={13} />
-                  <Skeleton width={w} height={i % 3 === 2 ? 64 : 40} />
-                </div>
+              <div key={i} className={`gc-skel-row ${i % 2 ? "gc-skel-row-user" : "gc-skel-row-bot"}`} aria-hidden="true" style={{ marginBottom: 20 }}>
+                <Skeleton width={w} height={i % 3 === 2 ? 72 : 48} style={{ borderRadius: 22 }} />
               </div>
             ))}
           </div>

@@ -14,7 +14,7 @@ use super::super::{
     state::{AppState, NewBot, TurnRequest},
     ApiError, JsonBody, StorageError,
 };
-use super::chat::{resolve_bot_context, NOT_CONFIGURED_MESSAGE};
+use super::chat::{friendly_turn_error, resolve_bot_context, NOT_CONFIGURED_MESSAGE};
 use crate::server::TurnError;
 
 fn storage_error(e: StorageError, fallback_500: &str) -> ApiError {
@@ -212,8 +212,12 @@ pub async fn message_bot(
             StatusCode::SERVICE_UNAVAILABLE,
             NOT_CONFIGURED_MESSAGE,
         ),
-        TurnError::Failed(_) => {
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "chat turn failed")
+        TurnError::Failed(msg) => {
+            state.api_log(format!("bot chat turn failed: {msg}"));
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                friendly_turn_error(&msg),
+            )
         }
     })?;
     drop(_guard);

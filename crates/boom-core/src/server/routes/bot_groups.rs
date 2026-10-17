@@ -21,7 +21,7 @@ use super::super::{
     state::{AppState, Bot, BotGroup, TurnRequest},
     ApiError, JsonBody, StorageError,
 };
-use super::chat::{resolve_bot_context, NOT_CONFIGURED_MESSAGE};
+use super::chat::{friendly_turn_error, resolve_bot_context, NOT_CONFIGURED_MESSAGE};
 use crate::groups::{
     chief_system_prompt, parse_handoffs, resolve_handoff_target, roster_line,
     specialist_group_prompt, strip_handoff_lines,
@@ -44,8 +44,11 @@ fn turn_error(e: TurnError) -> ApiError {
             StatusCode::SERVICE_UNAVAILABLE,
             NOT_CONFIGURED_MESSAGE,
         ),
-        TurnError::Failed(_) => {
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "chat turn failed")
+        TurnError::Failed(msg) => {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                friendly_turn_error(&msg),
+            )
         }
     }
 }
