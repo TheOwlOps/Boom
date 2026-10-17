@@ -15,6 +15,7 @@
 //! implementations; [`server::defaults`] ships honest no-op defaults. The
 //! [`wiring`] module adapts the real subsystems to the server's seams.
 
+pub mod connectors;
 pub mod harness;
 pub mod providers;
 pub mod proxy;

@@ -823,7 +823,12 @@ impl AppState {
 
     pub fn with_defaults_at_skills_dir(skills_dir: Option<PathBuf>) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
-        let builtins = Arc::new(crate::tools::ToolRegistry::with_builtins());
+        let mut tool_reg = crate::tools::ToolRegistry::with_builtins();
+        // Connector tools (Gmail, Calendar, Drive, GitHub, Spotify, …).
+        // Each tool fails with a clear "not connected" message when its
+        // connector has no stored credential; no network traffic at startup.
+        crate::connectors::ConnectorRegistry::new().register_all_tools(&mut tool_reg);
+        let builtins = Arc::new(tool_reg);
         // File-backed so provider configs survive restarts (Python
         // parity: $BOOM_HOME/providers.json, 0600). The in-memory
         // StaticProviderRegistry remains available for tests.
@@ -931,13 +936,21 @@ mod tests {
     fn with_defaults_serves_all_30_builtin_tools() {
         let state = AppState::with_defaults();
         let tools = state.tools.list_tools();
-        assert_eq!(tools.len(), 30, "expected all 30 built-in tools");
+        assert!(
+            tools.len() >= 30,
+            "expected at least the 30 built-in tools, got {}",
+            tools.len()
+        );
         // Names are unique and sorted; every tool has a non-empty
         // description and a resolved toolset group.
         let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 30, "tool names must be unique");
+        assert_eq!(
+            names.len(),
+            tools.len(),
+            "tool names must be unique (30 built-ins + connector tools)"
+        );
         for t in &tools {
             assert!(!t.name.is_empty(), "tool name must not be empty");
             assert!(!t.description.is_empty(), "description empty for {}", t.name);

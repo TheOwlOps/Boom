@@ -253,6 +253,14 @@ pub fn router(state: AppState) -> Router {
         // boom_proxy observability
         .route("/api/proxy/stats", get(proxy::stats))
         .route("/api/proxy/logs", get(proxy::logs))
+        // connectors (external service integrations)
+        .route("/api/connectors", get(connectors::list))
+        .route("/api/connectors/{id}/connect", post(connectors::connect))
+        .route("/api/connectors/{id}/token", post(connectors::token))
+        .route(
+            "/api/connectors/{id}/disconnect",
+            post(connectors::disconnect),
+        )
         // marketplace
         .route("/api/marketplace", get(marketplace::catalog))
         .route(
