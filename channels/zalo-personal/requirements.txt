@@ -1,0 +1,3 @@
+# Zalo Personal bridge dependencies.
+# Only the unofficial Zalo web client is needed; the HTTP server uses stdlib.
+zalo-api==2.1.0
