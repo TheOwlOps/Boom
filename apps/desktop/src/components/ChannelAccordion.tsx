@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import ChannelConnectDialog from "./ChannelConnectDialog";
 import MessengerOAuthConnect from "./MessengerOAuthConnect";
+import ZaloPersonalConnect from "./ZaloPersonalConnect";
 import { disconnectChannel, getChannels, testChannel } from "../lib/api";
 import type { ChannelState, ChannelStatus } from "../lib/types";
 
@@ -29,11 +30,21 @@ const CHANNEL_ICONS: Record<string, LucideIcon> = {
   messenger: MessageCircle,
   line: MessageSquare,
   zalo: Smartphone,
+  "zalo-personal": Smartphone,
   feishu: MessagesSquare,
 };
 
 function capitalize(s: string): string {
   return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+/** Pretty display names for channels whose id isn't a clean single word. */
+const CHANNEL_DISPLAY_NAMES: Record<string, string> = {
+  "zalo-personal": "Zalo Personal",
+};
+
+function displayName(channel: ChannelStatus): string {
+  return CHANNEL_DISPLAY_NAMES[channel.id] ?? capitalize(channel.name);
 }
 
 function ChannelIcon({ name }: { name: string }) {
@@ -74,6 +85,7 @@ function ChannelRow({
   onTest,
   onConnect,
   onMessengerConnected,
+  onZaloPersonalConnected,
 }: {
   channel: ChannelStatus;
   expanded: boolean;
@@ -85,11 +97,13 @@ function ChannelRow({
   onTest(): void;
   onConnect(): void;
   onMessengerConnected(): void;
+  onZaloPersonalConnected(): void;
 }) {
   const connected = channel.state === "connected";
   const unsupported = channel.state === "unsupported";
-  const name = capitalize(channel.name);
+  const name = displayName(channel);
   const isMessenger = channel.id === "messenger";
+  const isZaloPersonal = channel.id === "zalo-personal";
 
   return (
     <li>
@@ -138,6 +152,9 @@ function ChannelRow({
               onConnected={onMessengerConnected}
               onManualConnect={onConnect}
             />
+          ) : isZaloPersonal ? (
+            /* Zalo Personal: QR login via the separate Python bridge process. */
+            <ZaloPersonalConnect onConnected={onZaloPersonalConnected} />
           ) : (
             <div className="flex gap-1.5 pt-0.5">
               {connected ? (
@@ -187,6 +204,12 @@ export default function ChannelAccordion({ query }: { query: string }) {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [testNotes, setTestNotes] = useState<Record<string, string>>({});
+  /**
+   * Zalo Personal runs as a separate Python bridge process, not through the
+   * Rust backend — its connection state is tracked locally. The bridge's
+   * own /status endpoint is the source of truth when the row is expanded.
+   */
+  const [zaloPersonalConnected, setZaloPersonalConnected] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -250,13 +273,24 @@ export default function ChannelAccordion({ query }: { query: string }) {
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return channels;
-    return (channels ?? []).filter(
+    // Zalo Personal is a synthetic row: its bridge runs as a separate Python
+    // process, so it never appears in the backend channel list.
+    const zaloPersonal: ChannelStatus = {
+      id: "zalo-personal",
+      name: "zalo-personal",
+      state: zaloPersonalConnected ? "connected" : "not-configured",
+      detail: "Tài khoản Zalo cá nhân — đăng nhập bằng QR (bridge Python riêng).",
+      connected: zaloPersonalConnected,
+    };
+    const all = [...(channels ?? []), zaloPersonal];
+    if (!q) return all;
+    return all.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
+        "zalo personal".includes(q) ||
         "channels".includes(q),
     );
-  }, [channels, query]);
+  }, [channels, query, zaloPersonalConnected]);
 
   if (channels === null) {
     if (failed) return null; // stay silent; tools list shows the error state
@@ -283,6 +317,7 @@ export default function ChannelAccordion({ query }: { query: string }) {
             onTest={() => void handleTest(c)}
             onConnect={() => setConnecting(c)}
             onMessengerConnected={() => void load()}
+            onZaloPersonalConnected={() => setZaloPersonalConnected(true)}
           />
         ))}
       </ul>
