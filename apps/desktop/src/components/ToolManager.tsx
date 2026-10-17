@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { API_BASE } from "../lib/api";
-import { ChannelMonitor } from "./ChannelMonitor";
 import { EmptyState } from "./EmptyState";
 import { SkeletonText } from "./Skeleton";
 import { BoomiEmptyState } from "./BoomiEmptyState";
@@ -163,9 +162,6 @@ export default function ToolManager() {
     return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
-  const q = query.trim().toLowerCase();
-  const showChannels = q === "" || "channels".includes(q) || "telegram".includes(q) || "discord".includes(q) || "zalo".includes(q);
-
   return (
     <div>
       <input
@@ -174,16 +170,6 @@ export default function ToolManager() {
         placeholder="Search tools by name…"
         className="mb-4 w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)]"
       />
-      {showChannels && (
-        <section className="mb-5">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Channels
-          </h3>
-          <div className="rounded-lg border border-[var(--border)] px-2 py-1">
-            <ChannelMonitor />
-          </div>
-        </section>
-      )}
       {tools === null ? (
         <SkeletonText lines={6} label="Loading tools" />
       ) : loadError !== null ? (
@@ -200,9 +186,9 @@ export default function ToolManager() {
       ) : groups.length === 0 ? (
         <BoomiEmptyState
           animation="idle"
-          title={q === "" ? "No tools registered" : "No tools match your search"}
+          title={query.trim() === "" ? "No tools registered" : "No tools match your search"}
           description={
-            q === ""
+            query.trim() === ""
               ? "The backend returned an empty tool list. Check that the gateway is running the expected build."
               : undefined
           }
