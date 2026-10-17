@@ -1,1 +1,0 @@
-# Boom plugins package

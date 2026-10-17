@@ -1,1 +1,0 @@
-"""Boom media module."""
