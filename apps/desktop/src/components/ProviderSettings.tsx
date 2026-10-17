@@ -10,6 +10,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { API_BASE } from "../lib/api";
+import ProviderLogo from "./ProviderLogo";
 
 // Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
 //   GET  /api/providers        -> { providers: ProviderMeta[], active: string | null }
@@ -218,7 +219,7 @@ function ProviderCard({
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Plug className="h-4 w-4 text-[var(--muted)]" />
+          <ProviderLogo providerId={meta.id} size={16} className="shrink-0 text-[var(--muted)]" />
           <h3 className="text-sm font-semibold text-[var(--text)]">{meta.name}</h3>
           {active && (
             <span className="rounded-full border border-[var(--border)] bg-[var(--bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
