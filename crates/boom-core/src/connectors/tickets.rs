@@ -57,25 +57,33 @@ pub fn load_token(id: &str) -> Option<String> {
     v.get("token")?.as_str().map(str::to_string)
 }
 
-/// Persist the token for connector `id` (file mode 0600).
+/// Persist the token for connector `id` (file mode 0600 on Unix).
 pub fn save_token(id: &str, token: &str) -> Result<(), String> {
     let path = token_path(id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create connector dir: {e}"))?;
     }
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| format!("cannot write token file: {e}"))?;
     let body = serde_json::json!({ "token": token, "id": id }).to_string();
-    f.write_all(body.as_bytes())
-        .map_err(|e| format!("cannot write token file: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("cannot write token file: {e}"))?;
+        f.write_all(body.as_bytes())
+            .map_err(|e| format!("cannot write token file: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, body.as_bytes())
+            .map_err(|e| format!("cannot write token file: {e}"))?;
+    }
     Ok(())
 }
 
