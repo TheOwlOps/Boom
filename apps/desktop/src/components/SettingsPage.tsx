@@ -467,8 +467,10 @@ function ToggleSwitch({
  * localStorage and applied immediately (theme class, CSS variables,
  * and a `boom:settings-changed` event for global listeners).
  */
-export default function SettingsPage() {
-  const [section, setSection] = useState<SettingsSection>("providers");
+export default function SettingsPage({ section: controlledSection }: { section?: SettingsSection } = {}) {
+  const [internalSection, setInternalSection] = useState<SettingsSection>("providers");
+  const section = controlledSection ?? internalSection;
+  const setSection = controlledSection ? () => {} : setInternalSection;
 
   const [theme, setTheme] = useStoredSetting(LS_THEME, "dark" as Theme, isTheme);
   const [fontSize, setFontSize] = useStoredSetting<FontSize>(

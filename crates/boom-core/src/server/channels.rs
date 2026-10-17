@@ -408,8 +408,11 @@ impl ChannelRegistry for FileChannelRegistry {
             .lock()
             .map_err(|_| ChannelError::new(500, "failed to save channel config"))?;
         let mut data = self.load();
-        // Idempotent: removing a missing entry still succeeds.
-        data.channels.remove(id);
+        // Idempotent: removing a missing entry still succeeds — and skips
+        // the write entirely so disconnect never creates a config file.
+        if data.channels.remove(id).is_none() {
+            return Ok(());
+        }
         self.save(&data).map_err(|e| ChannelError::new(500, e))?;
         Ok(())
     }
@@ -558,64 +561,78 @@ mod tests {
     // -- mock HTTP server (stands in for api.telegram.org) ---------------
 
     /// Serve one canned JSON response; returns the base URL and the full
-    /// raw request (headers + body) the client sent.
+    /// raw request (headers + body) the client sent. Accepts a single
+    /// connection — use [`mock_server_n`] when the test makes several
+    /// requests (e.g. connect followed by test).
     async fn mock_server(
         status: u16,
         body: &'static str,
-    ) -> (String, tokio::task::JoinHandle<String>) {
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        mock_server_n(status, body, 1).await
+    }
+
+    /// Like [`mock_server`] but answers `count` sequential requests.
+    async fn mock_server_n(
+        status: u16,
+        body: &'static str,
+        count: usize,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind mock server");
         let addr = listener.local_addr().expect("local addr");
         let handle = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            let (mut sock, _) = listener.accept().await.expect("accept");
-            let mut req: Vec<u8> = Vec::new();
-            let mut buf = vec![0u8; 8192];
-            // Read headers first.
-            let header_end = loop {
-                let n = sock.read(&mut buf).await.expect("read");
-                if n == 0 {
-                    break None;
-                }
-                req.extend_from_slice(&buf[..n]);
-                if let Some(pos) = find_header_end(&req) {
-                    break Some(pos);
-                }
-            };
-            // Then the body, per Content-Length.
-            if let Some(end) = header_end {
-                let headers = String::from_utf8_lossy(&req[..end]).into_owned();
-                let content_len = headers
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        (k.trim().eq_ignore_ascii_case("content-length"))
-                            .then(|| v.trim().parse::<usize>().ok())
-                            .flatten()
-                    })
-                    .unwrap_or(0);
-                while req.len() < end + content_len {
-                    let n = sock.read(&mut buf).await.expect("read body");
+            let mut requests = Vec::new();
+            for _ in 0..count {
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut req: Vec<u8> = Vec::new();
+                let mut buf = vec![0u8; 8192];
+                // Read headers first.
+                let header_end = loop {
+                    let n = sock.read(&mut buf).await.expect("read");
                     if n == 0 {
-                        break;
+                        break None;
                     }
                     req.extend_from_slice(&buf[..n]);
+                    if let Some(pos) = find_header_end(&req) {
+                        break Some(pos);
+                    }
+                };
+                // Then the body, per Content-Length.
+                if let Some(end) = header_end {
+                    let headers = String::from_utf8_lossy(&req[..end]).into_owned();
+                    let content_len = headers
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            (k.trim().eq_ignore_ascii_case("content-length"))
+                                .then(|| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    while req.len() < end + content_len {
+                        let n = sock.read(&mut buf).await.expect("read body");
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
+                    }
                 }
+                requests.push(String::from_utf8_lossy(&req).into_owned());
+                let reason = match status {
+                    200 => "OK",
+                    400 => "Bad Request",
+                    401 => "Unauthorized",
+                    _ => "Error",
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                sock.write_all(resp.as_bytes()).await.expect("write");
             }
-            let request_text = String::from_utf8_lossy(&req).into_owned();
-            let reason = match status {
-                200 => "OK",
-                400 => "Bad Request",
-                401 => "Unauthorized",
-                _ => "Error",
-            };
-            let resp = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            sock.write_all(resp.as_bytes()).await.expect("write");
-            request_text
+            requests
         });
         (format!("http://{addr}"), handle)
     }
@@ -656,9 +673,14 @@ mod tests {
         .await;
         let id = verify_token(&base, GOOD_TOKEN).await.expect("verify");
         assert_eq!(id.username.as_deref(), Some("testbot"));
-        let req = handle.await.expect("server task");
+        let reqs = handle.await.expect("server task");
         // Token travels in the URL path, exactly like the Bot API requires.
-        assert!(req.starts_with("GET /bot123456:TESTTOKEN/getMe "), "req: {req}");
+        assert_eq!(reqs.len(), 1);
+        assert!(
+            reqs[0].starts_with("GET /bot123456:TESTTOKEN/getMe "),
+            "req: {}",
+            reqs[0]
+        );
     }
 
     #[tokio::test]
@@ -695,10 +717,15 @@ mod tests {
             .await
             .expect("send");
         assert_eq!(msg_id, 99);
-        let req = handle.await.expect("server task");
-        assert!(req.starts_with("POST /bot123456:TESTTOKEN/sendMessage "), "req: {req}");
-        assert!(req.contains(r#""chat_id":"12345""#), "req: {req}");
-        assert!(req.contains(r#""text":"hello""#), "req: {req}");
+        let reqs = handle.await.expect("server task");
+        assert_eq!(reqs.len(), 1);
+        assert!(
+            reqs[0].starts_with("POST /bot123456:TESTTOKEN/sendMessage "),
+            "req: {}",
+            reqs[0]
+        );
+        assert!(reqs[0].contains(r#""chat_id":"12345""#), "req: {}", reqs[0]);
+        assert!(reqs[0].contains(r#""text":"hello""#), "req: {}", reqs[0]);
     }
 
     #[tokio::test]
@@ -863,9 +890,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_verifies_token_when_no_chat_id() {
-        let (base, _handle) = mock_server(
+        // connect() and test() each make one request → two connections.
+        let (base, _handle) = mock_server_n(
             200,
             r#"{"ok":true,"result":{"id":1,"first_name":"T","username":"testbot"}}"#,
+            2,
         )
         .await;
         let (_dir, reg) = test_registry(&base);

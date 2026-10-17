@@ -266,6 +266,19 @@ pub struct Group {
     pub last_active: String,
 }
 
+/// Chat session summary — the exact `GET /api/sessions` item shape.
+/// Timestamps use the same `YYYY-MM-DDTHH:MM:SS` shape as the rest of the
+/// API surface (bots, groups). `message_count` is the real row count from
+/// the `messages` table (0 until the turn loop persists messages).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: u64,
+}
+
 /// Installed plugin metadata for marketplace catalog items.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginMeta {
@@ -317,6 +330,16 @@ pub trait Storage: Send + Sync {
     fn get_group(&self, channel: &str, group_id: &str) -> Option<Group>;
     fn set_group_muted(&self, channel: &str, group_id: &str, muted: bool) -> Result<(), StorageError>;
     fn set_group_policy(&self, channel: &str, group_id: &str, policy: &Value) -> Result<Value, StorageError>;
+
+    // -- sessions --
+    /// List chat sessions, most recently active first. Rows are created
+    /// when a chat turn runs (see [`touch_session`](Storage::touch_session)),
+    /// so this is the real conversation list, never invented.
+    fn list_sessions(&self) -> Vec<SessionSummary>;
+    /// Create the session row if it does not exist yet, otherwise bump its
+    /// `updated_at`. Idempotent; best-effort — a storage failure must never
+    /// break the chat request that triggered it.
+    fn touch_session(&self, session_id: &str);
 
     // -- marketplace --
     fn plugins(&self) -> Vec<PluginMeta>;
@@ -578,6 +601,15 @@ pub fn parse_ts_iso(ts: &str) -> Option<i64> {
                 .ok()
                 .map(|dt| dt.timestamp())
         })
+}
+
+/// Format Unix epoch seconds as `YYYY-MM-DDTHH:MM:SS` (UTC), the same shape
+/// [`now_iso`] produces — used for session rows whose schema stores epoch
+/// seconds while the API surface speaks ISO strings.
+pub fn epoch_to_iso(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .unwrap_or_else(now_iso)
 }
 
 /// Split an item id into `(kind, name)` (Python: `MarketplaceBackend._split_id`).

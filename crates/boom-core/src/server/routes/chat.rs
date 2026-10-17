@@ -137,6 +137,11 @@ pub async fn chat(
         .try_lock_owned()
         .map_err(|_| ApiError::new(axum::http::StatusCode::TOO_MANY_REQUESTS, "agent busy"))?;
 
+    // Record the session row (idempotent) so `GET /api/sessions` lists the
+    // real conversations instead of always answering empty. Placed after the
+    // 503/429 gates: only turns that actually run create sessions.
+    state.storage.touch_session(&session_id);
+
     let req = TurnRequest {
         prompt,
         strategy: strategy.clone(),

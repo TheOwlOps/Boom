@@ -1,5 +1,27 @@
 //! Group routes: `GET /api/groups`, `POST /api/groups/mute`,
 //! `POST /api/groups/policy`.
+//!
+//! ## How groups get registered (no HTTP register endpoint — by design)
+//!
+//! Neither this Rust core nor Python's `gateway/api.py` exposes a
+//! "register group" endpoint: groups are registered by the **channel
+//! runtime**, not by API callers.
+//!
+//! - Python: `agent/src/business/groups.py::GroupManager.record_message`
+//!   auto-registers a group the first time a message arrives from it
+//!   (default name `"channel:group_id"`); `register_group` /
+//!   `unregister_group` are called by channel adapters and admin tools.
+//! - Rust: [`SqliteStorage::register_group`](crate::storage::server_storage::SqliteStorage::register_group) (same auto-register
+//!   semantics) — the HTTP layer here only lists, mutes and policies
+//!   groups that already exist.
+//!
+//! Consequence for QA: `mute` / `policy` answer 404 for an unregistered
+//! `(channel, group_id)` — that is the honest "no such group" contract,
+//! not a missing feature. To exercise the happy path end-to-end, register
+//! the group through the channel runtime (or seed it via
+//! [`SqliteStorage::register_group`](crate::storage::server_storage::SqliteStorage::register_group),
+//! e.g. in tests) instead of expecting a
+//! `POST /api/groups/register` that neither backend has.
 
 use axum::{extract::State, Json};
 use serde_json::{json, Value};

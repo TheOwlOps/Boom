@@ -238,6 +238,7 @@ struct MemoryInner {
     groups: HashMap<(String, String), Group>,
     plugins: HashMap<String, PluginMeta>,
     disabled_tools: BTreeSet<String>,
+    sessions: HashMap<String, SessionSummary>,
     next_bot: u64,
 }
 
@@ -499,6 +500,47 @@ impl Storage for MemoryStorage {
             .unwrap_or_default()
     }
 
+    fn list_sessions(&self) -> Vec<SessionSummary> {
+        let inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let mut sessions: Vec<SessionSummary> = inner.sessions.values().cloned().collect();
+        // Most recently active first, mirroring the SQLite store's ORDER BY.
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        sessions
+    }
+
+    fn touch_session(&self, session_id: &str) {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return;
+        }
+        if let Ok(mut inner) = self.inner.lock() {
+            let now = now_iso();
+            match inner.sessions.get_mut(session_id) {
+                Some(s) => s.updated_at = now,
+                None => {
+                    let title: String = session_id.chars().take(100).collect();
+                    inner.sessions.insert(
+                        session_id.to_string(),
+                        SessionSummary {
+                            id: session_id.to_string(),
+                            title,
+                            created_at: now.clone(),
+                            updated_at: now,
+                            message_count: 0,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     fn enable_plugin(&self, name: &str) -> Result<(), StorageError> {
         let mut inner = self.inner.lock().map_err(|_| {
             StorageError::Internal(format!("could not enable plugin '{name}'"))
@@ -654,6 +696,35 @@ fn compare_versions(a: &str, b: &str) -> i32 {
 /// honest — status reports disconnected, login answers 500
 /// `"zalo-personal adapter is unavailable"`, logout is always safe (200).
 /// Mirrors the Python handlers' adapter-missing branches.
+///
+/// ## Status: not implemented (honest stub, not a placeholder success)
+///
+/// The Python backend implements this channel in
+/// `gateway/channels/zalo_personal.py` on top of the third-party `zlapi`
+/// library, which imitates the Zalo *web client* (unofficial API — Zalo may
+/// lock accounts that automate this way; the Python adapter itself warns to
+/// use a throwaway account only).
+///
+/// A Rust port is **not** a mechanical translation: `zlapi`'s login is a
+/// proprietary multi-step handshake (custom crypto, device IMEI, session
+/// cookies persisted to `~/.boom/zalo_personal_session.json` at 0600) with
+/// no public protocol spec and no Rust client. Reimplementing it means
+/// reimplementing an undocumented, ToS-grey protocol — out of scope for the
+/// dependency-free core, and the wrong place to hide such risk.
+///
+/// ## Roadmap (when this becomes real)
+///
+/// 1. Port the *session* mechanics, not the password flow: the Python
+///    adapter never stores the password, only session cookies + phone +
+///    IMEI in `zalo_personal_session.json` (0600). The Rust adapter must
+///    do the same.
+/// 2. Login must keep the current contract: missing phone/password → 400,
+///    bad credentials → 400 (message scrubbed of phone/password),
+///    transport/adapter failure → 500 (scrubbed), and the raw phone number
+///    must never appear in any response or log (only `phone_masked`).
+/// 3. Until then the 500 `"zalo-personal adapter is unavailable"` contract
+///    stays exactly as-is — it is the honest answer, not a bug to paper
+///    over with a fake success.
 pub struct NoZalo;
 
 impl ZaloPersonal for NoZalo {
@@ -711,7 +782,9 @@ fn client_from_active_config(
     if !base_url.is_empty() {
         cfg = cfg.with_base_url(base_url);
     }
-    crate::providers::from_config(&cfg)
+    // Every LLM call goes through boom_proxy (logging, retry, rate
+    // limiting) — transparent to the harness.
+    crate::providers::from_config(&cfg).map(crate::proxy::wrap)
 }
 
 /// The active provider's saved model, for [`crate::wiring::WiredHarness::new`].
@@ -804,11 +877,41 @@ impl AppState {
     }
 }
 
-/// Best-effort skills dir: `<cwd>/skills`, mirroring Python's repo-root
-/// `skills/` scan. Missing dir → 0 skills (honest empty).
+/// First existing directory among the candidates, in order.
+fn first_existing_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|p| p.is_dir()).cloned()
+}
+
+/// Best-effort skills dir, mirroring Python's repo-root `skills/` scan.
+///
+/// Resolution order (first existing dir wins):
+/// 1. `<cwd>/skills` — the historical behaviour; correct when the server
+///    is started from the repo root (Python parity).
+/// 2. `<exe>/skills`, `<exe>/../skills`, … (up to 4 levels up) — covers the
+///    standalone binary (`target/debug/boom-core`) or the Tauri-embedded
+///    server launched from any working directory.
+/// 3. `$BOOM_HOME/skills` — for installs that ship skills with user data.
+///
+/// Missing everywhere → `None` → 0 skills (honest empty, never invented).
 pub(crate) fn default_skills_dir() -> Option<PathBuf> {
-    let dir = std::env::current_dir().ok()?.join("skills");
-    dir.is_dir().then_some(dir)
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("skills"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+        for _ in 0..4 {
+            match dir {
+                Some(d) => {
+                    candidates.push(d.join("skills"));
+                    dir = d.parent().map(std::path::Path::to_path_buf);
+                }
+                None => break,
+            }
+        }
+    }
+    candidates.push(boom_home_dir().join("skills"));
+    first_existing_dir(&candidates)
 }
 
 /// Marketplace tool-name set helper for [`split_marketplace_id`].
@@ -944,5 +1047,36 @@ mod tests {
         assert!(!harness.is_configured(), "no config → not configured");
         save_stub_provider(&reg);
         assert!(harness.is_configured(), "saved config → configured");
+    }
+
+    // -- skills dir resolution -------------------------------------------
+
+    #[test]
+    fn first_existing_dir_picks_first_match_in_order() {
+        let base = tempfile::tempdir().unwrap();
+        let missing = base.path().join("nope");
+        let present = base.path().join("skills");
+        std::fs::create_dir(&present).unwrap();
+        // Missing candidates are skipped; the first existing one wins.
+        assert_eq!(
+            first_existing_dir(&[missing.clone(), present.clone()]),
+            Some(present.clone())
+        );
+        // A file (not a dir) does not count.
+        let file = base.path().join("file.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(first_existing_dir(&[file, present.clone()]), Some(present));
+        // Nothing existing → None (honest empty, never invented).
+        assert_eq!(first_existing_dir(&[missing]), None);
+        assert_eq!(first_existing_dir(&[]), None);
+    }
+
+    #[test]
+    fn default_skills_dir_only_returns_real_dirs() {
+        // Whatever the environment, the resolver must never invent a path:
+        // Some → is_dir, None → /api/skills answers the honest empty list.
+        if let Some(dir) = default_skills_dir() {
+            assert!(dir.is_dir(), "resolved skills dir must exist: {dir:?}");
+        }
     }
 }

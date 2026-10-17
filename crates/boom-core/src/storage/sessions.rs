@@ -97,6 +97,24 @@ impl<'a> SessionStore<'a> {
         }
     }
 
+    /// Create the session when missing, otherwise bump its `updated_at`.
+    /// Idempotent — safe to call on every chat turn for the session id.
+    /// The `title` is only used when the row is created.
+    pub fn touch_session(&self, id: &str, title: &str) -> Result<Session> {
+        if self.get_session(id)?.is_some() {
+            let now = now_unix();
+            self.lock().execute(
+                "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            // The row existed a moment ago; re-fetch it after the bump.
+            return self.get_session(id)?.ok_or_else(|| {
+                crate::storage::StorageError::from(rusqlite::Error::QueryReturnedNoRows)
+            });
+        }
+        self.create_session(id, title)
+    }
+
     /// Lists all sessions, most recently active first.
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         let conn = self.lock();
@@ -308,6 +326,32 @@ mod tests {
         let db = open_test_db();
         let store = db.sessions();
         assert!(store.append_message("ghost", "user", "hi").is_err());
+    }
+
+    #[test]
+    fn touch_session_creates_then_bumps() {
+        let db = open_test_db();
+        let store = db.sessions();
+
+        let first = store.touch_session("s1", "First").expect("touch create");
+        assert_eq!(first.id, "s1");
+        assert_eq!(first.title, "First");
+        assert_eq!(first.created_at, first.updated_at);
+
+        // Second touch must not fail and must not change the title.
+        let second = store.touch_session("s1", "Other").expect("touch again");
+        assert_eq!(second.id, "s1");
+        assert_eq!(second.title, "First");
+        assert!(second.updated_at >= first.updated_at);
+
+        // The session shows up in the listing.
+        let ids: Vec<String> = store
+            .list_sessions()
+            .expect("list")
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, vec!["s1".to_string()]);
     }
 
     #[test]

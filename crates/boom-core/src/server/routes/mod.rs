@@ -9,4 +9,5 @@ pub mod health;
 pub mod marketplace;
 pub mod misc;
 pub mod providers;
+pub mod proxy;
 pub mod tools;

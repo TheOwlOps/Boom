@@ -30,9 +30,9 @@ use serde_json::{Map, Value};
 
 use super::{Result as StoreResult, Storage as DbStorage, StorageError as DbError};
 use crate::server::state::{
-    normalize_str_list, now_epoch, now_iso, Bot as ApiBot, Group as ApiGroup,
-    NewBot as ApiNewBot, PluginMeta as ApiPluginMeta, Storage as ApiStorage,
-    StorageError as ApiError,
+    epoch_to_iso, normalize_str_list, now_epoch, now_iso, Bot as ApiBot, Group as ApiGroup,
+    NewBot as ApiNewBot, PluginMeta as ApiPluginMeta, SessionSummary as ApiSessionSummary,
+    Storage as ApiStorage, StorageError as ApiError,
 };
 
 /// kv key prefix for per-bot metadata JSON.
@@ -409,6 +409,39 @@ impl ApiStorage for SqliteStorage {
             .set_json(&group_key(channel, group_id), &group)
             .map_err(api_error)?;
         Ok(policy.clone())
+    }
+
+    // -- sessions --
+
+    fn list_sessions(&self) -> Vec<ApiSessionSummary> {
+        let sessions = match self.db.sessions().list_sessions() {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        sessions
+            .into_iter()
+            .map(|s| {
+                let message_count = self
+                    .db
+                    .sessions()
+                    .message_count(&s.id)
+                    .unwrap_or(0);
+                ApiSessionSummary {
+                    id: s.id,
+                    title: s.title,
+                    created_at: epoch_to_iso(s.created_at),
+                    updated_at: epoch_to_iso(s.updated_at),
+                    message_count,
+                }
+            })
+            .collect()
+    }
+
+    fn touch_session(&self, session_id: &str) {
+        // Best-effort: the chat request that triggered this must never fail
+        // because a session row could not be written.
+        let title: String = session_id.chars().take(100).collect();
+        let _ = self.db.sessions().touch_session(session_id, &title);
     }
 
     // -- marketplace --

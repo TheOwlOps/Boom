@@ -30,11 +30,11 @@ pub mod state;
 pub use channels::FileChannelRegistry;
 pub use file_providers::FileProviderRegistry;
 pub use state::{
-    channel_credential_hint, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
+    channel_credential_hint, epoch_to_iso, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
     split_marketplace_id, AppState, Bot, BotTools, BoxFuture, ChannelConnectInfo,
     ChannelError, ChannelInfo, ChannelRegistry, DagNode, Group, Harness, LogEntry,
     MarketplaceError, NewBot, OllamaStatus, PluginMeta, ProviderConfig, ProviderConfigError,
-    ProviderMeta, ProviderRegistry, Storage, StorageError, ToolInfo, ToolRegistry, TurnError,
+    ProviderMeta, ProviderRegistry, SessionSummary, Storage, StorageError, ToolInfo, ToolRegistry, TurnError,
     TurnRequest, TurnResult, UpdateInfo, Updater, ZaloLoginError, ZaloPersonal,
     ACTIVITY_FRESH_SEC, CHAT_STRATEGIES, KNOWN_CHANNELS, LOG_MAX, MAX_BODY_BYTES,
 };
@@ -232,6 +232,7 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/bots/active",
             post(bots::set_active)
+                .get(bots::active_not_a_bot_id)
                 .put(bots::active_not_a_bot_id)
                 .delete(bots::active_not_a_bot_id),
         )
@@ -249,6 +250,9 @@ pub fn router(state: AppState) -> Router {
             "/api/providers/ollama/status",
             get(providers::ollama_status),
         )
+        // boom_proxy observability
+        .route("/api/proxy/stats", get(proxy::stats))
+        .route("/api/proxy/logs", get(proxy::logs))
         // marketplace
         .route("/api/marketplace", get(marketplace::catalog))
         .route(

@@ -497,7 +497,19 @@ impl sstate::Harness for WiredHarness {
     }
 
     fn model_name(&self) -> Option<String> {
-        Some(self.model.clone())
+        if !self.model.is_empty() {
+            return Some(self.model.clone());
+        }
+        // No model was configured at startup, but one may have been saved
+        // since (the factory re-reads the config on every call): ask the
+        // freshly-built client for its default model, mirroring the
+        // `run_react_turn` fallback so `GET /api/health` reports the model
+        // turns actually use. Still `None` (→ "unconfigured") when no
+        // provider is configured at all.
+        (self.make_client)()
+            .ok()
+            .map(|c| c.default_model().to_string())
+            .filter(|m| !m.is_empty())
     }
 
     fn run_turn(&self, req: sstate::TurnRequest) -> sstate::BoxFuture<'_, Result<sstate::TurnResult, sstate::TurnError>> {

@@ -119,10 +119,17 @@ pub async fn activity(State(state): State<AppState>) -> Json<Value> {
 // GET /api/sessions
 // ---------------------------------------------------------------------------
 
-/// `GET /api/sessions` → `{sessions: []}`. Honest empty state: the session
-/// store exposes load but no listing (mirrors Python's comment).
-pub async fn sessions() -> Json<Value> {
-    Json(json!({ "sessions": [] }))
+/// `GET /api/sessions` →
+/// `{sessions: [{id, title, created_at, updated_at, message_count}], count}`.
+///
+/// Real listing from the SQLite sessions store (rows are created on the
+/// first chat turn for a session id, newest activity first) — never
+/// invented. `message_count` reflects the `messages` table; it stays 0
+/// until the turn loop persists messages (future work: the harness is
+/// currently stateless across turns).
+pub async fn sessions(State(state): State<AppState>) -> Json<Value> {
+    let sessions = state.storage.list_sessions();
+    Json(json!({ "sessions": sessions, "count": sessions.len() }))
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +250,12 @@ pub async fn updates_check(State(state): State<AppState>) -> Result<Json<Value>,
 /// `GET /api/channels/zalo-personal/status` →
 /// `{connected: bool, phone_masked: str | null}`.
 /// The raw phone number is never exposed.
+///
+/// NOTE: the default [`ZaloPersonal`](super::super::ZaloPersonal) backend is
+/// the honest [`NoZalo`](super::super::defaults::NoZalo) stub — the Rust core
+/// does not implement the Zalo personal protocol yet (see its rustdoc for
+/// why, and the roadmap). Status therefore reports `connected: false`
+/// until a real adapter is wired.
 pub async fn zalo_status(State(state): State<AppState>) -> Json<Value> {
     let (connected, phone_masked) = state.zalo.status();
     Json(json!({ "connected": connected, "phone_masked": phone_masked }))
@@ -268,6 +281,12 @@ fn scrub(text: &str, phone: &str, password: &str) -> String {
 /// `POST /api/channels/zalo-personal/login` — body `{phone, password}` →
 /// 200 `{ok: true, connected: true, phone_masked}`. Missing phone/password →
 /// 400. The password is never echoed into the response or the logs.
+///
+/// NOTE: with the default [`NoZalo`](super::super::defaults::NoZalo)
+/// backend every login answers 500 `"zalo-personal adapter is unavailable"`
+/// — the honest contract until a real adapter is wired (roadmap in
+/// [`NoZalo`](super::super::defaults::NoZalo)'s rustdoc). This 500 is never
+/// turned into a fake success.
 pub async fn zalo_login(
     State(state): State<AppState>,
     JsonBody(body): JsonBody,
@@ -323,5 +342,104 @@ pub async fn zalo_login(
                 msg,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::response::IntoResponse;
+
+    use crate::server::channels::FileChannelRegistry;
+    use crate::server::state::AppState;
+    use super::*;
+    use std::sync::Arc;
+
+    fn state_with_channels_at(dir: &std::path::Path) -> AppState {
+        let mut state = AppState::with_defaults_at_skills_dir(None);
+        state.channels = Arc::new(FileChannelRegistry::with_base_dir(dir.to_path_buf()));
+        state
+    }
+
+    /// Seed `$BOOM_HOME/channels.json` the way a successful
+    /// `POST /api/channels/telegram/connect` would (live verify skipped —
+    /// this tests the status mapping, not the Telegram API).
+    fn seed_telegram_connected(dir: &std::path::Path) {
+        let doc = serde_json::json!({
+            "channels": {
+                "telegram": {
+                    "token": "123456:TESTTOKEN",
+                    "bot_username": "testbot",
+                    "connected_at": "2026-10-17T10:00:00"
+                }
+            }
+        });
+        std::fs::write(
+            dir.join("channels.json"),
+            serde_json::to_string_pretty(&doc).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn entry<'a>(body: &'a Value, name: &str) -> &'a Value {
+        body["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("no channel entry for {name}: {body}"))
+    }
+
+    #[tokio::test]
+    async fn channels_status_reflects_configured_telegram() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_telegram_connected(dir.path());
+        let state = state_with_channels_at(dir.path());
+        let Json(body) = channels_status(State(state)).await;
+        let tg = entry(&body, "telegram");
+        assert_eq!(tg["connected"], Value::Bool(true));
+        // Legacy contract: all 8 known channels present, in order.
+        assert_eq!(body["channels"].as_array().unwrap().len(), 8);
+    }
+
+    #[tokio::test]
+    async fn channels_status_honest_when_nothing_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_channels_at(dir.path());
+        let Json(body) = channels_status(State(state)).await;
+        for c in body["channels"].as_array().unwrap() {
+            assert_eq!(c["connected"], Value::Bool(false), "entry: {c}");
+            let detail = c["detail"].as_str().unwrap_or("");
+            // The old "gateway daemon not wired" placeholder must be gone.
+            assert!(
+                !detail.contains("not wired"),
+                "placeholder detail leaked: {detail}"
+            );
+            assert!(!detail.is_empty(), "detail must explain why: {c}");
+        }
+        // Telegram with no credential → not configured (not "unsupported").
+        let tg = entry(&body, "telegram");
+        assert!(tg["detail"].as_str().unwrap().contains("token")
+            || tg["detail"].as_str().unwrap().contains("Token")
+            || tg["detail"].as_str().unwrap().contains("kết nối"),
+            "unexpected telegram detail: {}", tg["detail"]);
+    }
+
+    #[tokio::test]
+    async fn zalo_login_without_adapter_stays_500_unavailable() {
+        let state = AppState::with_defaults_at_skills_dir(None);
+        let mut body = serde_json::Map::new();
+        body.insert("phone".to_string(), Value::String("0123456789".to_string()));
+        body.insert("password".to_string(), Value::String("secret".to_string()));
+        let err = zalo_login(State(state), JsonBody(body)).await.unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        // Contract: exact message, and the phone/password never leak.
+        let resp = err.into_response();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.contains("zalo-personal adapter is unavailable"), "body: {text}");
+        assert!(!text.contains("0123456789"), "phone leaked: {text}");
+        assert!(!text.contains("secret"), "password leaked: {text}");
     }
 }

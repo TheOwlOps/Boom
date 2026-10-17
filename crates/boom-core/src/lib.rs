@@ -17,6 +17,7 @@
 
 pub mod harness;
 pub mod providers;
+pub mod proxy;
 pub mod server;
 pub mod storage;
 pub mod tools;

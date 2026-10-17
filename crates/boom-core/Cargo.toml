@@ -26,8 +26,16 @@ async-trait = "0.1"
 axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
-# HTTP client (pure-Rust TLS, no system OpenSSL)
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# HTTP client (pure-Rust TLS, no system OpenSSL).
+# `system-proxy`: honour the standard HTTP(S)_PROXY / NO_PROXY env vars, like
+# curl and Python's urllib do — otherwise update checks and channel API calls
+# fail in proxied environments (e.g. corporate networks) while every other
+# tool on the machine works. No proxy env set → behaviour unchanged (direct).
+# `rustls-tls-native-roots` (instead of webpki-only `rustls-tls`): trust the
+# OS certificate store, so TLS-intercepting egress proxies with a locally
+# installed CA (and any corporate MITM) validate exactly like the browser
+# and curl do. Still pure Rust — no OpenSSL dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots", "system-proxy"] }
 bytes = "1"
 futures-core = "0.3"
 futures-util = "0.3"
