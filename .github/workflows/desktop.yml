@@ -81,6 +81,10 @@ jobs:
             echo "store the private key as the TAURI_SIGNING_PRIVATE_KEY secret, and put" >&2
             echo "the public key in apps/desktop/src-tauri/tauri.conf.json under plugins.updater.pubkey." >&2
             echo "UPDATER_UNSIGNED=1" >> "$GITHUB_ENV"
+          elif ! echo "$TAURI_SIGNING_PRIVATE_KEY" | grep -q "untrusted comment:"; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is invalid format - auto-update will be disabled in this build." >&2
+            echo "UPDATER_UNSIGNED=1" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY=" >> "$GITHUB_ENV"
           else
             echo "Updater signing key is configured."
           fi
@@ -89,7 +93,7 @@ jobs:
         run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.UPDATER_UNSIGNED == '1' && '' || secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       # With --bundles app,dmg the raw .app survives in bundle/macos/ (the
       # bundler only cleans it when MacOsBundle is not a requested target).
