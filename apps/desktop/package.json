@@ -1,6 +1,6 @@
 {
   "name": "@theowlops/boom-desktop",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Boom desktop app — Tauri + React",
   "type": "module",
   "license": "MIT",
