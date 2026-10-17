@@ -157,7 +157,7 @@ async function apiSetActiveBot(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bots/active`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    // The gateway reads `bot_id` (see _handle_bots_set_active in gateway/api.py);
+    // The gateway reads `bot_id` (see _handle_bots_set_active in crates/boom-core (Rust));
     // sending a different field makes the call fail with "bot_id is required".
     body: JSON.stringify({ bot_id: id }),
   });

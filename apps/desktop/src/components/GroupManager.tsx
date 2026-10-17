@@ -1,7 +1,7 @@
 /**
  * GroupManager — manage groups/channels registered in Boom.
  *
- * Reads GET /api/groups (backed by agent/src/business/groups.py GroupManager),
+ * Reads GET /api/groups (backed by boom-core (Rust) groups storage),
  * and exposes per-group actions:
  *   - mute / unmute  -> POST /api/groups/mute   {channel, group_id, muted}
  *   - edit policy    -> POST /api/groups/policy  {channel, group_id, policy}

@@ -5,7 +5,7 @@
  * - plugin items: real manifests from `plugins/` (plugin.json / plugin.yaml)
  *   and plugin READMEs in the Boom repo.
  * - tool items: real entries from TOOL_CATALOG (src/data/toolCatalog.ts).
- * - bot items: channel implementations in gateway/channels/.
+ * - bot items: channel integrations served by boom-core (Rust).
  */
 
 export interface MarketplaceItem {

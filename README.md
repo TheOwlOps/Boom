@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml"><img src="https://github.com/TheOwlOps/Boom/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"/>
+  <img src="https://img.shields.io/badge/rust-1.85-orange.svg" alt="Rust"/>
   <img src="https://img.shields.io/badge/node-22-green.svg" alt="Node 22"/>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT"/>
   <img src="https://img.shields.io/badge/Muse-harness-orange.svg" alt="Muse harness"/>
@@ -37,35 +37,18 @@
 | 📊 **Documents** | Native XLSX (formulas/charts), PPTX, PDF generation |
 | 🔌 **Plugins** | Manifest-based, with lifecycle, sandboxing, and dependency resolution |
 | 🛡️ **Production** | Circuit breakers, rate limiting, structured logging, graceful shutdown |
-| 🖥️ **Clients** | Desktop (Tauri + React) · Mobile (Android PWA) |
+| 🖥️ **Clients** | Desktop (Tauri + React + Rust) · Mobile (Android, Kotlin) |
 
 ## 🚀 Quick Start
 
-Prerequisites: **Python >= 3.11**, plus **Node.js >= 20 + npm** for the desktop app.
-The easiest path is Devbox, which provides both reproducibly.
+### Desktop (Tauri + React + Rust)
 
-### Setup (all clients)
+Prerequisites: **Node.js >= 20 + npm** and **Rust** (via rustup).
 
 ```bash
 git clone https://github.com/TheOwlOps/Boom.git
 cd Boom
-devbox shell    # reproducible environment (Nix-powered): Python 3.12, Node 22
-python3 boom.py setup
-```
-
-Without Devbox:
-
-```bash
-pip install httpx "pydantic>=2" pyyaml   # must match pyproject.toml dependencies
-python3 boom.py setup
-```
-
-The setup wizard stores config in `~/.boom/` (override with `BOOM_HOME`) — to
-talk to a real LLM and enable channels.
-
-### Desktop (Tauri + React)
-
-```bash
+devbox shell    # optional reproducible environment: Node 22, Rust
 cd apps/desktop
 npm install
 npm run tauri dev     # Tauri window with hot reload
@@ -78,33 +61,24 @@ cd apps/desktop
 npm run tauri build   # bundles land in src-tauri/target/release/bundle/
 ```
 
-The desktop app talks to the Python gateway API (`gateway/api.py`, default
-`:18080`), which it spawns automatically on launch. See
-[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) for system requirements, the
-Python-backend sidecar story, and auto-update.
+The desktop app runs the **boom-core** Rust backend in-process (default
+`:18080`) — no Python, no sidecar. Configure your LLM provider in
+Settings → Providers, then chat. See
+[docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) for system requirements and
+auto-update.
 
-### Mobile (Android PWA)
+### Mobile (Android, Kotlin)
+
+Native Android app (Jetpack Compose) — UI only for now; its backend comes later.
 
 ```bash
-cd apps/mobile
-python3 -m http.server 8080
+# Build a debug APK with Android SDK installed
+cd apps/mobile/android
+./gradlew assembleDebug
 ```
 
-Open `http://<your-machine-IP>:8080` on the phone (same Wi-Fi as the machine),
-then *Add to Home Screen*. Point the app at the gateway by setting `API_BASE`
-in `index.html` — full instructions in
-[apps/mobile/README.md](apps/mobile/README.md).
-
-### Services
-
-`./start.sh [api|gateway|all|status]` — `all` (the default) starts
-everything; `./stop.sh` stops it. Ports can be overridden with
-`BOOM_API_PORT` (default 18080) and `BOOM_INGRESS_PORT` (default 8788):
-
-| Service | What | Default port |
-|---------|------|--------------|
-| API | Python HTTP API (desktop + mobile clients) | 18080 |
-| Gateway | Multi-channel daemon (Telegram, Discord, …) | 8788 (ingress) |
+CI also builds `boom-android-debug.apk` on every push (see
+`.github/workflows/mobile.yml`).
 
 ## 🛡️ Windows SmartScreen
 
@@ -128,39 +102,41 @@ verify your download with SHA256 checksums, and the roadmap to signed installers
 
 | Doc | Description |
 |-----|-------------|
-| [docs/TOOLS.md](docs/TOOLS.md) | Full tool catalog (131 tools) |
-| [docs/PLUGINS.md](docs/PLUGINS.md) | Plugin system guide |
-| [docs/DEEPSEARCH.md](docs/DEEPSEARCH.md) | DeepSearch architecture |
-| [docs/CHANNELS.md](docs/CHANNELS.md) | Adding new channels |
+| [docs/TOOLS.md](docs/TOOLS.md) | Tool catalog |
+| [docs/BUILD.md](docs/BUILD.md) | Build guide |
+| [docs/DESKTOP_BUILD.md](docs/DESKTOP_BUILD.md) | Desktop build details |
 
 ## 🏗️ Architecture
 
 ```text
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Channels   │────▶│    Brain     │────▶│    Tools    │
-│ (8 platforms)│     │ (ReAct+DAG+  │     │ (131 tools) │
-└─────────────┘     │  MASS)       │     └─────────────┘
-                    └──────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │   Memory    │
-                    │ (FTS5+long) │
-                    └─────────────┘
+┌──────────────────────────────────────────┐
+│  apps/desktop (Tauri + React + Rust)     │
+│  ┌────────────┐      ┌─────────────────┐  │
+│  │  React UI  │─────▶│  boom-core      │  │
+│  │            │ HTTP │  (Rust, in-     │  │
+│  │            │◀─────│  process)       │  │
+│  └────────────┘      └─────────────────┘  │
+└──────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  apps/mobile (Kotlin, Android)           │
+│  UI only — backend arrives later          │
+└──────────────────────────────────────────┘
 ```
 
-- **Python** (`agent/`): brain, tools, orchestration, business logic
+- **Rust** (`crates/boom-core/`): backend — LLM providers, tools, chat,
+  storage (SQLite), served in-process by the desktop app
 - **TypeScript** (`apps/desktop/`): React desktop app (Tauri)
-- **HTML/JS** (`apps/mobile/`): Android PWA client
-- **Rust** (`crates/`): sandbox host
+- **Kotlin** (`apps/mobile/`): Android app (Jetpack Compose)
+- **Markdown** (`skills/`): skill definitions shared across clients
 
 ## 🧪 Testing
 
 ```bash
-# Run all evals
-for f in evals/test_*.py; do python3 "$f"; done
+# Rust backend
+cargo test -p boom-core
 
-# Or with pytest
-python3 -m pytest evals/ -q
+# Desktop UI typecheck
+cd apps/desktop && npx tsc --noEmit
 ```
 
 ## 🤝 Contributing
@@ -170,7 +146,7 @@ python3 -m pytest evals/ -q
 3. Commit your changes
 4. Push and open a Pull Request
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full guide.
 
 ## 📄 License
 

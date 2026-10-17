@@ -4,7 +4,7 @@ import { API_BASE } from "../lib/api";
 /* ---------------------------------------------------------------------------
  * LogViewer — a full-featured log browser for the Boom gateway's /api/logs.
  *
- * Backend contract (gateway/api.py):
+ * Backend contract (crates/boom-core (Rust)):
  *   GET /api/logs?limit=N[&offset=M]
  *   -> { "logs": [{ "ts": "2026-10-16T12:30:01", "msg": "..." }, ...] }
  *   Entries come out oldest-first (they are slices of an append-only buffer).

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Thin HTTP client for the Boom gateway API (`gateway/api.py`, see API_CONTRACT.md).
+ * Thin HTTP client for the Boom gateway API (`crates/boom-core (Rust)`, see API_CONTRACT.md).
  * No retries, no caching — failures surface honestly.
  * Every response is validated at runtime (unknown + narrowing); wrong shapes throw.
  * Transport failures (network errors, timeouts) and non-2xx responses throw
@@ -408,7 +408,7 @@ export function uninstallMarketplaceItem(id: string): Promise<void> {
 /* ---------------- Provider setup wizard ----------------------------------- */
 
 /**
- * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ * Backend contract (crates/boom-core (Rust), extends webui API_CONTRACT.md):
  *   POST /api/providers/config -> { provider_id, api_key, model, base_url? } -> { ok: true }
  *   POST /api/providers/test   -> { provider_id } -> { ok: boolean, message: string }
  *
@@ -464,7 +464,7 @@ export function testProviderConnection(providerId: string): Promise<ProviderTest
 /**
  * Exact `error` string the gateway returns from POST /api/chat when the
  * backend runs degraded because no AI provider key is configured
- * (`self._error(503, "agent brain not configured")` in gateway/api.py —
+ * (`self._error(503, "agent brain not configured")` in crates/boom-core (Rust) —
  * see `build_real_api`). `readErrorMessage()` keeps it intact on
  * `BackendUnreachableError.detail`.
  */
@@ -486,7 +486,7 @@ export function isProviderNotConfiguredError(err: unknown): err is BackendUnreac
 /* ---------------- Zalo Personal ----------------------------------------- */
 
 /**
- * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ * Backend contract (crates/boom-core (Rust), extends webui API_CONTRACT.md):
  *   GET  /api/channels/zalo-personal/status -> { connected: boolean, phone_masked: string | null }
  *   POST /api/channels/zalo-personal/login  -> { phone, password } -> { connected: boolean, phone_masked: string | null }
  *   POST /api/channels/zalo-personal/logout -> { ok: true }
@@ -533,7 +533,7 @@ export function zaloPersonalLogout(): Promise<void> {
 /* ---------------- Ollama ----------------------------------------------- */
 
 /**
- * Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+ * Backend contract (crates/boom-core (Rust), extends webui API_CONTRACT.md):
  *   GET /api/providers/ollama/status -> { running: boolean, models: string[] }
  *
  * Always answers 200 — `running: false` means Ollama is not installed,

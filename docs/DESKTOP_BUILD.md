@@ -1,7 +1,7 @@
 # Boom Desktop — Tauri Build Guide
 
 Tauri 2 wrapper for the Boom desktop app (`apps/desktop`). This doc covers system
-requirements, build steps, output locations, and the Python backend story.
+requirements, build steps, output locations, and the Rust backend.
 
 ## 1. System requirements
 
@@ -73,30 +73,12 @@ Bundles land under `apps/desktop/src-tauri/target/release/bundle/`:
 
 (`targets: "all"` in `tauri.conf.json` enables every platform-native bundle.)
 
-## 4. Python backend (`gateway/api.py`)
+## 4. Rust backend (`crates/boom-core`)
 
-The Tauri window only ships the **frontend** (the Vite build in `../dist`).
-The Python gateway API (`gateway/api.py`, default `:18080`) is a separate
-process and must be available for the desktop app to be functional.
-
-Two options:
-
-- **Dev mode** — run the API separately, then `npx tauri dev`:
-
-  ```bash
-  # terminal 1
-  cd gateway && python3 api.py
-  # terminal 2
-  cd apps/desktop && npx tauri dev
-  ```
-
-- **Production bundle** — bundle the Python backend as a sidecar binary.
-  Recommended approach: PyInstaller single-file build of `gateway/api.py`,
-  registered in `tauri.conf.json` under `bundle.externalBin` /
-  `app` sidecar resources.
-
-  > **TODO:** implement the PyInstaller sidecar bundle. Not done yet — the
-  > desktop app currently assumes the API is reachable at `http://localhost:18080`.
+The Tauri window ships the **frontend** (the Vite build in `../dist`) plus the
+**boom-core** Rust backend, which runs in-process (default `:18080`) — no
+separate process, no sidecar, no Python. The server starts automatically with
+the app via `boom_core::server::spawn_server`.
 
 ## 5. Notes
 

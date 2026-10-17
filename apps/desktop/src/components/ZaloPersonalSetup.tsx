@@ -20,7 +20,7 @@ import {
 /**
  * ZaloPersonalSetup — modal for connecting a personal Zalo account.
  *
- * Backend contract (gateway/api.py):
+ * Backend contract (crates/boom-core (Rust)):
  *   GET  /api/channels/zalo-personal/status -> { connected, phone_masked }
  *   POST /api/channels/zalo-personal/login  -> { phone, password } -> { connected, phone_masked }
  *   POST /api/channels/zalo-personal/logout -> { ok: true }

@@ -7,30 +7,6 @@ on:
     branches: [main]
 
 jobs:
-  python:
-    name: Python tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install deps
-        run: pip install httpx pydantic
-      - name: Syntax check
-        run: python3 -m compileall -q agent/src gateway
-      - name: Run evals
-        run: |
-          # Fail the job if any eval script fails (pipefail so a failing
-          # python3 is not masked by the trailing `tail`).
-          set -o pipefail
-          FAILED=0
-          for f in evals/test_*.py; do
-            echo "=== $f ==="
-            python3 "$f" 2>&1 | tail -3 || FAILED=1
-          done
-          exit $FAILED
-
   desktop:
     name: Desktop UI build
     runs-on: ubuntu-latest
@@ -50,16 +26,6 @@ jobs:
       - name: Build
         working-directory: apps/desktop
         run: npm run build
-
-  nix:
-    name: Nix flake check
-    runs-on: ubuntu-latest
-    continue-on-error: true  # TODO: fix npmDepsHash placeholder in pkg-desktop.nix
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v27
-      - name: Flake check
-        run: nix flake check --no-build
 
   rust:
     name: Rust (fmt + clippy + tests)

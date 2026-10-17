@@ -5,7 +5,9 @@ export interface ToolDef {
   group: "filesystem" | "terminal" | "git" | "web" | "code" | "security" | "db";
 }
 
-/** Tool catalog - generated from agent/src/environment.py, DO NOT edit by hand. */
+/** Tool catalog - static snapshot. The live catalog is served by boom-core
+ *  (Rust) at GET /api/tools; this fallback is only used when the backend
+ *  is unreachable. DO NOT edit by hand. */
 export const TOOL_CATALOG: ToolDef[] = [
   { name: "append_file", description: "Append text to end of file.", group: "filesystem" },
   { name: "artifact_csv", description: "Build a CSV table under artifacts/ from a list of dicts. The header is the ordered union of the row keys; missing cells ", group: "code" },

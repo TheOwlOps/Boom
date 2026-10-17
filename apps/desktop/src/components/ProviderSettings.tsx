@@ -12,7 +12,7 @@ import {
 import { API_BASE } from "../lib/api";
 import ProviderLogo from "./ProviderLogo";
 
-// Backend contract (gateway/api.py, extends webui API_CONTRACT.md):
+// Backend contract (crates/boom-core (Rust), extends webui API_CONTRACT.md):
 //   GET  /api/providers        -> { providers: ProviderMeta[], active: string | null }
 //   POST /api/providers/config -> { provider_id, api_key, model, base_url? } -> { ok: true }
 //   POST /api/providers/test   -> { provider_id } -> { ok: boolean, message: string }

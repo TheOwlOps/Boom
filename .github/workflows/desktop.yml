@@ -328,7 +328,7 @@ jobs:
           MACOS_X64_FILE="Boom_${VERSION}_x64.app.tar.gz"
           MACOS_AARCH64_FILE="Boom_${VERSION}_aarch64.app.tar.gz"
           bash scripts/generate-latest-json.sh "$VERSION" /tmp/release-notes.md -o dist/flat/latest.json
-          python3 -c "import json; d=json.load(open('dist/flat/latest.json')); assert len(d['platforms'])==4; print('latest.json valid:', d['version'])"
+          jq -e '.platforms | length == 4' dist/flat/latest.json > /dev/null && echo "latest.json valid: $(jq -r .version dist/flat/latest.json)"
 
       # Checksums for every release asset, so users can verify installer
       # integrity. Scans dist/flat/ only: it holds exactly the files attached

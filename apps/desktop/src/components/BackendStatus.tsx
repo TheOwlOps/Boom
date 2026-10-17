@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, Play, RotateCw } from "lucide-react";
 import { API_BASE, getBackendHelpText } from "../lib/api";
 
-/** Poll the Python backend health endpoint every 5 seconds. */
+/** Poll the boom-core (Rust) backend health endpoint every 5 seconds. */
 const POLL_MS = 5_000;
 /** Give up a single health probe after 5 seconds. */
 const FETCH_TIMEOUT_MS = 5_000;
 
-/** Connection state against the Python backend (gateway/api.py). */
+/** Connection state against the boom-core (Rust) backend. */
 type BackendState = "connected" | "disconnected" | "starting";
 
 export interface BackendStatusProps {
@@ -32,7 +32,7 @@ async function probeHealth(): Promise<boolean> {
 }
 
 /**
- * Asks the Tauri shell to start the bundled Python backend.
+ * Asks Tauri to start the in-process boom-core (Rust) backend.
  * The frontend always runs inside Tauri, so no environment guard needed.
  */
 async function startBackendNative(): Promise<string> {
@@ -56,7 +56,7 @@ async function getBackendError(): Promise<string> {
 }
 
 /**
- * Polls the Python backend health endpoint and surfaces a status UI.
+ * Polls the boom-core (Rust) backend health endpoint and surfaces a status UI.
  *
  * Full panel (default): shown at the top of the main content when the
  * backend is unreachable, with a manual-start command, a Tauri

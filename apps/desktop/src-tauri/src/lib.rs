@@ -10,18 +10,17 @@ use tauri::{Manager, RunEvent, State};
 // ---------------------------------------------------------------------------
 // Backend: boom-core in-process server
 //
-// The backend is the Rust `boom-core` crate (pure-Rust port of the Python
-// agent gateway), served in-process via `boom_core::server::spawn_server` in
-// a background tokio task. There is no sidecar binary and no Python process
+// The backend is the Rust `boom-core` crate, served in-process via
+// `boom_core::server::spawn_server` in a background tokio task. There is no sidecar binary and no Python process
 // anymore: the server lives and dies with the app, so the whole
 // spawn/wait/kill/reap/port-adoption machinery of the old sidecar design is
 // gone — only port-adoption (an *external* backend already listening) and
 // squat detection survive, because the port is still shared with the outside
 // world.
 //
-// `gateway/api.py` is untouched in the repo: Python remains the backend for
-// mobile. Only the desktop bundle drops it (no more `externalBin`,
-// no more PyInstaller step for desktop).
+// `crates/boom-core` is the only backend now: the Python agent gateway has
+// been removed from the repo. Mobile (Kotlin) is UI-only for the moment;
+// its backend will be built later.
 // ---------------------------------------------------------------------------
 
 /// Port the backend API listens on, resolved from `BOOM_API_PORT` (default

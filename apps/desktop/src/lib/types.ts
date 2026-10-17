@@ -1,6 +1,6 @@
 /**
  * Shared contract types for the Boom desktop UI.
- * Shapes mirror `gateway/api.py` responses (see API_CONTRACT.md).
+ * Shapes mirror `crates/boom-core (Rust)` responses (see API_CONTRACT.md).
  * Do not add fields — every property must exist on the wire.
  */
 
