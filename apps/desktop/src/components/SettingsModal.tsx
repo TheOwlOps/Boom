@@ -11,6 +11,7 @@
  *   - Groups: GroupManager
  *   - Activity: ActivityFeed
  *   - Bots: BotManager
+ *   - Bot Groups: BotGroupManager
  *   - DAG: DagViewer
  *   - Tools: ToolManager (includes the Channels subsection at the top)
  *   - Skills: SkillList
@@ -29,6 +30,7 @@ import {
   Search,
   Sparkles,
   Users,
+  UsersRound,
   Workflow,
   Wrench,
   X,
@@ -36,6 +38,7 @@ import {
 } from "lucide-react";
 import { ActivityFeed } from "./ActivityFeed";
 import { ShortcutHint } from "./ShortcutHint";
+import BotGroupManager from "./BotGroupManager";
 import BotManager from "./BotManager";
 import DagViewer from "./DagViewer";
 import GroupManager from "./GroupManager";
@@ -51,6 +54,7 @@ export type SettingsSection =
   | "groups"
   | "activity"
   | "bots"
+  | "bot-groups"
   | "dag"
   | "tools"
   | "skills";
@@ -68,6 +72,7 @@ const SECTIONS: Array<{
   { id: "groups", label: "Groups", icon: Users, keywords: ["group", "chat group", "member"] },
   { id: "activity", label: "Activity", icon: Activity, keywords: ["activity", "event", "history"] },
   { id: "bots", label: "Bots", icon: Bot, keywords: ["bot", "assistant"] },
+  { id: "bot-groups", label: "Bot Groups", icon: UsersRound, keywords: ["bot group", "group chat", "bots", "members"] },
   { id: "dag", label: "DAG", icon: Workflow, keywords: ["dag", "workflow", "pipeline", "graph"] },
   { id: "tools", label: "Tools", icon: Wrench, keywords: ["tool", "function", "channel", "telegram", "discord", "zalo"] },
   { id: "skills", label: "Skills", icon: Sparkles, keywords: ["skill", "capability"] },
@@ -207,6 +212,7 @@ export function SettingsModal({ open, onClose, initialSection = "providers" }: S
             {section === "groups" && <GroupManager />}
             {section === "activity" && <ActivityFeed />}
             {section === "bots" && <BotManager />}
+            {section === "bot-groups" && <BotGroupManager />}
             {section === "dag" && <DagViewer />}
             {section === "tools" && <ToolManager />}
             {section === "skills" && <SkillList />}

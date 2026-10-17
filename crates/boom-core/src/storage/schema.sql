@@ -51,3 +51,24 @@ CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
 );
+
+-- Bot groups: multi-bot chat rooms. `bot_ids` is a JSON array of bot ids.
+CREATE TABLE IF NOT EXISTS bot_groups (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    bot_ids    TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL
+);
+
+-- Persisted message log for bot groups (incoming messages and bot replies).
+CREATE TABLE IF NOT EXISTS bot_group_messages (
+    id         TEXT PRIMARY KEY,
+    group_id   TEXT NOT NULL,
+    bot_id     TEXT NOT NULL DEFAULT '',
+    bot_name   TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES bot_groups(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_bot_group_messages_group
+    ON bot_group_messages(group_id, created_at, id);

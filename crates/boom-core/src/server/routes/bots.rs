@@ -1,17 +1,21 @@
 //! Custom-bot routes (Grok-style): `GET/POST /api/bots`,
-//! `POST /api/bots/active`, `GET/PUT/DELETE /api/bots/{id}`.
+//! `POST /api/bots/active`, `GET/PUT/DELETE /api/bots/{id}`,
+//! `POST /api/bots/{id}/message` (one real harness turn as the bot).
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use serde_json::{json, Value};
 
 use super::super::{
     normalize_str_list,
-    state::{AppState, NewBot},
+    state::{AppState, NewBot, TurnRequest},
     ApiError, JsonBody, StorageError,
 };
+use super::chat::{resolve_bot_context, NOT_CONFIGURED_MESSAGE};
+use crate::server::TurnError;
 
 fn storage_error(e: StorageError, fallback_500: &str) -> ApiError {
     match e {
@@ -147,4 +151,71 @@ pub async fn set_active(
         return Err(ApiError::not_found(format!("bot not found: '{bot_id}'")));
     }
     Ok(Json(json!({ "ok": true, "bot": state.storage.active_bot() })))
+}
+
+/// `POST /api/bots/{id}/message` — body `{text, from_name?}` → 200
+/// `{ok: true, bot_id, reply}`.
+///
+/// One real harness turn as this bot (its own system prompt + tool
+/// allowlist, session `botmsg_<bot_id>`). Blank `text` → 400, unknown bot →
+/// 404, no LLM provider → 503, agent busy → 429, failed turn → 500.
+/// Replies are never faked.
+pub async fn message_bot(
+    State(state): State<AppState>,
+    Path(bot_id): Path<String>,
+    JsonBody(body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    if bot_id.is_empty() || bot_id == "active" {
+        // "/api/bots/active" is POST-only — never a bot id.
+        return Err(ApiError::not_found("not found"));
+    }
+    let text = match body.get("text").and_then(|v| v.as_str()) {
+        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => return Err(ApiError::bad_request("text is required")),
+    };
+    let bot = state
+        .storage
+        .get_bot(&bot_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown bot_id: '{bot_id}'")))?;
+    let from_name = match body.get("from_name") {
+        None | Some(Value::Null) => "user".to_string(),
+        Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        Some(Value::String(_)) => "user".to_string(),
+        Some(_) => return Err(ApiError::bad_request("from_name must be a string")),
+    };
+
+    if !state.harness.is_configured() {
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            NOT_CONFIGURED_MESSAGE,
+        ));
+    }
+    // Serialize against other turns: a second concurrent turn gets 429.
+    let _guard = state
+        .turn
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| ApiError::new(StatusCode::TOO_MANY_REQUESTS, "agent busy"))?;
+
+    let (system_prompt, tools) = resolve_bot_context(&state, Some(&bot_id))?;
+    let session_id = format!("botmsg_{bot_id}");
+    state.storage.touch_session(&session_id);
+    let req = TurnRequest {
+        prompt: format!("{from_name} says:\n\n{text}\n\nReply as yourself, briefly and in character."),
+        strategy: "auto".to_string(),
+        session_id,
+        system_prompt,
+        tools,
+    };
+    let result = state.harness.run_turn(req).await.map_err(|e| match e {
+        TurnError::NotConfigured => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            NOT_CONFIGURED_MESSAGE,
+        ),
+        TurnError::Failed(_) => {
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "chat turn failed")
+        }
+    })?;
+    drop(_guard);
+    Ok(Json(json!({ "ok": true, "bot_id": bot.id, "reply": result.reply })))
 }

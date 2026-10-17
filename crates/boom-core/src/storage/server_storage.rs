@@ -30,9 +30,10 @@ use serde_json::{Map, Value};
 
 use super::{Result as StoreResult, Storage as DbStorage, StorageError as DbError};
 use crate::server::state::{
-    epoch_to_iso, normalize_str_list, now_epoch, now_iso, Bot as ApiBot, Group as ApiGroup,
-    NewBot as ApiNewBot, PluginMeta as ApiPluginMeta, SessionSummary as ApiSessionSummary,
-    Storage as ApiStorage, StorageError as ApiError,
+    epoch_to_iso, normalize_str_list, now_epoch, now_iso, Bot as ApiBot, BotGroup as ApiBotGroup,
+    BotGroupMessage as ApiBotGroupMessage, Group as ApiGroup, NewBot as ApiNewBot,
+    PluginMeta as ApiPluginMeta, SessionSummary as ApiSessionSummary, Storage as ApiStorage,
+    StorageError as ApiError,
 };
 
 /// kv key prefix for per-bot metadata JSON.
@@ -411,6 +412,99 @@ impl ApiStorage for SqliteStorage {
         Ok(policy.clone())
     }
 
+    // -- bot groups --
+
+    fn create_bot_group(&self, name: &str, bot_ids: Vec<String>) -> Result<ApiBotGroup, ApiError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ApiError::Invalid("name is required".to_string()));
+        }
+        for id in &bot_ids {
+            let exists = self.db.bots().get(id).map_err(api_error)?.is_some();
+            if !exists {
+                return Err(ApiError::NotFound(format!("unknown bot_id: '{id}'")));
+            }
+        }
+        self.db.bot_groups().create(name, &bot_ids).map_err(api_error)
+    }
+
+    fn list_bot_groups(&self) -> Vec<ApiBotGroup> {
+        self.db.bot_groups().list().unwrap_or_default()
+    }
+
+    fn get_bot_group(&self, id: &str) -> Option<ApiBotGroup> {
+        self.db.bot_groups().get(id).ok()?
+    }
+
+    fn delete_bot_group(&self, id: &str) -> bool {
+        if id.trim().is_empty() {
+            return false;
+        }
+        self.db.bot_groups().delete(id).unwrap_or(false)
+    }
+
+    fn add_bot_to_group(&self, group_id: &str, bot_id: &str) -> Result<ApiBotGroup, ApiError> {
+        if self.db.bots().get(bot_id).map_err(api_error)?.is_none() {
+            return Err(ApiError::NotFound(format!("unknown bot_id: '{bot_id}'")));
+        }
+        self.db
+            .bot_groups()
+            .add_bot(group_id, bot_id)
+            .map_err(api_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("bot group not found: '{group_id}'")))
+    }
+
+    fn remove_bot_from_group(
+        &self,
+        group_id: &str,
+        bot_id: &str,
+    ) -> Result<ApiBotGroup, ApiError> {
+        let group = self
+            .db
+            .bot_groups()
+            .get(group_id)
+            .map_err(api_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("bot group not found: '{group_id}'")))?;
+        if !group.bot_ids.iter().any(|b| b == bot_id) {
+            return Err(ApiError::NotFound(format!(
+                "bot '{bot_id}' is not in group '{group_id}'"
+            )));
+        }
+        self.db
+            .bot_groups()
+            .remove_bot(group_id, bot_id)
+            .map_err(api_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("bot group not found: '{group_id}'")))
+    }
+
+    fn add_bot_group_message(
+        &self,
+        group_id: &str,
+        bot_id: &str,
+        bot_name: &str,
+        text: &str,
+    ) -> Result<ApiBotGroupMessage, ApiError> {
+        if self
+            .db
+            .bot_groups()
+            .get(group_id)
+            .map_err(api_error)?
+            .is_none()
+        {
+            return Err(ApiError::NotFound(format!(
+                "bot group not found: '{group_id}'"
+            )));
+        }
+        self.db
+            .bot_groups()
+            .add_message(group_id, bot_id, bot_name, text)
+            .map_err(api_error)
+    }
+
+    fn list_bot_group_messages(&self, group_id: &str) -> Vec<ApiBotGroupMessage> {
+        self.db.bot_groups().list_messages(group_id).unwrap_or_default()
+    }
+
     // -- sessions --
 
     fn list_sessions(&self) -> Vec<ApiSessionSummary> {
@@ -777,6 +871,113 @@ mod tests {
         let g = s2.get_group("telegram", "g1").expect("get after reopen");
         assert_eq!(g.message_count, 7);
         assert_eq!(g.settings.get("muted"), Some(&Value::Bool(true)));
+    }
+
+    // -- bot groups --
+
+    #[test]
+    fn bot_group_crud_via_trait() {
+        let s = test_storage();
+        let b1 = s.create_bot(new_bot_input("One")).expect("create bot");
+        let b2 = s.create_bot(new_bot_input("Two")).expect("create bot");
+
+        // Unknown bot id → NotFound.
+        match s.create_bot_group("Team", vec!["ghost".to_string()]) {
+            Err(ApiError::NotFound(msg)) => assert!(msg.contains("ghost"), "{msg}"),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+        // Blank name → Invalid.
+        match s.create_bot_group("  ", vec![]) {
+            Err(ApiError::Invalid(msg)) => assert_eq!(msg, "name is required"),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+
+        let g = s
+            .create_bot_group("Team", vec![b1.id.clone(), b2.id.clone()])
+            .expect("create");
+        assert_eq!(g.name, "Team");
+        assert_eq!(g.bot_ids, vec![b1.id.clone(), b2.id.clone()]);
+        assert!(g.created_at > 0);
+
+        let fetched = s.get_bot_group(&g.id).expect("get");
+        assert_eq!(fetched.id, g.id);
+        assert!(s.get_bot_group("nope").is_none());
+        assert_eq!(s.list_bot_groups().len(), 1);
+
+        // Adding is idempotent.
+        let g2 = s.add_bot_to_group(&g.id, &b1.id).expect("add dup");
+        assert_eq!(g2.bot_ids.len(), 2);
+        // Unknown bot / unknown group.
+        assert!(matches!(
+            s.add_bot_to_group(&g.id, "ghost"),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            s.add_bot_to_group("ghost", &b1.id),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            s.remove_bot_from_group("ghost", &b1.id),
+            Err(ApiError::NotFound(_))
+        ));
+
+        // Removing a non-member → NotFound.
+        let b3 = s.create_bot(new_bot_input("Three")).expect("create bot");
+        assert!(matches!(
+            s.remove_bot_from_group(&g.id, &b3.id),
+            Err(ApiError::NotFound(_))
+        ));
+        let g3 = s.remove_bot_from_group(&g.id, &b1.id).expect("remove");
+        assert_eq!(g3.bot_ids, vec![b2.id.clone()]);
+
+        // Messages.
+        let m1 = s
+            .add_bot_group_message(&g.id, "", "user", "hello")
+            .expect("message");
+        let m2 = s
+            .add_bot_group_message(&g.id, &b2.id, "Two", "hi")
+            .expect("message");
+        assert_ne!(m1.id, m2.id);
+        assert_eq!(m1.bot_name, "user");
+        let messages = s.list_bot_group_messages(&g.id);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, m1.id);
+        assert_eq!(messages[1].text, "hi");
+        assert!(matches!(
+            s.add_bot_group_message("ghost", "", "user", "x"),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(s.list_bot_group_messages("ghost").is_empty());
+
+        // Deleting the group deletes its messages too.
+        assert!(s.delete_bot_group(&g.id));
+        assert!(s.get_bot_group(&g.id).is_none());
+        assert!(s.list_bot_group_messages(&g.id).is_empty());
+        assert!(!s.delete_bot_group(&g.id));
+        assert!(!s.delete_bot_group(""));
+    }
+
+    #[test]
+    fn bot_groups_survive_reopen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("boom.db");
+        let (group_id, bot_id) = {
+            let s = SqliteStorage::new(DbStorage::open(&db_path).expect("open"));
+            let bot = s.create_bot(new_bot_input("One")).expect("create bot");
+            let g = s
+                .create_bot_group("Team", vec![bot.id.clone()])
+                .expect("create");
+            s.add_bot_group_message(&g.id, &bot.id, "One", "hello")
+                .expect("message");
+            (g.id, bot.id)
+        };
+        let s2 = SqliteStorage::new(DbStorage::open(&db_path).expect("reopen"));
+        let g = s2.get_bot_group(&group_id).expect("get after reopen");
+        assert_eq!(g.name, "Team");
+        assert_eq!(g.bot_ids, vec![bot_id]);
+        let messages = s2.list_bot_group_messages(&group_id);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "hello");
     }
 
     // -- marketplace --

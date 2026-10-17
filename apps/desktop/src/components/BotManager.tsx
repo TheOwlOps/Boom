@@ -19,7 +19,7 @@
  * as lib/api.ts); malformed shapes throw instead of rendering garbage.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { MessageSquare, Pencil, Plus, RefreshCw, Search, Trash2, Type, X } from "lucide-react";
 import { API_BASE } from "../lib/api";
 import { TOOL_CATALOG } from "../data/toolCatalog";
 import { BoomiEmptyState } from "./BoomiEmptyState";
@@ -146,6 +146,31 @@ async function apiUpdateBot(id: string, draft: BotDraft): Promise<Bot> {
   const body = await parseJsonBody(res, "PUT /api/bots/:id");
   if (!isRecord(body) || !isRecord(body.bot)) throw new Error("malformed response: PUT /api/bots/:id");
   return parseBot(body.bot);
+}
+
+async function apiRenameBot(id: string, name: string): Promise<Bot> {
+  const res = await fetch(`${API_BASE}/api/bots/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const body = await parseJsonBody(res, "PUT /api/bots/:id (rename)");
+  // The gateway may return {bot: {...}} (full shape) or the bot object itself.
+  const raw = isRecord(body) && isRecord(body.bot) ? body.bot : body;
+  return parseBot(raw);
+}
+
+async function apiMessageBot(id: string, text: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/bots/${encodeURIComponent(id)}/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  const body = await parseJsonBody(res, "POST /api/bots/:id/message");
+  if (!isRecord(body) || typeof body.reply !== "string") {
+    throw new Error("malformed response: POST /api/bots/:id/message");
+  }
+  return body.reply;
 }
 
 async function apiDeleteBot(id: string): Promise<void> {
@@ -464,6 +489,210 @@ function DeleteConfirmModal({
 
 /* ------------------------------------------------------------ loading state */
 
+/* ------------------------------------------------------------ loading state */
+
+/** Rename modal — name only. Visually distinct from the full Edit form:
+ *  narrow width, accent-tinted dashed outline, Type icon in the header. */
+function RenameBotModal({
+  bot,
+  onClose,
+  onRenamed,
+}: {
+  bot: Bot;
+  onClose(): void;
+  onRenamed(bot: Bot): void;
+}) {
+  const [name, setName] = useState(bot.name);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const save = async () => {
+    setFormError(null);
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setFormError("Name cannot be empty.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const renamed = await apiRenameBot(bot.id, trimmed);
+      onRenamed(renamed);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Rename failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Rename bot ${bot.name}`}
+    >
+      <div
+        className="w-full max-w-sm rounded-lg border-2 border-dashed border-[var(--accent)] bg-[var(--surface)] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] text-[var(--accent)]">
+            <Type size={16} />
+          </span>
+          <h3 className="font-semibold text-[var(--text)]">Rename Bot</h3>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {formError && (
+          <p className="mb-3 rounded border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-sm text-[var(--text)]">
+            {formError}
+          </p>
+        )}
+        <label className="mb-1 block text-xs text-[var(--muted)]">Bot name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+          }}
+          autoFocus
+          maxLength={80}
+          placeholder="New bot name"
+          className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => void save()}
+            disabled={saving}
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
+          >
+            {saving ? "Renaming…" : "Rename"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Message-a-bot modal: inline prompt → POST /api/bots/:id/message → reply. */
+function MessageBotModal({
+  bot,
+  onClose,
+}: {
+  bot: Bot;
+  onClose(): void;
+}) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [reply, setReply] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const send = async () => {
+    setFormError(null);
+    setReply(null);
+    if (!text.trim()) {
+      setFormError("Type a message first.");
+      return;
+    }
+    setSending(true);
+    try {
+      const r = await apiMessageBot(bot.id, text.trim());
+      setReply(r);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Message ${bot.name}`}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-[var(--surface)] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <BotAvatar botId={bot.id} name={bot.name} emoji={bot.avatar_emoji} size={32} status="idle" />
+          <h3 className="font-semibold text-[var(--text)]">Message {bot.name}</h3>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <label className="mb-1 block text-xs text-[var(--muted)]">Your message</label>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
+          }}
+          rows={3}
+          autoFocus
+          placeholder={`Say something to ${bot.name}…`}
+          className="w-full rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:border-[var(--muted)] focus:outline-none"
+        />
+        <p className="mt-1 text-xs text-[var(--muted)]">Tip: ⌘/Ctrl+Enter to send.</p>
+        {formError && (
+          <p className="mt-2 rounded border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_50%,transparent)] px-3 py-2 text-sm text-[var(--text)]">
+            {formError}
+          </p>
+        )}
+        {reply !== null && (
+          <div className="mt-2 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+            <div className="mb-1 flex items-center gap-2">
+              <BotAvatar botId={bot.id} name={bot.name} emoji={bot.avatar_emoji} size={20} status="idle" />
+              <span className="text-xs font-medium text-[var(--text)]">{bot.name}</span>
+            </div>
+            <p className="whitespace-pre-wrap text-sm text-[var(--text)]">{reply}</p>
+          </div>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={sending}
+            className="rounded border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+          >
+            Close
+          </button>
+          <button
+            onClick={() => void send()}
+            disabled={sending}
+            className="flex items-center gap-1.5 rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-[var(--bg)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
+          >
+            {sending ? "Sending…" : (
+              <>
+                <MessageSquare size={14} /> Send
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BotCardSkeleton() {
   return (
     <div className="animate-pulse rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -489,6 +718,8 @@ export default function BotManager() {
   const [editing, setEditing] = useState<Bot | null>(null); // non-null = edit modal open
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Bot | null>(null);
+  const [renaming, setRenaming] = useState<Bot | null>(null);
+  const [messaging, setMessaging] = useState<Bot | null>(null);
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -532,6 +763,11 @@ export default function BotManager() {
   const handleDeleted = (id: string) => {
     setBots((prev) => prev.filter((b) => b.id !== id));
     setDeleting(null);
+  };
+
+  const handleRenamed = (renamed: Bot) => {
+    setBots((prev) => prev.map((b) => (b.id === renamed.id ? renamed : b)));
+    setRenaming(null);
   };
 
   const handleSetActive = async (bot: Bot) => {
@@ -663,12 +899,29 @@ export default function BotManager() {
                     {activatingId === bot.id ? "Activating…" : "Set Active"}
                   </button>
                 )}
+                {/* Rename is visually distinct from Edit: dashed accent outline + label. */}
+                <button
+                  onClick={() => setRenaming(bot)}
+                  aria-label={`Rename ${bot.name}`}
+                  title="Rename"
+                  className="flex-1 rounded border-2 border-dashed border-[var(--accent)] px-2.5 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]"
+                >
+                  <Type size={12} className="mr-1 inline" /> Rename
+                </button>
                 <button
                   onClick={() => setEditing(bot)}
                   aria-label={`Edit ${bot.name}`}
                   className="flex-1 rounded border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
                 >
                   <Pencil size={12} className="mr-1 inline" /> Edit
+                </button>
+                <button
+                  onClick={() => setMessaging(bot)}
+                  aria-label={`Message ${bot.name}`}
+                  title="Message bot"
+                  className="rounded border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-2)]"
+                >
+                  <MessageSquare size={12} />
                 </button>
                 <button
                   onClick={() => setDeleting(bot)}
@@ -691,6 +944,12 @@ export default function BotManager() {
       )}
       {deleting && (
         <DeleteConfirmModal bot={deleting} onClose={() => setDeleting(null)} onDeleted={handleDeleted} />
+      )}
+      {renaming && (
+        <RenameBotModal bot={renaming} onClose={() => setRenaming(null)} onRenamed={handleRenamed} />
+      )}
+      {messaging && (
+        <MessageBotModal bot={messaging} onClose={() => setMessaging(null)} />
       )}
     </div>
   );

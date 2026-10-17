@@ -2,6 +2,7 @@
 //! methods of `gateway/api.py`.
 
 pub mod bots;
+pub mod bot_groups;
 pub mod channels;
 pub mod connectors;
 pub mod chat;

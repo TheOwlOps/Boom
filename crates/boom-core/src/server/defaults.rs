@@ -240,6 +240,10 @@ struct MemoryInner {
     disabled_tools: BTreeSet<String>,
     sessions: HashMap<String, SessionSummary>,
     next_bot: u64,
+    bot_groups: HashMap<String, BotGroup>,
+    bot_group_messages: HashMap<String, Vec<BotGroupMessage>>,
+    next_bot_group: u64,
+    next_bot_group_msg: u64,
 }
 
 /// In-memory storage. Groups start empty (Python only registers groups via
@@ -487,6 +491,146 @@ impl Storage for MemoryStorage {
             })?;
         group.policy = policy.clone();
         Ok(policy.clone())
+    }
+
+    fn create_bot_group(&self, name: &str, bot_ids: Vec<String>) -> Result<BotGroup, StorageError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(StorageError::Invalid("name is required".to_string()));
+        }
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal("failed to create bot group".to_string())
+        })?;
+        for id in &bot_ids {
+            if !inner.bots.contains_key(id) {
+                return Err(StorageError::NotFound(format!("unknown bot_id: '{id}'")));
+            }
+        }
+        inner.next_bot_group += 1;
+        let id = format!("bgroup_{}_{}", now_epoch(), inner.next_bot_group);
+        let now = now_epoch();
+        let group = BotGroup {
+            id: id.clone(),
+            name: name.to_string(),
+            bot_ids,
+            created_at: now,
+        };
+        inner.bot_groups.insert(id, group.clone());
+        Ok(group)
+    }
+
+    fn list_bot_groups(&self) -> Vec<BotGroup> {
+        let inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let mut groups: Vec<BotGroup> = inner.bot_groups.values().cloned().collect();
+        groups.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        groups
+    }
+
+    fn get_bot_group(&self, id: &str) -> Option<BotGroup> {
+        self.inner.lock().ok()?.bot_groups.get(id).cloned()
+    }
+
+    fn delete_bot_group(&self, id: &str) -> bool {
+        if id.trim().is_empty() {
+            return false;
+        }
+        self.inner
+            .lock()
+            .map(|mut inner| {
+                inner.bot_group_messages.remove(id);
+                inner.bot_groups.remove(id).is_some()
+            })
+            .unwrap_or(false)
+    }
+
+    fn add_bot_to_group(&self, group_id: &str, bot_id: &str) -> Result<BotGroup, StorageError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal("failed to update bot group".to_string())
+        })?;
+        if !inner.bots.contains_key(bot_id) {
+            return Err(StorageError::NotFound(format!("unknown bot_id: '{bot_id}'")));
+        }
+        let group = inner
+            .bot_groups
+            .get_mut(group_id)
+            .ok_or_else(|| StorageError::NotFound(format!("bot group not found: '{group_id}'")))?;
+        if !group.bot_ids.iter().any(|b| b == bot_id) {
+            group.bot_ids.push(bot_id.to_string());
+        }
+        Ok(group.clone())
+    }
+
+    fn remove_bot_from_group(
+        &self,
+        group_id: &str,
+        bot_id: &str,
+    ) -> Result<BotGroup, StorageError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal("failed to update bot group".to_string())
+        })?;
+        let group = inner
+            .bot_groups
+            .get_mut(group_id)
+            .ok_or_else(|| StorageError::NotFound(format!("bot group not found: '{group_id}'")))?;
+        if !group.bot_ids.iter().any(|b| b == bot_id) {
+            return Err(StorageError::NotFound(format!(
+                "bot '{bot_id}' is not in group '{group_id}'"
+            )));
+        }
+        group.bot_ids.retain(|b| b != bot_id);
+        Ok(group.clone())
+    }
+
+    fn add_bot_group_message(
+        &self,
+        group_id: &str,
+        bot_id: &str,
+        bot_name: &str,
+        text: &str,
+    ) -> Result<BotGroupMessage, StorageError> {
+        let mut inner = self.inner.lock().map_err(|_| {
+            StorageError::Internal("failed to add bot group message".to_string())
+        })?;
+        if !inner.bot_groups.contains_key(group_id) {
+            return Err(StorageError::NotFound(format!(
+                "bot group not found: '{group_id}'"
+            )));
+        }
+        inner.next_bot_group_msg += 1;
+        let msg = BotGroupMessage {
+            id: format!("bmsg_{}_{}", now_epoch(), inner.next_bot_group_msg),
+            group_id: group_id.to_string(),
+            bot_id: bot_id.to_string(),
+            bot_name: bot_name.to_string(),
+            text: text.to_string(),
+            created_at: now_epoch(),
+        };
+        inner
+            .bot_group_messages
+            .entry(group_id.to_string())
+            .or_default()
+            .push(msg.clone());
+        Ok(msg)
+    }
+
+    fn list_bot_group_messages(&self, group_id: &str) -> Vec<BotGroupMessage> {
+        self.inner
+            .lock()
+            .map(|inner| {
+                inner
+                    .bot_group_messages
+                    .get(group_id)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
     }
 
     fn plugins(&self) -> Vec<PluginMeta> {

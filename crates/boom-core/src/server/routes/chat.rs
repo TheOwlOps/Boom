@@ -48,7 +48,7 @@ fn sse_event(name: &str, payload: &Value) -> Event {
 
 /// Resolve `(system_prompt, tools)` for a bot id, mirroring Python's
 /// `_resolve_bot_context`. Unknown id → 404 `"unknown bot_id: '...'"`.
-fn resolve_bot_context(
+pub(crate) fn resolve_bot_context(
     state: &AppState,
     bot_id: Option<&str>,
 ) -> Result<(Option<String>, BotTools), ApiError> {

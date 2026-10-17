@@ -14,12 +14,14 @@
 //! (`CREATE TABLE IF NOT EXISTS` ...) on every open, so schema changes stay
 //! additive and old databases keep working without a version table.
 
+mod bot_groups;
 mod bots;
 mod kv;
 mod providers;
 pub mod server_storage;
 mod sessions;
 
+pub use bot_groups::BotGroupStore;
 pub use bots::{Bot, BotPatch, BotStore, NewBot};
 pub use kv::KvStore;
 pub use providers::{ProviderConfig, ProviderStore};
@@ -174,6 +176,11 @@ impl Storage {
     /// Custom bots store.
     pub fn bots(&self) -> BotStore<'_> {
         BotStore::new(&self.conn)
+    }
+
+    /// Bot groups (multi-bot chat rooms) store.
+    pub fn bot_groups(&self) -> BotGroupStore<'_> {
+        BotGroupStore::new(&self.conn)
     }
 
     /// Generic key-value store (marketplace installs, group policy/mute, settings).

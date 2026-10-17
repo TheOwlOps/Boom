@@ -7,17 +7,21 @@
 //!        /api/activity  /api/sessions  /api/channels  /api/channels/status
 //!        /api/channels/zalo-personal/status  /api/dag/status
 //!        /api/tools  /api/skills  /api/groups  /api/bots
+//!        /api/bot-groups  /api/bot-groups/{id}
 //!        /api/providers  /api/providers/ollama/status
 //!        /api/marketplace  /api/marketplace/installed
 //! POST   /api/chat  /api/tools/run  /api/groups/mute  /api/groups/policy
-//!        /api/bots  /api/bots/active  /api/providers/config
+//!        /api/bots  /api/bots/active  /api/bots/{id}/message
+//!        /api/bot-groups  /api/bot-groups/{id}/bots
+//!        /api/bot-groups/{id}/message  /api/providers/config
 //!        /api/providers/test  /api/marketplace/install
 //!        /api/marketplace/uninstall
 //!        /api/channels/{id}/connect  /api/channels/{id}/disconnect
 //!        /api/channels/{id}/test
 //!        /api/channels/zalo-personal/login  /api/channels/zalo-personal/logout
 //! PUT    /api/bots/{id}
-//! DELETE /api/bots/{id}
+//! DELETE /api/bots/{id}  /api/bot-groups/{id}
+//!        /api/bot-groups/{id}/bots/{bot_id}
 //! ```
 
 pub mod channels;
@@ -31,7 +35,7 @@ pub use channels::FileChannelRegistry;
 pub use file_providers::FileProviderRegistry;
 pub use state::{
     channel_credential_hint, epoch_to_iso, normalize_str_list, now_epoch, now_iso, parse_ts_iso,
-    split_marketplace_id, AppState, Bot, BotTools, BoxFuture, ChannelConnectInfo,
+    split_marketplace_id, AppState, Bot, BotGroup, BotGroupMessage, BotTools, BoxFuture, ChannelConnectInfo,
     ChannelError, ChannelInfo, ChannelRegistry, DagNode, Group, Harness, LogEntry,
     MarketplaceError, NewBot, OllamaStatus, PluginMeta, ProviderConfig, ProviderConfigError,
     ProviderMeta, ProviderRegistry, SessionSummary, Storage, StorageError, ToolInfo, ToolRegistry, TurnError,
@@ -53,7 +57,7 @@ use axum::{
     extract::FromRequest,
     http::{header, request::Parts, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde_json::{Map, Value};
@@ -241,6 +245,28 @@ pub fn router(state: AppState) -> Router {
             get(bots::get_bot)
                 .put(bots::update_bot)
                 .delete(bots::delete_bot),
+        )
+        .route("/api/bots/{id}/message", post(bots::message_bot))
+        // bot groups (multi-bot chat rooms)
+        .route(
+            "/api/bot-groups",
+            get(bot_groups::list_bot_groups).post(bot_groups::create_bot_group),
+        )
+        .route(
+            "/api/bot-groups/{id}",
+            get(bot_groups::get_bot_group).delete(bot_groups::delete_bot_group),
+        )
+        .route(
+            "/api/bot-groups/{id}/bots",
+            post(bot_groups::add_bot_to_group),
+        )
+        .route(
+            "/api/bot-groups/{id}/bots/{bot_id}",
+            delete(bot_groups::remove_bot_from_group),
+        )
+        .route(
+            "/api/bot-groups/{id}/message",
+            post(bot_groups::post_group_message),
         )
         // providers
         .route("/api/providers", get(providers::list_providers))
