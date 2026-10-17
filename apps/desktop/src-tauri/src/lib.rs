@@ -341,6 +341,246 @@ fn get_backend_error(stderr: State<StderrBuffer>) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Zalo Personal bridge (Python, auto-start, best-effort)
+//
+// The Zalo Personal bridge is a *separate* minimal Python process
+// (`channels/zalo-personal/bridge.py`) speaking the unofficial Zalo personal
+// API via QR login. It is optional: the app must keep working when Python
+// or the script is missing, so every failure here is a logged warning, never
+// a crash.
+//
+// Session persistence lives inside the bridge itself
+// (`$BOOM_HOME/zalo_personal/session.json`, mode 0600): a relaunch reuses
+// the saved cookies and skips the QR scan.
+// ---------------------------------------------------------------------------
+
+/// Port the Zalo Personal bridge listens on, resolved from
+/// `BOOM_ZALO_BRIDGE_PORT` (default 17890) — mirrors the bridge default.
+fn zalo_bridge_port() -> u16 {
+    std::env::var("BOOM_ZALO_BRIDGE_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(17890)
+}
+
+fn zalo_bridge_addr(port: u16) -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
+/// True if *something* already answers on the bridge port (started manually,
+/// or left running by a previous app instance). In that case we adopt it and
+/// never spawn a second copy.
+fn zalo_bridge_port_open(port: u16) -> bool {
+    TcpStream::connect_timeout(&zalo_bridge_addr(port), Duration::from_millis(300)).is_ok()
+}
+
+/// Locate `bridge.py`. Search order:
+/// 1. Dev repo checkout: walk up from the executable directory looking for
+///    `channels/zalo-personal/bridge.py`.
+/// 2. Bundled resource (packaged app): `<resource_dir>/zalo-personal/bridge.py`
+///    (tauri.conf.json maps `channels/zalo-personal/bridge.py` there).
+/// 3. Next to the executable: `<exe_dir>/zalo-personal/bridge.py`.
+fn find_zalo_bridge_script(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    const REL: &str = "channels/zalo-personal/bridge.py";
+    // 1. Dev: walk up from the executable directory (covers both
+    // `cargo run` in src-tauri and a dev-built bundle).
+    if let Ok(mut dir) = std::env::current_exe() {
+        dir.pop(); // strip the binary name
+        for _ in 0..8 {
+            let candidate = dir.join(REL);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    // 2. Bundled resource (packaged app).
+    if let Ok(res_dir) = app.path().resource_dir() {
+        for sub in ["zalo-personal/bridge.py", "resources/zalo-personal/bridge.py"] {
+            let candidate = res_dir.join(sub);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    // 3. Next to the executable (manual installs).
+    if let Ok(mut dir) = std::env::current_exe() {
+        dir.pop();
+        let candidate = dir.join("zalo-personal/bridge.py");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Pick a Python interpreter: `python3` first, then `python`.
+/// Returns `None` when neither is on PATH — the bridge is then skipped.
+fn find_python() -> Option<String> {
+    for name in ["python3", "python"] {
+        let ok = std::process::Command::new(name)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Tracked Zalo bridge child process. `None` means we did not start one
+/// (bridge adopted from the port, never started, or already exited).
+struct ZaloBridgeProcess(Mutex<Option<std::process::Child>>);
+
+/// Spawn the bridge if it is not already running. Idempotent: a live tracked
+/// child or an already-listening port is reused.
+///
+/// Never panics; every failure is returned as `Err(String)` so the caller
+/// can log it and keep the app alive.
+fn spawn_zalo_bridge(
+    app: &tauri::AppHandle,
+    state: &State<ZaloBridgeProcess>,
+) -> Result<String, String> {
+    let port = zalo_bridge_port();
+    if zalo_bridge_port_open(port) {
+        return Ok(format!(
+            "zalo bridge already listening on 127.0.0.1:{} (adopted, not started by this app)",
+            port
+        ));
+    }
+    {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|e| format!("zalo bridge state lock poisoned: {}", e))?;
+        if let Some(child) = guard.as_mut() {
+            match child.try_wait() {
+                Ok(None) => return Ok("zalo bridge already started".to_string()),
+                // Dead child: drop it so a fresh one is spawned below.
+                _ => *guard = None,
+            }
+        }
+    }
+
+    let script = find_zalo_bridge_script(app).ok_or_else(|| {
+        "bridge.py not found (looked in dev repo path, bundled resources, and next to the executable)".to_string()
+    })?;
+    let python = find_python()
+        .ok_or_else(|| "no Python interpreter on PATH (tried python3, python)".to_string())?;
+
+    log::info!("[zalo-bridge] spawning: {} {}", python, script.display());
+    let mut cmd = std::process::Command::new(&python);
+    cmd.arg(&script)
+        // Inherit the environment: BOOM_HOME / BOOM_ZALO_* flow through.
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        // Detach from any console so no terminal window flashes on Windows.
+        .stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        cmd.creation_flags(0x08000000);
+    }
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn {} {}: {}", python, script.display(), e))?;
+
+    {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|e| format!("zalo bridge state lock poisoned: {}", e))?;
+        *guard = Some(child);
+    }
+    Ok(format!(
+        "zalo bridge starting on 127.0.0.1:{} ({} {})",
+        port,
+        python,
+        script.display()
+    ))
+}
+
+/// Stop the bridge child we started, if any. Idempotent. An adopted bridge
+/// (one we found on the port but did not start) is never killed.
+fn stop_zalo_bridge_process(state: &State<ZaloBridgeProcess>) {
+    let mut guard = match state.0.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("[zalo-bridge] cannot lock bridge state for shutdown: {}", e);
+            return;
+        }
+    };
+    if let Some(mut child) = guard.take() {
+        log::info!("[zalo-bridge] stopping bridge child process");
+        let _ = child.kill();
+        // Reap so we don't leave a zombie.
+        let _ = child.wait();
+    }
+}
+
+/// True if the bridge answers on its port, or our tracked child is alive.
+/// Cleans up a stale child handle.
+fn zalo_bridge_is_running(state: &State<ZaloBridgeProcess>) -> bool {
+    let port = zalo_bridge_port();
+    if zalo_bridge_port_open(port) {
+        return true;
+    }
+    let mut guard = match state.0.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("[zalo-bridge] cannot lock bridge state for status check: {}", e);
+            return false;
+        }
+    };
+    let alive = match guard.as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
+    if !alive {
+        *guard = None;
+    }
+    alive
+}
+
+// ---------------------------------------------------------------------------
+// Tauri commands: Zalo Personal bridge control
+// ---------------------------------------------------------------------------
+
+/// Report bridge liveness as JSON: `{"running": bool, "port": 17890}`.
+#[tauri::command]
+fn zalo_bridge_status(state: State<ZaloBridgeProcess>) -> String {
+    let running = zalo_bridge_is_running(&state);
+    serde_json::json!({ "running": running, "port": zalo_bridge_port() }).to_string()
+}
+
+/// Start the Zalo bridge (no-op if already running).
+/// Returns a human-readable success/error message — never throws.
+#[tauri::command]
+fn start_zalo_bridge(app: tauri::AppHandle, state: State<ZaloBridgeProcess>) -> String {
+    match spawn_zalo_bridge(&app, &state) {
+        Ok(msg) => msg,
+        Err(e) => {
+            log::warn!("[zalo-bridge] start_zalo_bridge failed: {}", e);
+            format!("failed to start zalo bridge: {}", e)
+        }
+    }
+}
+
+/// Stop the Zalo bridge child started by this app (no-op if none).
+#[tauri::command]
+fn stop_zalo_bridge(state: State<ZaloBridgeProcess>) -> String {
+    stop_zalo_bridge_process(&state);
+    "zalo bridge stopped".to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Existing commands (unchanged)
 // ---------------------------------------------------------------------------
 
@@ -458,6 +698,8 @@ pub fn run() {
             // Track the backend server in Tauri state.
             app.manage(BackendProcess(Mutex::new(None)));
             app.manage(StderrBuffer::default());
+            // Track the Zalo Personal bridge child process (optional helper).
+            app.manage(ZaloBridgeProcess(Mutex::new(None)));
             // Auto-start the backend on launch: the in-process boom-core
             // server is bound immediately here inside the setup hook (no user
             // action required). Best effort: a failure is logged loudly but
@@ -483,14 +725,26 @@ pub fn run() {
                     eprintln!("[backend] auto-start failed: {}", e);
                 }
             }
+            // Auto-start the Zalo Personal bridge on launch (best effort):
+            // the bridge restores its saved session and skips the QR scan on
+            // relaunch. A missing Python or bridge.py only logs a warning —
+            // the app window must still open.
+            let zstate: State<ZaloBridgeProcess> = app.state();
+            match spawn_zalo_bridge(app.handle(), &zstate) {
+                Ok(msg) => log::info!("[zalo-bridge] auto-start: {}", msg),
+                Err(e) => log::warn!("[zalo-bridge] auto-start skipped: {}", e),
+            }
             Ok(())
         })
         // Shut down the in-process backend server when the user closes the
-        // window, releasing the port.
+        // window, releasing the port. Also stop the Zalo bridge child we
+        // started (an adopted bridge is left alone).
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let state: State<BackendProcess> = window.state();
                 stop_backend_process(&state);
+                let zstate: State<ZaloBridgeProcess> = window.state();
+                stop_zalo_bridge_process(&zstate);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -499,7 +753,10 @@ pub fn run() {
             list_toolsets,
             get_backend_status,
             start_backend,
-            get_backend_error
+            get_backend_error,
+            zalo_bridge_status,
+            start_zalo_bridge,
+            stop_zalo_bridge
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -510,6 +767,8 @@ pub fn run() {
         if let RunEvent::Exit = event {
             let state: State<BackendProcess> = app_handle.state();
             stop_backend_process(&state);
+            let zstate: State<ZaloBridgeProcess> = app_handle.state();
+            stop_zalo_bridge_process(&zstate);
         }
     });
 }

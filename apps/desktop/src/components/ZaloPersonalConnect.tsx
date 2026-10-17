@@ -19,7 +19,10 @@ const STATUS_POLL_MS = 3_000;
  * Zalo Personal connect via QR login.
  *
  * Talks directly to the separate Python bridge process
- * (`channels/zalo-personal/bridge.py`) — not through the Rust backend.
+ * (`channels/zalo-personal/bridge.py`) over HTTP — not through the Rust
+ * backend. The Rust backend can auto-start / stop that process
+ * (`start_zalo_bridge` command); the bridge restores its saved session so a
+ * relaunch skips the QR scan.
  */
 export default function ZaloPersonalConnect({
   onConnected,
@@ -32,6 +35,8 @@ export default function ZaloPersonalConnect({
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [startMsg, setStartMsg] = useState("");
   const qrUrlRef = useRef<string | null>(null);
   const timersRef = useRef<number[]>([]);
   const notifiedRef = useRef(false);
@@ -106,6 +111,32 @@ export default function ZaloPersonalConnect({
     };
   }, [start, revokeQr]);
 
+  /** Start the bridge via the Tauri backend (auto-spawns the Python process). */
+  const startBridge = useCallback(async () => {
+    setStarting(true);
+    setStartMsg("");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const msg = await invoke<string>("start_zalo_bridge");
+      setStartMsg(msg);
+      // The bridge needs a moment to bind its port — retry the check a few
+      // times before giving up and letting the user hit "Thử lại".
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        if (await checkBridgeRunning()) break;
+      }
+      await start();
+    } catch (e) {
+      setStartMsg(
+        e instanceof Error
+          ? `Không khởi động được: ${e.message}`
+          : "Không khởi động được bridge"
+      );
+    } finally {
+      setStarting(false);
+    }
+  }, [start]);
+
   // --- Bridge offline -----------------------------------------------------
   if (phase === "checking") {
     return (
@@ -119,17 +150,37 @@ export default function ZaloPersonalConnect({
     return (
       <div className="space-y-2">
         <p className="text-xs text-[var(--muted)]">
-          Bridge Zalo Personal chưa chạy. Khởi động nó rồi bấm thử lại:
+          Bridge Zalo Personal chưa chạy. Bấm nút bên dưới để Boom tự khởi động
+          nó (lưu đăng nhập — lần sau mở app không cần quét QR lại):
         </p>
-        <code className="block rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 font-mono text-[11px] text-[var(--text)]">
-          python channels/zalo-personal/bridge.py
-        </code>
         <div className="flex gap-1.5 pt-0.5">
+          <button
+            type="button"
+            onClick={() => void startBridge()}
+            disabled={starting}
+            className={btnCls}
+          >
+            {starting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Smartphone className="h-3.5 w-3.5" />
+            )}
+            {starting ? "Đang khởi động…" : "Khởi động Bridge"}
+          </button>
           <button type="button" onClick={() => void start()} className={btnCls}>
             <RefreshCw className="h-3.5 w-3.5" />
             Thử lại
           </button>
         </div>
+        {startMsg && (
+          <p className="text-[11px] text-[var(--muted)]">{startMsg}</p>
+        )}
+        <p className="text-[11px] text-[var(--muted)]">
+          Hoặc chạy thủ công trong terminal:
+        </p>
+        <code className="block rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 font-mono text-[11px] text-[var(--text)]">
+          python channels/zalo-personal/bridge.py
+        </code>
         <p className="text-[11px] text-[var(--muted)]">
           Lưu ý: đây là API không chính thức — nên dùng tài khoản phụ, Zalo có thể
           khóa tài khoản tự động hóa.

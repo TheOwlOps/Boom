@@ -12,6 +12,12 @@ It is intentionally small:
 This bridge runs as a **separate, optional process**. It is NOT bundled with
 the Boom desktop app — start it only if you need Zalo Personal.
 
+**Auto-start:** the Boom desktop app auto-starts this bridge on launch
+(Rust backend spawns `python channels/zalo-personal/bridge.py`, bundled as a
+Tauri resource in packaged builds). The bridge restores its saved session
+(`$BOOM_HOME/zalo_personal/session.json`), so a relaunch skips the QR scan.
+You can also start it manually:
+
 ## How it works
 
 ```
