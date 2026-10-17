@@ -208,6 +208,10 @@ pub fn router(state: AppState) -> Router {
             "/api/channels/{id}/test",
             post(routes::channels::test_channel),
         )
+        .route(
+            "/api/channels/{id}/updates",
+            get(routes::channels::poll_updates),
+        )
         .route("/api/channels/status", get(misc::channels_status))
         .route(
             "/api/channels/zalo-personal/status",

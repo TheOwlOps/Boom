@@ -1,11 +1,12 @@
-//! Channel routes: real Telegram connect/disconnect/test plus an honest
-//! inventory. Platforms this build does not implement answer `unsupported`
-//! — never "not wired".
+//! Channel routes: real Telegram/Discord/Messenger connect/disconnect/test
+//! plus ingress polling, and an honest inventory. Platforms this build
+//! does not implement answer `unsupported` — never "not wired".
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::super::{
@@ -115,6 +116,47 @@ pub async fn test_channel(
         .await
     {
         Ok(msg) => Ok(Json(json!({ "ok": true, "id": id, "message": msg }))),
+        Err(e) => Err(channel_error(e)),
+    }
+}
+
+/// Query params for `GET /api/channels/{id}/updates`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatesQuery {
+    /// Optional chat filter: Telegram chat id, Discord channel id,
+    /// Messenger PSID.
+    pub chat_id: Option<String>,
+    /// Cursor: last seen update/message id (exclusive).
+    pub after: Option<String>,
+}
+
+/// `GET /api/channels/{id}/updates?chat_id&after` → 200
+/// `{ok: true, id, messages: [{id, chat_id, sender, text, ts}], count}`.
+///
+/// Polls the platform for inbound messages (ingress):
+/// - Telegram: `getUpdates` (short poll, `after` = last `update_id`).
+/// - Discord: recent channel messages (`chat_id` = channel id required,
+///   `after` = last message id).
+/// - Messenger: 501 — no polling API exists; ingress needs a webhook
+///   (see `docs/channels.md`).
+///
+/// Unconnected channel → 400, unknown → 404, unsupported → 400.
+pub async fn poll_updates(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<UpdatesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    match state
+        .channels
+        .poll_updates(&id, q.chat_id.as_deref(), q.after.as_deref())
+        .await
+    {
+        Ok(messages) => Ok(Json(json!({
+            "ok": true,
+            "id": id,
+            "messages": messages,
+            "count": messages.len(),
+        }))),
         Err(e) => Err(channel_error(e)),
     }
 }
