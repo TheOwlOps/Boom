@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Store } from "lucide-react";
+import { useMemo, useState, useRef, useEffect } from "react";
+import { PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Store, Bot as BotIcon, Users } from "lucide-react";
 import type { Bot } from "../lib/types";
 import { ChannelMonitor } from "./ChannelMonitor";
 import { BoomiAvatar } from "./BoomiAvatar";
@@ -18,6 +18,8 @@ export interface SidebarProps {
   activeBotId: string | null;
   onSelectBot(id: string): void;
   onNewChat(): void;
+  onCreateBot(): void;
+  onCreateGroup(): void;
   onOpenSettings(): void;
   onOpenMarketplace(): void;
 }
@@ -81,10 +83,38 @@ export default function Sidebar({
   activeBotId,
   onSelectBot,
   onNewChat,
+  onCreateBot,
+  onCreateGroup,
   onOpenSettings,
   onOpenMarketplace,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click / Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const closeAnd = (fn: () => void) => () => {
+    setMenuOpen(false);
+    fn();
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -102,9 +132,27 @@ export default function Sidebar({
         <button className="icon-btn" onClick={onToggle} title="Expand sidebar" aria-label="Expand sidebar">
           <PanelLeftOpen size={18} />
         </button>
-        <button className="icon-btn accent" onClick={onNewChat} title="New chat" aria-label="New chat">
-          <Plus size={18} />
-        </button>
+        <div className="relative" ref={menuRef}>
+          <button className="icon-btn accent" onClick={() => setMenuOpen((v) => !v)} title="Create" aria-label="Create new" aria-haspopup="menu" aria-expanded={menuOpen}>
+            <Plus size={18} />
+          </button>
+          {menuOpen && (
+            <div role="menu" className="absolute left-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl">
+              <button type="button" role="menuitem" onClick={closeAnd(onNewChat)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                <Plus size={15} className="shrink-0 text-[var(--muted)]" />
+                New chat
+              </button>
+              <button type="button" role="menuitem" onClick={closeAnd(onCreateBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                <BotIcon size={15} className="shrink-0 text-[var(--muted)]" />
+                Create bot
+              </button>
+              <button type="button" role="menuitem" onClick={closeAnd(onCreateGroup)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                <Users size={15} className="shrink-0 text-[var(--muted)]" />
+                Create bot group
+              </button>
+            </div>
+          )}
+        </div>
         <div className="teammate-rail" aria-label="Teammates">
           {filtered.map((b) => (
             <button
@@ -142,9 +190,27 @@ export default function Sidebar({
       <div className="sidebar-header">
         <Logo collapsed={collapsed} />
         <div className="sidebar-header-actions">
-          <button className="icon-btn accent" onClick={onNewChat} title="New chat" aria-label="New chat">
-            <Plus size={18} />
-          </button>
+          <div className="relative" ref={menuRef}>
+            <button className="icon-btn accent" onClick={() => setMenuOpen((v) => !v)} title="Create" aria-label="Create new" aria-haspopup="menu" aria-expanded={menuOpen}>
+              <Plus size={18} />
+            </button>
+            {menuOpen && (
+              <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl">
+                <button type="button" role="menuitem" onClick={closeAnd(onNewChat)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                  <Plus size={15} className="shrink-0 text-[var(--muted)]" />
+                  New chat
+                </button>
+                <button type="button" role="menuitem" onClick={closeAnd(onCreateBot)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                  <BotIcon size={15} className="shrink-0 text-[var(--muted)]" />
+                  Create bot
+                </button>
+                <button type="button" role="menuitem" onClick={closeAnd(onCreateGroup)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--text)] hover:bg-[var(--surface-2)]">
+                  <Users size={15} className="shrink-0 text-[var(--muted)]" />
+                  Create bot group
+                </button>
+              </div>
+            )}
+          </div>
           <button className="icon-btn" onClick={onToggle} title="Collapse sidebar" aria-label="Collapse sidebar">
             <PanelLeftClose size={18} />
           </button>

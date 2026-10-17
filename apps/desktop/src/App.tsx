@@ -154,7 +154,12 @@ export default function App() {
     false,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection] = useState<SettingsSection>("providers");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("providers");
+
+  const openSettingsSection = (section: SettingsSection) => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  };
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Bot roster for the teammates sidebar. ChatView owns the fetch +
@@ -316,6 +321,14 @@ export default function App() {
     },
     onNewChat: () => {
       setActiveSession(null);
+      setMobileNavOpen(false);
+    },
+    onCreateBot: () => {
+      openSettingsSection("bots");
+      setMobileNavOpen(false);
+    },
+    onCreateGroup: () => {
+      openSettingsSection("bot-groups");
       setMobileNavOpen(false);
     },
     onOpenSettings: () => setSettingsOpen(true),
