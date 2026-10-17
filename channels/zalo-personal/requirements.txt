@@ -1,3 +1,8 @@
 # Zalo Personal bridge dependencies.
 # Only the unofficial Zalo web client is needed; the HTTP server uses stdlib.
 zalo-api==2.1.0
+# QR image decoding (POST /qr-lookup-image). pyzbar is a thin wrapper and
+# needs the system zbar library too, e.g. `apt install libzbar0`.
+# If these are missing, /qr-lookup-image returns 501 with install hints.
+pyzbar
+Pillow

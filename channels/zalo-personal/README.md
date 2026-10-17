@@ -64,6 +64,25 @@ Zalo servers  <-->  bridge.py (zalo-api, polling)  <-->  Boom core (HTTP)
 
 - `POST /find-user` → `{"phone"}` — find a user by phone number.
 - `GET  /user-info?uid=...` → `{"uid", "name", "avatar", "phone"}`.
+- `POST /lookup-phone` → `{"phone"}` — phone → UID/profile **without
+  friending**. Works even when the target hides their profile, as long as
+  the number is searchable (Zalo privacy setting "find by phone"). Returns
+  `{"ok", "method", "profile", "visibility"}` where `visibility` marks
+  which fields Zalo returned vs hid. If the number is not searchable,
+  returns 404 with `{"ok": false, "attempts", "hint"}` — this is enforced
+  server-side by Zalo and cannot be bypassed.
+- `POST /lookup-qr` → `{"qr_data"}` — decode a Zalo QR payload
+  (`https://zalo.me/<uid>` or raw UID) and return the profile **without
+  friending and without a phone number**. Same `visibility` reporting;
+  Zalo's profile API usually returns at least UID/name/avatar for
+  non-friends (it powers group member lists). Alias: `/qr-lookup`.
+- `POST /qr-lookup-image` → `{"file_path"}` (inside `$BOOM_HOME`) —
+  decode the QR from an image, then same lookup as above. Requires
+  `pyzbar` + `Pillow` and the system `libzbar0`; returns 501 with
+  install hints when unavailable.
+- All three lookup endpoints share one rate limiter
+  (`BOOM_ZALO_LOOKUP_MAX` per `BOOM_ZALO_LOOKUP_WINDOW`, default
+  10/60s) to avoid Zalo throttling.
 
 ## Install & run
 

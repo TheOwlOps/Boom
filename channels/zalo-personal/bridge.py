@@ -22,7 +22,13 @@ drive a personal Zalo account:
     POST /group/block       -> {"group_id","uid"}
     GET  /group/members?group_id=... -> [{uid, name, avatar}]
     POST /find-user         -> {"phone"}
-    GET  /user-info?uid=... -> profile
+    GET  /user-info?uid=... -> profile (works for non-friends via UID)
+    POST /lookup-phone      -> {"phone"} phone -> UID/profile, no friending.
+                               Works even for hidden profiles when the number
+                               is searchable; reports `visibility` per field.
+    POST /lookup-qr         -> {"qr_data"} decode Zalo QR -> UID -> profile,
+                               no friending, no phone. (Alias: /qr-lookup.)
+    POST /qr-lookup-image   -> {"file_path"} decode QR image -> UID -> profile
 
 Welcome automation: when a new member joins a group (GroupEventType.JOIN),
 the bridge sends WELCOME_TEMPLATE (env BOOM_ZALO_WELCOME, {name} placeholder).
@@ -44,6 +50,8 @@ import json
 import logging
 import os
 import queue
+import re
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -62,6 +70,16 @@ MAX_TEXT_LEN = 4000
 MAX_ID_LEN = 64
 MAX_NAME_LEN = 100
 MAX_PHONE_LEN = 20
+
+# Lookup rate limit: max lookups per window (avoid Zalo throttling).
+# Applies to /lookup-phone, /lookup-qr (/qr-lookup), /qr-lookup-image.
+LOOKUP_MAX = int(os.environ.get("BOOM_ZALO_LOOKUP_MAX",
+                               os.environ.get("BOOM_ZALO_QR_LOOKUP_MAX", "10")))
+LOOKUP_WINDOW = int(os.environ.get("BOOM_ZALO_LOOKUP_WINDOW",
+                                   os.environ.get("BOOM_ZALO_QR_LOOKUP_WINDOW", "60")))
+
+# Image extensions accepted for POST /qr-lookup-image.
+ALLOWED_QR_IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
 BOOM_HOME = os.environ.get(
     "BOOM_HOME", os.path.join(os.path.expanduser("~"), ".boom")
@@ -238,6 +256,114 @@ def _safe_path(value, allowed_exts):
 def _thread_type(value):
     v = str(value or "user").lower()
     return v if v in ("user", "group") else None
+
+
+# ---------------------------------------------------------------------------
+# QR lookup (no friending, no phone number needed)
+# ---------------------------------------------------------------------------
+
+_lookup_lock = threading.Lock()
+_lookup_times = []  # timestamps of recent lookups (sliding window)
+
+
+def _lookup_allowed():
+    """Sliding-window rate limiter for profile lookups (anti Zalo throttle)."""
+    now = time.time()
+    with _lookup_lock:
+        while _lookup_times and _lookup_times[0] <= now - LOOKUP_WINDOW:
+            _lookup_times.pop(0)
+        if len(_lookup_times) >= LOOKUP_MAX:
+            return False
+        _lookup_times.append(now)
+        return True
+
+
+def _reset_lookup_limiter():
+    """Test helper: clear the rate-limit window."""
+    with _lookup_lock:
+        _lookup_times.clear()
+
+
+# Back-compat aliases (used by earlier tests/scripts).
+_qr_lookup_lock = _lookup_lock
+_qr_lookup_times = _lookup_times
+_qr_lookup_allowed = _lookup_allowed
+_reset_qr_lookup_limiter = _reset_lookup_limiter
+QR_LOOKUP_MAX = LOOKUP_MAX
+QR_LOOKUP_WINDOW = LOOKUP_WINDOW
+
+
+_UID_RE = re.compile(r"^(\d{1,20})")
+
+
+def _uid_from_qr_data(qr_data):
+    """Extract a Zalo UID from QR payload text.
+
+    Supported payloads:
+      * raw numeric UID, e.g. "123456789"
+      * Zalo share links: https://zalo.me/<uid>, https://zalo.me/s/<uid>,
+        https://chat.zalo.me/...?uid=<uid>
+    Returns the UID string, or None when nothing usable is found.
+    """
+    if not isinstance(qr_data, str):
+        return None
+    s = qr_data.strip()
+    if not s or len(s) > 2048:
+        return None
+    # Raw numeric UID.
+    if s.isdigit() and len(s) <= 20:
+        return s
+    # URL forms.
+    try:
+        p = urlparse(s if "://" in s else "https://" + s)
+    except Exception:
+        return None
+    host = (p.hostname or "").lower()
+    if "zalo.me" not in host:
+        return None
+    # Query params first (?uid= / ?id= / ?u=).
+    try:
+        qs = parse_qs(p.query)
+        for key in ("uid", "id", "u"):
+            vals = qs.get(key) or []
+            for v in vals:
+                m = _UID_RE.match(v.strip())
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    # Last path segment: https://zalo.me/<uid> or /s/<uid>.
+    segs = [seg for seg in p.path.split("/") if seg]
+    for seg in reversed(segs):
+        m = _UID_RE.match(seg)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _decode_qr_image(fpath):
+    """Decode QR payloads from an image file.
+
+    Returns a list of payload strings, [] when no QR found, or None when
+    the optional decode dependency (pyzbar + system libzbar) is missing.
+    """
+    try:
+        from pyzbar.pyzbar import decode
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        with Image.open(fpath) as img:
+            results = decode(img)
+        out = []
+        for r in results:
+            try:
+                out.append(r.data.decode("utf-8", errors="replace"))
+            except Exception:
+                pass
+        return out
+    except Exception:
+        return []
 
 
 def _require_client():
@@ -555,6 +681,10 @@ class Handler(BaseHTTPRequestHandler):
             "/group/kick": self._h_group_kick,
             "/group/block": self._h_group_block,
             "/find-user": self._h_find_user,
+            "/lookup-phone": self._h_lookup_phone,
+            "/lookup-qr": self._h_qr_lookup,   # canonical name
+            "/qr-lookup": self._h_qr_lookup,   # alias (back-compat)
+            "/qr-lookup-image": self._h_qr_lookup_image,
         }
         fn = handlers.get(path)
         if fn is None:
@@ -803,6 +933,107 @@ class Handler(BaseHTTPRequestHandler):
         info = client.fetchPhoneNumber(phone)
         _json(self, {"result": _extract_profile(info)})
 
+    def _qr_profile(self, uid, method="qr"):
+        """Shared lookup core for /lookup-qr (/qr-lookup) and /qr-lookup-image.
+
+        Even for users with hidden profiles, Zalo's getprofiles API usually
+        returns at least the UID (and often name/avatar, since the same API
+        renders group member lists). Fields the user hid come back empty —
+        reported explicitly via `visibility`; this cannot be bypassed.
+        """
+        client = self._client_or_503()
+        if client is None:
+            return
+        try:
+            info = client.fetchUserInfo(uid)
+            profile = _extract_profile(info)
+            if not profile.get("uid"):
+                _err(self, "no profile found for this QR", 404)
+                return
+            _json(self, {"ok": True, "method": method, "uid": uid,
+                         "profile": profile,
+                         "visibility": _visibility_report(profile)})
+        except Exception:
+            log.error("qr lookup failed")
+            _err(self, "lookup failed", 502)
+
+    def _h_lookup_phone(self, body):
+        """Look up a user by phone number — no friending needed.
+
+        Fallback chain:
+          1. fetchPhoneNumber (Zalo's phone-search API — works when the
+             target allows "find me by phone" in privacy settings).
+        If Zalo blocks it (user hid phone search), the phone number is
+        unresolvable server-side and cannot be bypassed; the response says
+        so explicitly with the attempt log.
+        """
+        phone = body.get("phone", "")
+        if not _valid_phone(phone):
+            _err(self, "phone invalid", 400); return
+        if not _lookup_allowed():
+            _err(self, "rate limited, try again later", 429); return
+        client = self._client_or_503()
+        if client is None:
+            return
+        attempts = []
+        try:
+            info = client.fetchPhoneNumber(phone)
+            profile = _extract_profile(info)
+            if profile.get("uid"):
+                _json(self, {"ok": True, "method": "phone_number",
+                             "profile": profile,
+                             "visibility": _visibility_report(profile)})
+                return
+            attempts.append("phone_number: empty result")
+        except Exception as e:
+            attempts.append("phone_number: " + type(e).__name__)
+        _json(self, {
+            "ok": False,
+            "error": "phone lookup blocked or not found",
+            "hint": ("The number is not searchable: the owner may have "
+                     "disabled 'find by phone' in Zalo privacy settings, or "
+                     "the number is not on Zalo. Zalo enforces this "
+                     "server-side and it cannot be bypassed. If you have "
+                     "their QR code, try POST /lookup-qr instead."),
+            "attempts": attempts,
+        }, 404)
+
+    def _h_qr_lookup(self, body):
+        """Decode a Zalo QR payload string -> UID -> profile, no friending."""
+        qr_data = body.get("qr_data", "")
+        if not isinstance(qr_data, str) or not qr_data.strip() \
+                or len(qr_data) > 2048:
+            _err(self, "qr_data invalid", 400); return
+        if not _lookup_allowed():
+            _err(self, "rate limited, try again later", 429); return
+        uid = _uid_from_qr_data(qr_data)
+        if uid is None:
+            _err(self, "could not extract UID from QR data", 400); return
+        self._qr_profile(uid, method="qr")
+
+    def _h_qr_lookup_image(self, body):
+        """Decode QR from an uploaded image -> UID -> profile, no friending."""
+        fpath = _safe_path(body.get("file_path"), ALLOWED_QR_IMG_EXT)
+        if fpath is None:
+            _err(self, "file_path invalid or outside $BOOM_HOME", 400); return
+        if not _lookup_allowed():
+            _err(self, "rate limited, try again later", 429); return
+        payloads = _decode_qr_image(fpath)
+        if payloads is None:
+            _err(self, "QR decode unavailable: pip install pyzbar Pillow "
+                       "(plus system libzbar0, e.g. apt install libzbar0)",
+                 501); return
+        if not payloads:
+            _err(self, "no QR code found in image", 404); return
+        uid = None
+        for p in payloads:
+            uid = _uid_from_qr_data(p)
+            if uid:
+                break
+        if uid is None:
+            _err(self, "no Zalo UID in QR image", 400); return
+        self._qr_profile(uid)
+
 
 # ---------------------------------------------------------------------------
 # Extraction helpers (never log raw payloads)
@@ -844,6 +1075,15 @@ def _extract_profile(info):
         }
     except Exception:
         return {}
+
+
+def _visibility_report(profile):
+    """Which profile fields Zalo actually returned vs hid.
+
+    Zalo enforces privacy server-side: hidden fields come back empty and
+    cannot be bypassed. This report makes that explicit per lookup.
+    """
+    return {f: bool(profile.get(f)) for f in ("uid", "name", "avatar", "phone")}
 
 
 def _pick_sticker(results):
